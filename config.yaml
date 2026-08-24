@@ -64,6 +64,16 @@ draft:
   # treated as going to a RB/WR, which is what actually happens most weeks;
   # raise to 1 if you intend to start two tight ends.
   te_flex_credit: 0
+  # How hard to act on last season's luck (src/analytics/priors.py).
+  #
+  # A player whose prior season beat what his own opportunity implied is priced
+  # by the market on points that mostly will not repeat - about 78% of the gap
+  # evaporates, measured across 2023-2025. At 0.0 the board is unchanged and
+  # such players are only FLAGGED (^ and v in `fcc rank`), which is the safe
+  # default: the projection sources already price in part of the same effect,
+  # so acting at full strength double-counts. Raise toward 0.5 to let it move
+  # the rankings.
+  prior_regression_strength: 0.0
 
 season:
   # Margin (in ROS points) an FA must beat your droppable player by (spec 6.1).

@@ -318,6 +318,20 @@ class DraftRecommender:
             if player.injury_status and player.injury_status not in ("Healthy",):
                 warnings.append(f"injury: {player.injury_status}")
 
+            # Last season, relative to what his own opportunity implied. The
+            # market prices players on what they scored, so the gap between
+            # that and what their usage supported is where value hides.
+            if player.prior_verdict == "inflated":
+                warnings.append(
+                    f"last season ran hot ({player.prior_z:+.1f} sd for a "
+                    f"{player.position}); most of that does not repeat"
+                )
+            elif player.prior_verdict == "deflated":
+                reasons.append(
+                    f"last season ran cold ({player.prior_z:+.1f} sd for a "
+                    f"{player.position}); his usage was better than his points"
+                )
+
             if player.bye_week:
                 stacked = bye_counts.get(player.bye_week, 0)
                 if stacked + 1 >= self.bye_stack_threshold:

@@ -82,6 +82,17 @@ jobs:
         if: steps.pick.outputs.job != 'test-notify' && steps.pick.outputs.job != 'doctor'
         run: python fcc.py sync
 
+      - name: Refresh opportunity data
+        # player_week_usage is filled by this command and by nothing else, and
+        # every analytic built on it - prior-season regression flags, the
+        # expected-points signals, measured volatility - reads from it. Left
+        # uncalled it stays empty forever and all of that silently does nothing.
+        #
+        # Monday, because that is when the previous week's stats are final.
+        if: steps.pick.outputs.job == 'recap'
+        run: python fcc.py sync-usage
+        continue-on-error: true
+
       - name: Run ${{ steps.pick.outputs.job }}
         run: python fcc.py ${{ steps.pick.outputs.job }}
 

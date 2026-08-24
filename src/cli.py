@@ -141,6 +141,9 @@ class Context:
         return vorp.build_board(
             self.conn, self.season, self.starting_slots(), self.num_teams(),
             week=week, tier_gap_pct=float(self.cfg.get("draft.tier_gap_pct", 0.08)),
+            prior_strength=float(
+                self.cfg.get("draft.prior_regression_strength", 0.0)
+            ),
         )
 
 
@@ -388,10 +391,20 @@ def cmd_rank(ctx: Context, args) -> int:
         adp = f"{p.adp:6.1f}" if p.adp else "     -"
         bye = f"{p.bye_week:4d}" if p.bye_week else "   -"
         flag = " *" if p.injury_status else ""
+        # ^ ran hot last season and is priced on it; v ran cold and is not.
+        if p.prior_verdict == "inflated":
+            flag += " ^"
+        elif p.prior_verdict == "deflated":
+            flag += " v"
         print(
             f"{p.overall_rank:>4} {p.name[:24]:<24} {p.position}{p.position_rank:<5} "
             f"T{p.tier:<4} {p.team:<5} {p.points:>7.1f} {p.vorp:>7.1f} {adp} {bye}{flag}"
         )
+    flagged = sum(1 for p in players if p.prior_verdict)
+    if flagged:
+        print("")
+        print("  * injury   ^ last season ran hot   v last season ran cold "
+              f"({flagged} of {len(players)} flagged)")
     return EXIT_OK
 
 
@@ -673,8 +686,18 @@ def cmd_daily(ctx: Context, args) -> int:
     class _A:
         force = False
         week = None
+        season = None
 
     cmd_sync(ctx, _A())
+
+    # Opportunity data. Nothing else populates player_week_usage, so without
+    # this every feature built on it - prior-season regression flags, the
+    # expected-points signals, measured volatility - stays permanently dark.
+    try:
+        cmd_sync_usage(ctx, _A())
+    except Exception as exc:
+        log.warning("Usage sync skipped: %s", exc)
+        print(f"  usage       : unavailable ({exc})")
     failures = 0
     for job in jobs:
         print(f"\n=== {job} ===")

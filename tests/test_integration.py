@@ -434,3 +434,83 @@ def test_lineup_says_so_when_the_week_has_no_projections(lineup_league):
     assert notification is not None
     assert "no data" in notification.title
     assert "change(s) suggested" not in notification.title
+
+
+# --- features that were written, tested, and connected to nothing -----------
+
+def test_prior_season_flags_reach_the_board(tmp_path):
+    """priors.py was imported by no production module at all.
+
+    It had unit tests and a measured persistence coefficient and produced
+    nothing, because nothing ever called it. This pins the wiring, not the
+    maths - the maths has its own tests.
+    """
+    from src import vorp
+
+    conn = db.init_db(tmp_path / "priors.db")
+    slots = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "W/R/T": 2, "DEF": 1}
+
+    # Two receivers alike on paper; one beat his usage badly last season.
+    for key, name, pts in (("hot|WR", "Ran Hot", 200.0), ("cold|WR", "Ran Cold", 200.0)):
+        _player(conn, key, name, "WR", pts)
+    for i in range(20):
+        _player(conn, f"filler{i}|WR", f"Filler {i}", "WR", 150.0 - i)
+
+    # A prior season: expected points from usage, actual points scored.
+    for week in range(1, 13):
+        rows = [("hot|WR", 10.0, 22.0), ("cold|WR", 10.0, 2.0)]
+        rows += [(f"filler{i}|WR", 10.0, 10.0) for i in range(20)]
+        for key, expected, actual in rows:
+            conn.execute(
+                "INSERT INTO player_week_usage(player_key, season, week, "
+                "points_expected, points_actual, recorded_at) VALUES (?,?,?,?,?,?)",
+                (key, SEASON - 1, week, expected, actual, db.utcnow()),
+            )
+    conn.commit()
+
+    board = vorp.build_board(conn, SEASON, slots, 12)
+    by_name = {p.name: p for p in board.players}
+    assert by_name["Ran Hot"].prior_verdict == "inflated", by_name["Ran Hot"].prior_verdict
+    assert by_name["Ran Cold"].prior_verdict == "deflated"
+    assert by_name["Filler 0"].prior_verdict is None
+
+    # Flagging alone must not move the numbers.
+    assert by_name["Ran Hot"].points == 200.0
+    assert by_name["Ran Hot"].prior_adjustment == 0.0
+
+    # Acting on it is opt-in, and it discounts rather than inflates.
+    adjusted = vorp.build_board(conn, SEASON, slots, 12, prior_strength=0.5)
+    hot = next(p for p in adjusted.players if p.name == "Ran Hot")
+    cold = next(p for p in adjusted.players if p.name == "Ran Cold")
+    assert hot.points < 200.0, "an inflated season should be discounted"
+    assert cold.points > 200.0, "a deflated season should be credited back"
+
+
+def test_a_board_without_prior_season_data_is_unchanged(tmp_path):
+    """The normal state before `fcc sync-usage` has ever run."""
+    from src import vorp
+
+    conn = db.init_db(tmp_path / "nopriors.db")
+    slots = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "W/R/T": 2, "DEF": 1}
+    for i in range(6):
+        _player(conn, f"wr{i}|WR", f"Receiver {i}", "WR", 200.0 - i * 10)
+    conn.commit()
+
+    board = vorp.build_board(conn, SEASON, slots, 12, prior_strength=0.5)
+    assert board.players, "the board must still build"
+    assert all(p.prior_verdict is None for p in board.players)
+    assert all(p.prior_adjustment == 0.0 for p in board.players)
+
+
+def test_the_daily_run_syncs_the_table_its_analytics_read():
+    """player_week_usage is filled by exactly one command, which nothing called.
+
+    Every feature built on it - prior-season flags, expected-points regression,
+    measured volatility - was permanently dark in a scheduled deployment.
+    """
+    import inspect
+
+    from src import cli
+
+    source = inspect.getsource(cli.cmd_daily)
+    assert "cmd_sync_usage" in source, "fcc daily must populate player_week_usage"

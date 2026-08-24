@@ -50,6 +50,15 @@ class PlayerValue:
     injury_status: str | None = None
     floor: float | None = None
     ceiling: float | None = None
+    #: What last season says about this one: "inflated", "deflated", or None.
+    #: A player whose prior year beat league-average efficiency by more than
+    #: the position normally does is priced on a season most of which will not
+    #: repeat - see src/analytics/priors.py for the measurement.
+    prior_verdict: str | None = None
+    prior_z: float | None = None
+    prior_note: str | None = None
+    #: Points the prior-season adjustment removed (negative) or added.
+    prior_adjustment: float = 0.0
 
     @property
     def adp_delta(self) -> float | None:
@@ -230,6 +239,46 @@ def scarcity_curve(
 
 # --- board assembly ----------------------------------------------------------
 
+def _apply_prior_season(
+    conn: sqlite3.Connection,
+    season: int,
+    players_by_position: dict[str, list[PlayerValue]],
+    strength: float,
+) -> None:
+    """Attach prior-season regression flags, and optionally act on them.
+
+    Flagging is always on and costs nothing; adjusting the projection is opt-in
+    via `draft.prior_regression_strength`, because the projection sources have
+    already priced in some of the same effect and applying it at full force
+    would double-count. At strength 0 the board is unchanged and the flag is
+    shown for you to judge.
+
+    Silent no-op when last season's usage has not been synced, which is the
+    normal state until `fcc sync-usage` has run.
+    """
+    try:
+        from src.analytics.priors import draft_adjustment, flag_players
+
+        flags = flag_players(conn, season - 1)
+    except Exception:  # pragma: no cover - the board must never fail for this
+        return
+    if not flags:
+        return
+
+    for pool in players_by_position.values():
+        for player in pool:
+            flag = flags.get(player.player_key)
+            if flag is None or not flag.is_flagged:
+                continue
+            player.prior_verdict = flag.verdict
+            player.prior_z = flag.z
+            player.prior_note = flag.reasons[0] if flag.reasons else None
+            if strength > 0:
+                adjusted = draft_adjustment(player.points, flag, strength)
+                player.prior_adjustment = round(adjusted - player.points, 2)
+                player.points = round(adjusted, 2)
+
+
 def build_board(
     conn: sqlite3.Connection,
     season: int,
@@ -241,6 +290,7 @@ def build_board(
     tier_gap_pct: float = 0.08,
     positions: Iterable[str] | None = None,
     limit_per_position: int | None = None,
+    prior_strength: float = 0.0,
 ) -> Board:
     """Assemble the valued board from stored projections."""
     # Default to exactly the positions this league starts, so a no-kicker league
@@ -276,6 +326,10 @@ def build_board(
             p.position_rank = i
         if pool:
             players_by_position[pos] = pool
+
+    # What last season says. Attached before replacement levels are computed,
+    # because an adjusted projection changes where replacement sits.
+    _apply_prior_season(conn, season, players_by_position, prior_strength)
 
     replacement = compute_replacement_levels(
         players_by_position, starting_slots, num_teams

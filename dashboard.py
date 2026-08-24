@@ -46,8 +46,26 @@ def get_context():
 
 
 @st.cache_data(ttl=60)
-def load_board(_conn, season: int, slots: dict, teams: int, gap: float):
-    return vorp.build_board(_conn, season, slots, teams, tier_gap_pct=gap)
+def load_board(_conn, season: int, slots: dict, teams: int, gap: float,
+               prior_strength: float = 0.0):
+    return vorp.build_board(
+        _conn, season, slots, teams, tier_gap_pct=gap,
+        prior_strength=prior_strength,
+    )
+
+
+def board_for(cfg, conn, season, slots, teams):
+    """The board, built from config every time.
+
+    Two of the three call sites passed a hardcoded tier gap, so the season tabs
+    and the draft board disagreed about where tiers break whenever the setting
+    was changed.
+    """
+    return load_board(
+        conn, season, slots, teams,
+        float(cfg.get("draft.tier_gap_pct", 0.08)),
+        float(cfg.get("draft.prior_regression_strength", 0.0)),
+    )
 
 
 def settings_of(conn, league_key):
@@ -104,7 +122,7 @@ def draft_view(cfg, conn, league_key):
         st.caption(f"{league_key} · {teams} teams · {rounds} rounds")
         st.caption(f"Data: {db.describe_backend()}")
 
-    board = load_board(conn, season, slots, teams, float(cfg.get("draft.tier_gap_pct", 0.08)))
+    board = board_for(cfg, conn, season, slots, teams)
     if not board.players:
         st.warning("No projections stored. Run `python fcc.py sync` first.")
         return
@@ -568,7 +586,7 @@ def season_view(cfg, conn, league_key):
         st.dataframe([dict(r) for r in rows], width="stretch", hide_index=True, height=520)
 
     with tabs[4]:
-        board = load_board(conn, season, slots, teams, 0.08)
+        board = board_for(cfg, conn, season, slots, teams)
         st.dataframe(
             [
                 {
@@ -583,7 +601,7 @@ def season_view(cfg, conn, league_key):
         )
 
     with tabs[5]:
-        board = load_board(conn, season, slots, teams, 0.08)
+        board = board_for(cfg, conn, season, slots, teams)
         chart = charts.value_curve(board.players, height=380)
         if chart is not None:
             st.altair_chart(chart, use_container_width=True)
