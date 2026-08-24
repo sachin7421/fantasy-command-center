@@ -36,6 +36,12 @@ class Candidate:
     trending_add: int
     injury_status: str | None
     bye_week: int | None
+    #: Points above what is freely available at this position. Raw points are
+    #: not comparable across positions - a defence projecting 110 is not worse
+    #: than a running back projecting 150 - and comparing them directly made
+    #: the "worst player on your roster" the defence every single week, so the
+    #: job kept proposing you drop your only one to add a backup quarterback.
+    value: float = 0.0
 
     @property
     def is_stash(self) -> bool:
@@ -80,6 +86,17 @@ class WaiverReport:
 
 def _ros_weeks(week: int, final_week: int = 17) -> int:
     return max(1, final_week - week + 1)
+
+
+def replacement_levels(conn: sqlite3.Connection, season: int) -> dict[str, float]:
+    """Positional replacement level, shared with the FAAB model.
+
+    Deliberately the same function the bid model trains on, so a claim's value
+    and the bid recommended for it are measured the same way.
+    """
+    from src.analytics.faab import replacement_levels as _levels
+
+    return _levels(conn, season)
 
 
 def load_free_agents(
@@ -129,12 +146,14 @@ recommended $1 bids on players worth real money.
             "season": season, "week": week, "league": league_key, "limit": limit,
         },
     ).fetchall()
+    baseline = replacement_levels(conn, season)
     return [
         Candidate(
             player_key=r["player_key"], name=r["full_name"], position=r["position"],
             team=r["team"] or "FA", ros_points=float(r["pts"] or 0),
             pct_owned=float(r["pct_owned"] or 0), trending_add=int(r["trending"] or 0),
             injury_status=r["injury_status"], bye_week=r["bye_week"],
+            value=float(r["pts"] or 0) - baseline.get(r["position"], 0.0),
         )
         for r in rows
     ]
@@ -168,18 +187,22 @@ def load_my_droppables(
             FROM injuries
         ) i ON i.player_key=r.player_key AND i.rn=1
         WHERE r.league_key=:league AND r.team_key=:team AND r.week=:week
-        ORDER BY pts ASC
         """,
         {"season": season, "week": week, "league": league_key, "team": str(team_key)},
     ).fetchall()
-    return [
+    baseline = replacement_levels(conn, season)
+    out = [
         Candidate(
             player_key=r["player_key"], name=r["full_name"], position=r["position"],
             team=r["team"] or "", ros_points=float(r["pts"] or 0), pct_owned=100.0,
             trending_add=0, injury_status=r["injury_status"], bye_week=r["bye_week"],
+            value=float(r["pts"] or 0) - baseline.get(r["position"], 0.0),
         )
         for r in rows
     ]
+    # Worst FIRST, on the comparable scale rather than on raw points.
+    out.sort(key=lambda c: c.value)
+    return out
 
 
 def suggest_bid(
@@ -265,6 +288,44 @@ def find_handcuffs(
     return out
 
 
+def _lineup_total(roster: list[Candidate], starting_slots: dict[str, int]) -> float:
+    """Points of the best legal starting lineup this roster can field."""
+    from src.lineup_solver import best_lineup
+
+    return best_lineup(
+        roster,
+        starting_slots,
+        points_of=lambda c: c.ros_points,
+        position_of=lambda c: c.position,
+    ).total
+
+
+def _protected_keys(
+    roster: list[Candidate], starting_slots: dict[str, int] | None
+) -> set[str]:
+    """Players who cannot be dropped without emptying a required starting slot.
+
+    Only the last one at a dedicated position is protected - depth at a position
+    is always droppable, and flex slots are covered by several positions, so
+    nothing there is irreplaceable.
+    """
+    if not starting_slots:
+        return set()
+    from src.vorp import split_slots
+
+    dedicated, _ = split_slots(starting_slots)
+    by_position: dict[str, list[Candidate]] = {}
+    for player in roster:
+        by_position.setdefault(player.position, []).append(player)
+
+    protected: set[str] = set()
+    for position, needed in dedicated.items():
+        held = by_position.get(position, [])
+        if needed > 0 and len(held) <= needed:
+            protected.update(p.player_key for p in held)
+    return protected
+
+
 def run(
     conn: sqlite3.Connection,
     league_key: str,
@@ -275,12 +336,19 @@ def run(
     budget_left: int = 100,
     value_margin: float = 25.0,
     top_n: int = 8,
+    starting_slots: dict[str, int] | None = None,
 ) -> WaiverReport:
     free_agents = load_free_agents(conn, league_key, season, week)
     droppables = load_my_droppables(conn, league_key, team_key, season, week)
     weeks_left = _ros_weeks(week)
 
-    worst = droppables[0] if droppables else None
+    # A player who is the last one you own at a required position is not a drop
+    # candidate, whatever he projects for. Dropping your only defence to add a
+    # fourth quarterback is not an upgrade; it forfeits a starting slot.
+    protected = _protected_keys(droppables, starting_slots)
+    droppable_now = [d for d in droppables if d.player_key not in protected]
+
+    worst = droppable_now[0] if droppable_now else None
     report = WaiverReport(uses_faab=uses_faab, budget_left=budget_left, week=week)
 
     # Learn how this league bids, so recommendations reflect the actual rivals
@@ -320,26 +388,41 @@ def run(
             log.info("FAAB profiles unavailable: %s", exc)
 
     healthy = [c for c in free_agents if not c.is_stash]
-    gains = [
-        c.ros_points - (worst.ros_points if worst else 0.0) for c in healthy
-    ]
+
+    # What a claim is actually worth is what it does to the STARTING LINEUP.
+    # Measuring it against the worst player on the roster instead recommended
+    # four backup quarterbacks in a one-QB league: each of them beat the worst
+    # bench spot comfortably, and not one of them would ever have started.
+    def gain_for(candidate: Candidate, drop: Candidate | None) -> float:
+        if not starting_slots:
+            return candidate.value - (worst.value if worst else 0.0)
+        after = [d for d in droppables if drop is None or d.player_key != drop.player_key]
+        after.append(candidate)
+        return round(_lineup_total(after, starting_slots) - current_total, 2)
+
+    current_total = (
+        _lineup_total(droppables, starting_slots) if starting_slots else 0.0
+    )
+    gains = [gain_for(c, None) for c in healthy]
     max_gain = max(gains) if gains else 0.0
 
     used_drops: set[str] = set()
     for candidate in healthy:
-        base = worst.ros_points if worst else 0.0
-        gain = candidate.ros_points - base
+        drop_preview = next(
+            (d for d in droppable_now if d.player_key not in used_drops), None
+        )
+        gain = gain_for(candidate, drop_preview)
         if gain < value_margin:
             continue
 
-        drop = next((d for d in droppables if d.player_key not in used_drops), None)
+        drop = drop_preview
         if drop:
             used_drops.add(drop.player_key)
 
         reasons = []
         if candidate.trending_add > 5000:
             reasons.append(f"trending: {candidate.trending_add:,} adds in 24h")
-        if candidate.pct_owned < 40 and candidate.ros_points > base:
+        if candidate.pct_owned < 40 and gain > 0:
             reasons.append(f"only {candidate.pct_owned:.0f}% rostered")
         if drop and drop.injury_status in STASH_STATUSES:
             reasons.append(f"drop candidate is {drop.injury_status}")

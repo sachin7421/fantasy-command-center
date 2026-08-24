@@ -184,7 +184,7 @@ class DecisionImpact:
     def describe(self) -> str:
         return (
             f"{self.label}: playoff odds {self.before:.1%} -> {self.after:.1%} "
-            f"({self.delta:+.1%}) — {self.verdict}"
+            f"({self.delta:+.1%}) - {self.verdict}"
         )
 
 

@@ -89,13 +89,13 @@ class PriorFlag:
         if self.verdict == "inflated":
             return (
                 f"{self.name}: 2025 production ran {self.residual:+.1f} pts/gm above "
-                f"his usage ({self.z:+.1f} sd for a {self.position}) — this year's "
+                f"his usage ({self.z:+.1f} sd for a {self.position}) - this year's "
                 f"price may be anchored to a season he is unlikely to repeat"
             )
         if self.verdict == "deflated":
             return (
                 f"{self.name}: 2025 usage implied {abs(self.residual):.1f} pts/gm more "
-                f"than he scored ({self.z:+.1f} sd for a {self.position}) — the role "
+                f"than he scored ({self.z:+.1f} sd for a {self.position}) - the role "
                 f"was better than the box score"
             )
         return f"{self.name}: in line with a typical {self.position}"

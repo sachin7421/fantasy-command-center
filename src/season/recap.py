@@ -37,10 +37,20 @@ class RecapReport:
     record: str | None = None
     rank: int | None = None
     mistakes: list[BenchMistake] = field(default_factory=list)
+    #: Rostered players, and how many of them have a recorded score. A week
+    #: that has not been played yet, or whose stats have not synced, scores
+    #: everyone at zero - and "0.0 pts, 0.0 left on bench" is a perfectly
+    #: plausible-looking recap of a week that never happened.
+    roster_size: int = 0
+    scored: int = 0
 
     @property
     def points_left_on_bench(self) -> float:
         return round(self.optimal_points - self.actual_points, 2)
+
+    @property
+    def has_data(self) -> bool:
+        return self.roster_size > 0 and self.scored > 0
 
 
 @dataclass
@@ -98,7 +108,13 @@ def run(
     starting_slots: dict[str, int],
 ) -> RecapReport:
     roster = _actual_week_scores(conn, league_key, team_key, season, week)
-    report = RecapReport(week=week)
+    report = RecapReport(
+        week=week,
+        roster_size=len(roster),
+        scored=sum(1 for p in roster if p.points),
+    )
+    if not report.has_data:
+        return report
 
     started = [p for p in roster if p.started]
     report.actual_points = round(sum(p.points for p in started), 2)
@@ -129,6 +145,20 @@ def run(
 
 
 def to_notification(report: RecapReport, season: int) -> Notification | None:
+    if not report.has_data:
+        return Notification(
+            title=f"Week {report.week} recap: no scores recorded",
+            lines=[
+                f"{report.roster_size} rostered player(s), "
+                f"{report.scored} with a week {report.week} score.",
+                "",
+                "Either the week has not been played, or the stat sync has not",
+                "run. No recap was produced rather than one full of zeroes.",
+            ],
+            job="recap",
+            season=season,
+            week=report.week,
+        )
     lines = [
         f"Scored: {report.actual_points:.1f}",
         f"Optimal: {report.optimal_points:.1f}",

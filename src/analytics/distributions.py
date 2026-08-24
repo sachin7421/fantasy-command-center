@@ -99,7 +99,7 @@ class LineupOutcome:
             else "balanced"
         )
         return (
-            f"{self.total_mean:.1f} +/- {self.total_sd:.1f} — "
+            f"{self.total_mean:.1f} +/- {self.total_sd:.1f}  |  "
             f"{self.win_probability:.0%} to win ({posture})"
         )
 

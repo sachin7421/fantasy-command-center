@@ -79,10 +79,21 @@ class LineupReport:
     risk_mode: str = "neutral"
     week: int = 0
     warnings: list[str] = field(default_factory=list)
+    #: Rostered players, and how many of them have a projection for this week.
+    #: Without this the report cannot tell "your lineup is already optimal"
+    #: apart from "every projection is missing, so everything scores zero" -
+    #: and it was reporting the second as the first, by email, every week.
+    roster_size: int = 0
+    projected: int = 0
 
     @property
     def gain(self) -> float:
         return round(self.optimal_points - self.current_points, 2)
+
+    @property
+    def has_data(self) -> bool:
+        """Whether anything here is worth believing."""
+        return self.roster_size > 0 and self.projected > 0
 
 
 def load_roster(
@@ -152,6 +163,7 @@ def run(
 ) -> LineupReport:
     roster = load_roster(conn, league_key, team_key, season, week)
     mode = resolve_risk_mode(risk_mode, projected_margin)
+    projected = sum(1 for p in roster if p.points > 0)
 
     optimal = best_lineup(
         roster,
@@ -218,10 +230,31 @@ def run(
         risk_mode=mode,
         week=week,
         warnings=warnings,
+        roster_size=len(roster),
+        projected=projected,
     )
 
 
 def to_notification(report: LineupReport, season: int) -> Notification | None:
+    # Silence beats a confident wrong answer. With no roster or no projections
+    # every player scores zero, the optimal lineup equals the current one, and
+    # the notification read "0 change(s) suggested" - indistinguishable from a
+    # lineup that is genuinely already right.
+    if not report.has_data:
+        return Notification(
+            title=f"Week {report.week} lineup: no data to check it against",
+            lines=[
+                f"{report.roster_size} rostered player(s), "
+                f"{report.projected} with a week {report.week} projection.",
+                "",
+                "Nothing was compared. Run `fcc sync` (and `fcc sync-league`",
+                "once Yahoo access is approved) and the check will run again.",
+            ],
+            job="lineup",
+            urgency="normal",
+            season=season,
+            week=report.week,
+        )
     if not report.swaps and not report.warnings:
         return None
 

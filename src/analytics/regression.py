@@ -85,7 +85,7 @@ class RegressionSignal:
         return (
             f"{self.name} ({self.position} {self.team}): "
             f"{self.points_actual:.1f} actual vs {self.points_expected:.1f} expected "
-            f"per game — {direction}performing by {abs(self.residual):.1f}"
+            f"per game - {direction}performing by {abs(self.residual):.1f}"
         )
 
 
@@ -140,7 +140,7 @@ def analyse(
             # The residual is real but the cause is bad, not unlucky.
             verdict = "hold"
             reasons = [
-                f"underperforming, but snap share is falling ({trend:+.0%}) — "
+                f"underperforming, but snap share is falling ({trend:+.0%}) - "
                 "this looks like a shrinking role, not bad luck"
             ]
     elif residual >= threshold:
@@ -152,7 +152,7 @@ def analyse(
             reasons.append(f"snap share also falling ({trend:+.0%})")
 
     if confidence < 0.45 and verdict != "hold":
-        reasons.append(f"only {len(played)} games — treat as a lean, not a call")
+        reasons.append(f"only {len(played)} games - treat as a lean, not a call")
 
     return RegressionSignal(
         player_key=player_key, name=name, position=position, team=team,

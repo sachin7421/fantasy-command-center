@@ -169,11 +169,48 @@ def test_faab_curve_renders(league_db, capsys):
     assert "<- recommended" in out
 
 
-def test_faab_uses_the_synced_budget_when_no_flag_is_given(league_db, capsys):
+def _config(tmp_path):
+    """A config naming team 3 as mine, which several behaviours depend on."""
+    path = tmp_path / "with_team.yaml"
+    path.write_text(
+        "league:\n"
+        '  league_id: "796511"\n'
+        "  season: 2026\n"
+        "  my_team_id: 3\n"
+        "paths:\n"
+        f'  env_dir: "{tmp_path.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def test_faab_uses_the_synced_budget_when_no_flag_is_given(league_db, tmp_path, capsys):
     """team_budgets is the point of the sync; the command must actually read it."""
-    cli.main(["--db", str(league_db), "faab", "Waiver Add", "--week", str(WEEK)])
+    cli.main(["--config", _config(tmp_path), "--db", str(league_db),
+              "faab", "Waiver Add", "--week", str(WEEK)])
     out = capsys.readouterr().out
-    assert "$73" in out
+    assert "your budget" in out and "$73" in out, out
+
+
+def test_faab_never_lists_you_among_your_own_rivals(league_db, tmp_path, capsys):
+    """With my_team_id set, your own profile must be out of the field.
+
+    Left in, the model prices the player against a field that contains you and
+    names you as a likely rival - so you end up bidding against yourself.
+    """
+    cli.main(["--config", _config(tmp_path), "--db", str(league_db),
+              "faab", "Waiver Add", "--week", str(WEEK)])
+    out = capsys.readouterr().out
+    rivals = [line for line in out.splitlines() if "likely rivals" in line]
+    assert not any("Butt Fumblers" in line for line in rivals), rivals
+
+
+def test_faab_warns_when_it_cannot_tell_which_team_is_yours(league_db, capsys):
+    """Silently counting yourself as a rival is worse than saying you cannot tell."""
+    code = cli.main(["--db", str(league_db), "faab", "Waiver Add", "--week", str(WEEK)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "my_team_id is not set" in out
 
 
 def test_faab_survives_an_unreadable_budget_string(league_db, capsys):
@@ -287,3 +324,113 @@ def test_sync_league_refuses_rather_than_authenticating_with_nothing(tmp_path, c
     out = capsys.readouterr().out
     assert code != 0
     assert "not configured" in out
+
+
+# --- what a waiver claim is actually worth ----------------------------------
+
+SLOTS = {"QB": 1, "WR": 2, "RB": 2, "TE": 1, "W/R/T": 2, "DEF": 1}
+
+
+@pytest.fixture
+def lineup_league(tmp_path):
+    """A full starting lineup, one defence, and a pool of free agents."""
+    path = tmp_path / "lineup.db"
+    conn = db.init_db(path)
+
+    roster = [
+        ("qb1|QB", "Starting QB", "QB", 320.0),
+        ("rb1|RB", "Starting RB1", "RB", 240.0),
+        ("rb2|RB", "Starting RB2", "RB", 230.0),
+        ("wr1|WR", "Starting WR1", "WR", 200.0),
+        ("wr2|WR", "Starting WR2", "WR", 190.0),
+        ("wr3|WR", "Flex WR3", "WR", 180.0),
+        ("rb3|RB", "Flex RB3", "RB", 175.0),
+        ("te1|TE", "Starting TE", "TE", 150.0),
+        ("def1|DEF", "The Only Defence", "DEF", 130.0),
+        ("te2|TE", "Spare TE", "TE", 120.0),
+    ]
+    for key, name, pos, pts in roster:
+        _player(conn, key, name, pos, pts)
+        conn.execute(
+            "INSERT INTO rosters(league_key, team_key, team_name, player_key, "
+            "selected_pos, week, fetched_at) VALUES (?,?,?,?,?,?,?)",
+            (LEAGUE, MY_TEAM, "Butt Fumblers", key, pos, WEEK, db.utcnow()),
+        )
+
+    free_agents = [
+        ("faqb|QB", "Excellent Backup QB", "QB", 310.0),   # never starts: 1 QB slot
+        ("fawr|WR", "Genuine Upgrade WR", "WR", 235.0),    # displaces Flex RB3
+        ("fadef|DEF", "Spare Defence", "DEF", 125.0),
+    ]
+    for key, name, pos, pts in free_agents:
+        _player(conn, key, name, pos, pts)
+        conn.execute(
+            "INSERT INTO free_agents(league_key, player_key, pct_owned, week, fetched_at) "
+            "VALUES (?,?,?,?,?)",
+            (LEAGUE, key, 30.0, WEEK, db.utcnow()),
+        )
+    conn.commit()
+    return path
+
+
+def test_a_backup_at_a_single_slot_position_is_worth_nothing(lineup_league):
+    """A second QB in a one-QB league cannot start, so it is not an upgrade.
+
+    Valuing claims against the worst player on the roster instead of against the
+    starting lineup recommended four backup quarterbacks in a row: each beat the
+    worst bench spot easily, and not one of them would ever have played.
+    """
+    from src.season import waivers
+
+    conn = db.init_db(lineup_league)
+    report = waivers.run(
+        conn, LEAGUE, MY_TEAM, SEASON, WEEK,
+        uses_faab=True, budget_left=100, value_margin=1.0, starting_slots=SLOTS,
+    )
+    names = [c.add.name for c in report.claims]
+    assert "Excellent Backup QB" not in names
+    assert "Genuine Upgrade WR" in names, names
+
+
+def test_the_only_defence_is_never_a_drop_candidate(lineup_league):
+    """Dropping the last player at a required position forfeits that slot."""
+    from src.season import waivers
+
+    conn = db.init_db(lineup_league)
+    report = waivers.run(
+        conn, LEAGUE, MY_TEAM, SEASON, WEEK,
+        uses_faab=True, budget_left=100, value_margin=1.0, starting_slots=SLOTS,
+    )
+    dropped = {c.drop.name for c in report.claims if c.drop}
+    assert "The Only Defence" not in dropped, dropped
+
+
+def test_a_claim_gain_is_the_lineup_improvement(lineup_league):
+    """The number in the notification has to be the number that matters."""
+    from src.season import waivers
+
+    conn = db.init_db(lineup_league)
+    report = waivers.run(
+        conn, LEAGUE, MY_TEAM, SEASON, WEEK,
+        uses_faab=True, budget_left=100, value_margin=1.0, starting_slots=SLOTS,
+    )
+    upgrade = next(c for c in report.claims if c.add.name == "Genuine Upgrade WR")
+    # 235 in, Flex RB3 (175) out of the lineup; the dropped spare TE never started.
+    assert upgrade.value_gain == pytest.approx(60.0, abs=0.5)
+
+
+# --- the lineup job must not report a confident zero ------------------------
+
+def test_lineup_says_so_when_the_week_has_no_projections(lineup_league):
+    """Silence beats "0 changes suggested" when every projection is missing."""
+    from src.season import lineup
+
+    conn = db.init_db(lineup_league)
+    report = lineup.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS)
+    assert report.has_data is False
+    assert report.roster_size == 10 and report.projected == 0
+
+    notification = lineup.to_notification(report, SEASON)
+    assert notification is not None
+    assert "no data" in notification.title
+    assert "change(s) suggested" not in notification.title

@@ -114,18 +114,25 @@ def simulate_draft(
     defer_positions: tuple[str, ...] = ("K", "DEF"),
     defer_until_round: int = 12,
     opponent_noise: float = 6.0,
+    bye_stack_threshold: int = 3,
+    te_flex_credit: int = 0,
 ) -> SimResult:
     """Run one full snake draft and score every resulting starting lineup."""
     rng = random.Random(seed)
     position = DraftPosition(num_teams=num_teams, draft_slot=my_slot, rounds=rounds)
     teams = {i: SimTeam(team_id=i, is_me=(i == my_slot)) for i in range(1, num_teams + 1)}
 
+    # Every knob the live draft reads, so a rehearsal is a rehearsal of the
+    # thing that will actually run. Two of these were missing, which meant
+    # changing them in config.yaml changed the draft but not the mock of it.
     recommender = DraftRecommender(
         board,
         position,
         need_weight=need_weight,
         defer_positions=defer_positions,
         defer_until_round=defer_until_round,
+        bye_stack_threshold=bye_stack_threshold,
+        te_flex_credit=te_flex_credit,
     )
 
     drafted: set[str] = set()

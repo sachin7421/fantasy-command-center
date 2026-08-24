@@ -252,7 +252,7 @@ class ContextSource(Source):
             notes.append(script)
         if context.get("windy"):
             notes.append(
-                f"wind {context['wind_mph']:.0f} mph — passing and kicking suppressed"
+                f"wind {context['wind_mph']:.0f} mph - passing and kicking suppressed"
             )
         return notes
 

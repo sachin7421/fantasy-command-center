@@ -165,7 +165,31 @@ class DraftRecommender:
         # Kickers and defenses are worth almost nothing early: their VORP spread
         # is tiny and they are freely available. Suppress, then force late.
         if pos in self.defer_positions:
-            if round_number < self.defer_until_round:
+            # Deferring is a timing preference, never a decision to go without.
+            # A ten-round draft with defer_until_round=12 suppressed defence for
+            # its entire length and ended with that slot empty - about 105 points
+            # forfeited, which was the whole of the recommender's edge over
+            # drafting by ADP. The naive baseline already had this rule; the
+            # recommender did not.
+            picks_left = max(0, self.position.rounds - round_number + 1)
+            unfilled_now = roster.unfilled()
+            still_needed = int(round(sum(unfilled_now.values())))
+            non_deferred = int(round(sum(
+                v for k, v in unfilled_now.items() if k not in self.defer_positions
+            )))
+            # Two conditions, and the second matters as much as the first:
+            #   the slack is gone   - no pick left to spend elsewhere first
+            #   and it is affordable - enough picks remain to cover the more
+            #                          valuable slots too
+            # Without the second, a draft too short to fill the lineup at all
+            # (five rounds, nine starters) burns a top-60 pick on a defence
+            # worth nine points over replacement.
+            forced = (
+                unfilled_now.get(pos, 0) > 0
+                and picks_left <= still_needed
+                and picks_left > non_deferred
+            )
+            if round_number < self.defer_until_round and not forced:
                 return 0.05
             remaining = self.position.rounds - round_number
             urgency = 1.0 if roster.counts().get(pos, 0) == 0 else 0.2

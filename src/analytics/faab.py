@@ -368,7 +368,7 @@ class BidAdvice:
     def describe(self) -> str:
         if self.walk_away:
             return (
-                f"bid ${self.recommended} at most — the field will likely pay "
+                f"bid ${self.recommended} at most - the field will likely pay "
                 f"about ${self.price_to_win}, well past his value to you"
             )
         return (
@@ -488,12 +488,12 @@ def recommend(
     if walk_away:
         notes.append(
             f"the field will likely pay around ${price_to_win}, well past the "
-            f"${worth} he justifies — bid only if he fills a genuine hole"
+            f"${worth} he justifies - bid only if he fills a genuine hole"
         )
     elif probability < 0.4:
         notes.append(
             f"${recommended} is what he is worth, but it probably will not win "
-            f"(about ${price_to_win} likely needed) — a losing bid still costs nothing"
+            f"(about ${price_to_win} likely needed) - a losing bid still costs nothing"
         )
     elif probability > 0.85 and recommended > 1:
         cheaper = bid_for(0.6)
@@ -502,7 +502,7 @@ def recommend(
     if weeks_left <= 4:
         notes.append("late season: unspent budget is worth nothing, so bid up")
     if not any(r.observations for r in rivals):
-        notes.append("no bid history yet — this is a value estimate, not a market read")
+        notes.append("no bid history yet - this is a value estimate, not a market read")
 
     return BidAdvice(
         value=round(value, 1),
@@ -524,10 +524,27 @@ def league_report(profiles: dict[str, ManagerProfile]) -> list[str]:
         return ["  No FAAB history yet - bids become predictable after a few weeks."]
 
     ranked = sorted(profiles.values(), key=lambda p: -p.beta)
-    lines = ["__HOW THIS LEAGUE BIDS__"]
-    lines.extend(f"  {p.describe()}" for p in ranked)
-
     observed = [p for p in ranked if p.observations]
+    silent = [p for p in ranked if not p.observations]
+
+    # Managers who have never bid get the league-average profile so the model
+    # has something to work with, but printing that back as though it were
+    # measured - "$1.20/pt, avg $0, max $0 (0 bids)" for all twelve teams - is
+    # inventing a finding. Only what was actually observed gets a line.
+    if not observed:
+        return [
+            "  No FAAB history yet - bids become predictable after a few weeks.",
+            f"  {len(silent)} manager(s) tracked, none with a recorded bid.",
+        ]
+
+    lines = ["__HOW THIS LEAGUE BIDS__"]
+    lines.extend(f"  {p.describe()}" for p in observed)
+    if silent:
+        lines.append(
+            f"  {len(silent)} manager(s) have not bid yet and are modelled on "
+            "the league average: " + ", ".join(sorted(p.name for p in silent))
+        )
+
     if observed:
         betas = [p.beta for p in observed]
         lines.append("")

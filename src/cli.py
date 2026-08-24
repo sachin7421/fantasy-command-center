@@ -411,6 +411,11 @@ def cmd_mockdraft(ctx: Context, args) -> int:
         result = compare_strategies(
             board, slots, n=args.n, num_teams=teams, rounds=rounds,
             my_slot=args.slot, defer_positions=defer, defer_until_round=defer_round,
+            # --seed was accepted and then dropped here, so every run of the
+            # comparison returned byte-identical numbers however it was invoked.
+            seed=args.seed if args.seed is not None else 1234,
+            bye_stack_threshold=int(ctx.cfg.get("draft.bye_stack_warn_threshold", 3)),
+            te_flex_credit=int(ctx.cfg.get("draft.te_flex_credit", 0)),
         )
         print(f"\n  recommender mean : {result.recommender_mean}")
         print(f"  naive ADP mean   : {result.baseline_mean}")
@@ -424,6 +429,8 @@ def cmd_mockdraft(ctx: Context, args) -> int:
     result = simulate_draft(
         board, slots, teams, rounds, my_slot=slot, seed=args.seed,
         defer_positions=defer, defer_until_round=defer_round,
+        bye_stack_threshold=int(ctx.cfg.get("draft.bye_stack_warn_threshold", 3)),
+        te_flex_credit=int(ctx.cfg.get("draft.te_flex_credit", 0)),
     )
     print(f"\nMock draft from slot {slot} ({teams} teams, {rounds} rounds)")
     print(f"  your projected starting lineup : {result.my_points:.1f}")
@@ -552,8 +559,14 @@ def cmd_job(ctx: Context, args) -> int:
             risk_mode=str(ctx.cfg.get("season.risk_mode", "auto")),
             min_gap=float(ctx.cfg.get("season.lineup_swap_min_gap", 1.5)),
         )
-        print(f"Optimal {report.optimal_points:.1f} vs current {report.current_points:.1f} "
-              f"(+{report.gain:.1f}); {len(report.swaps)} change(s).")
+        if not report.has_data:
+            print(f"No week {week} projections for your roster "
+                  f"({report.roster_size} player(s) rostered, "
+                  f"{report.projected} projected) - nothing to compare.")
+        else:
+            print(f"Optimal {report.optimal_points:.1f} vs current "
+                  f"{report.current_points:.1f} "
+                  f"(+{report.gain:.1f}); {len(report.swaps)} change(s).")
         notification = lineup.to_notification(report, season)
 
     elif args.job == "waivers":
@@ -566,7 +579,8 @@ def cmd_job(ctx: Context, args) -> int:
             uses_faab=str(settings.get("uses_faab", "1")) in ("1", "true", "True"),
             budget_left=int(args.budget if args.budget is not None
                             else _my_faab_left(ctx, season, settings)),
-            value_margin=float(ctx.cfg.get("season.waiver_value_margin", 8.0)),
+            value_margin=float(ctx.cfg.get("season.waiver_value_margin", 25.0)),
+            starting_slots=slots,
         )
         print(f"{len(report.claims)} claim(s), {len(report.stashes)} stash(es), "
               f"{len(report.handcuffs)} open handcuff(s).")
@@ -586,8 +600,12 @@ def cmd_job(ctx: Context, args) -> int:
             print("league.my_team_id is not set; skipping.")
             return EXIT_OK
         report = recap.run(ctx.conn, ctx.league_key, team_key, season, max(1, week - 1), slots)
-        print(f"Week {report.week}: {report.actual_points:.1f} scored, "
-              f"{report.points_left_on_bench:.1f} left on bench.")
+        if not report.has_data:
+            print(f"No week {report.week} scores stored "
+                  f"({report.roster_size} player(s) rostered) - no recap.")
+        else:
+            print(f"Week {report.week}: {report.actual_points:.1f} scored, "
+                  f"{report.points_left_on_bench:.1f} left on bench.")
         notification = recap.to_notification(report, season)
 
     elif args.job == "reminders":
@@ -899,6 +917,15 @@ def cmd_startsit(ctx: Context, args) -> int:
         print(f"No roster stored for week {week}. Yahoo sync is needed for this.")
         return EXIT_OK
 
+    # A roster with no projections produces a lineup of zeroes and a confident
+    # "0% to win", which reads as a verdict rather than as missing data. The
+    # same trap the lineup job fell into.
+    projected = sum(1 for r in rows if float(r["mean"] or 0) > 0)
+    if not projected:
+        print(f"No week {week} projections for your roster "
+              f"({len(rows)} player(s) rostered). Run `fcc sync --week {week}`.")
+        return EXIT_OK
+
     roster = [
         PlayerForecast(
             r["player_key"], r["full_name"], r["position"], r["team"] or "",
@@ -1010,6 +1037,15 @@ def cmd_faab(ctx: Context, args) -> int:
     settings = ctx.settings()
     budget_total = int(settings.get("faab_budget") or 100)
 
+    my_key = str(ctx.team_key() or "")
+    if not my_key:
+        # Without it every profile in the league - including yours - lands in
+        # the rival list, so the model prices the player against a field that
+        # contains you, and reports you among the "likely rivals".
+        print("league.my_team_id is not set, so your own team cannot be excluded")
+        print("from the field. Set it in config.yaml for an accurate read.")
+        print("")
+
     # Team names and remaining budgets, when Yahoo has been synced.
     teams = {
         str(r["team_key"]): (r["team_name"] or f"Team {r['team_key']}")
@@ -1034,7 +1070,7 @@ def cmd_faab(ctx: Context, args) -> int:
 
     my_budget = args.budget
     if my_budget is None:
-        my_budget = budgets.get(str(ctx.team_key() or ""), budget_total)
+        my_budget = budgets.get(my_key, budget_total)
     if args.budgets:
         for pair in args.budgets.split(","):
             if ":" not in pair:
@@ -1082,36 +1118,61 @@ def cmd_faab(ctx: Context, args) -> int:
         print(f"No player called {args.player!r} in the database.")
         return EXIT_FAIL
 
-    baseline = args.replacement
-    if baseline is None:
-        # Only players who actually HAVE a projection can define the
-        # baseline. Coalescing a missing projection to zero made the worst
-        # roster spot look like a zero-point player, which it is not.
-        worst = ctx.conn.fetchone(
-            "SELECT MIN(b.points) AS pts FROM rosters r "
-            "JOIN projections_blended b "
-            "  ON b.player_key=r.player_key AND b.season=? AND b.week=0 "
-            "WHERE r.league_key=? AND r.team_key=? AND r.week=? "
-            "  AND b.points IS NOT NULL",
-            (season, ctx.league_key, ctx.team_key() or "", week),
-        )
-        baseline = float(worst["pts"]) if worst and worst["pts"] is not None else 0.0
+    # Same measure as the waiver job: what the claim does to your STARTING
+    # LINEUP. The two commands recommend bids on the same player and used to
+    # disagree, because this one measured him against your worst bench spot -
+    # which credits a backup quarterback with a full starter's value.
+    value = None
+    measure = "value over your worst roster spot"
+    if args.replacement is None and my_key:
+        from src.season import waivers as _w
 
-    # ROS points above replacement, on the same scale the model documents and
-    # ELITE_CLAIM_VALUE is calibrated against. An earlier 0.12 rescaling here
-    # silently put every recommendation on a different scale from the model.
-    value = max(0.0, float(row["points"] or 0) - baseline)
+        roster = _w.load_my_droppables(ctx.conn, ctx.league_key, my_key, season, week)
+        slots = ctx.starting_slots()
+        if roster and slots:
+            target = _w.Candidate(
+                player_key=row["player_key"], name=row["full_name"],
+                position=row["position"], team="", ros_points=float(row["points"] or 0),
+                pct_owned=0.0, trending_add=0, injury_status=None, bye_week=None,
+            )
+            keep = [
+                d for d in roster
+                if d.player_key not in _w._protected_keys(roster, slots)
+            ]
+            after = [d for d in roster if not keep or d.player_key != keep[0].player_key]
+            after.append(target)
+            value = max(
+                0.0, _w._lineup_total(after, slots) - _w._lineup_total(roster, slots)
+            )
+            measure = "what he adds to your starting lineup"
+
+    if value is None:
+        baseline = args.replacement
+        if baseline is None:
+            # Only players who actually HAVE a projection can define the
+            # baseline. Coalescing a missing projection to zero made the worst
+            # roster spot look like a zero-point player, which it is not.
+            worst = ctx.conn.fetchone(
+                "SELECT MIN(b.points) AS pts FROM rosters r "
+                "JOIN projections_blended b "
+                "  ON b.player_key=r.player_key AND b.season=? AND b.week=0 "
+                "WHERE r.league_key=? AND r.team_key=? AND r.week=? "
+                "  AND b.points IS NOT NULL",
+                (season, ctx.league_key, my_key, week),
+            )
+            baseline = float(worst["pts"]) if worst and worst["pts"] is not None else 0.0
+        value = max(0.0, float(row["points"] or 0) - baseline)
+
     weeks_left = max(1, 15 - week)
-    rivals = [pr for key, pr in profiles.items() if key != str(ctx.team_key() or "")]
+    rivals = [pr for key, pr in profiles.items() if key != my_key]
 
     advice = faab.recommend(
         value=value, my_budget=my_budget, rivals=rivals, weeks_left=weeks_left
     )
 
     print(f"__{row['full_name']} ({row['position']})__")
-    print(f"  value over your worst roster spot : {advice.value:.1f}")
-    print(f"  your budget                       : ${my_budget} "
-          f"({weeks_left} weeks left)")
+    print(f"  {measure:<36}: {advice.value:.1f}")
+    print(f"  {'your budget':<36}: ${my_budget} ({weeks_left} weeks left)")
     print("")
     print(f"  RECOMMENDED BID  ${advice.recommended}   "
           f"({advice.win_probability:.0%} to win)")
