@@ -259,12 +259,23 @@ The Supabase project `fantasy-command-center` already has the schema applied,
 with row-level security enabled and no policies - so the publishable anon key
 can read nothing, and only a direct connection as the owner reaches the data.
 
-Get the connection string from **Supabase -> Project Settings -> Database ->
-Connection string -> URI**, choosing the **Session pooler** (port 6543). Put it
-in `.env` locally:
+**The database password is not recoverable.** Supabase generates one at
+project creation and never shows it again, so the first step is to set one you
+know: **Database -> Settings -> Reset database password**, then copy it.
+
+Then take the connection string from **Connect** (top bar of the project) ->
+**Direct** -> Connection method **Session pooler** -> Type **URI**.
+
+Avoid "Direct connection": it resolves over IPv6, which neither Streamlit
+Community Cloud nor GitHub Actions can reach without the paid IPv4 add-on. The
+session pooler is the IPv4 path. The transaction pooler also works - the client
+disables prepared-statement promotion, which is what usually breaks under
+transaction pooling.
+
+Put it in `.env` locally:
 
 ```
-DATABASE_URL=postgresql://postgres.<ref>:<password>@aws-0-us-east-1.pooler.supabase.com:6543/postgres
+DATABASE_URL=postgresql://postgres.<ref>:<password>@<pooler-host>:5432/postgres
 ```
 
 Then move the local data across (safe to re-run; it tops up rather than

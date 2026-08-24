@@ -202,7 +202,19 @@ def connect_postgres(url: str) -> Database:
     if dsn.startswith("postgres://"):
         dsn = "postgresql://" + dsn[len("postgres://"):]
 
-    conn = psycopg.connect(dsn, row_factory=dict_row, autocommit=False, connect_timeout=20)
+    conn = psycopg.connect(
+        dsn,
+        row_factory=dict_row,
+        autocommit=False,
+        connect_timeout=20,
+        # psycopg promotes a statement to a server-side PREPARE after a few
+        # executions. Supabase's transaction pooler (port 6543) multiplexes
+        # statements across backends, so a prepared statement can be issued on a
+        # connection that never saw the PREPARE - which fails at runtime, and
+        # only under load. Disabling the promotion makes the app safe on the
+        # direct connection and on either pooler.
+        prepare_threshold=None,
+    )
     return Database(conn, "postgres", url)
 
 
