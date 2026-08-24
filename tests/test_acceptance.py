@@ -342,11 +342,10 @@ def test_every_command_in_the_parser_has_a_handler():
     )
     known = set(subparsers.choices)
 
-    handled = {
-        "doctor", "sync", "sync-settings", "verify-settings", "rank", "draft",
-        "mockdraft", "daily", "dashboard", "migrate", "test-notify", "setup",
-        "sync-usage", "regression", "accuracy", "startsit", "playoffs", "faab",
-    }
+    # Read from the dispatch table itself. A hand-copied list here passed for
+    # as long as it took to add a command and forget to update it - which is
+    # the exact failure this test claims to rule out.
+    handled = set(cli.HANDLERS) | {"setup"}
     # Anything else must be one of the season jobs, which share a handler.
     jobs = {"injuries", "lineup", "waivers", "byes", "recap", "trades", "reminders"}
     unhandled = known - handled - jobs

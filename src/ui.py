@@ -12,12 +12,14 @@ Choices that follow from that:
   grayscale.
 * **Tier is a left border**, not a colour fill. It reads as a group boundary
   without competing with the position badge for attention.
-* **One accent colour (amber) means "action"** and is used nowhere else, so the
+* **One accent colour (Jets green) means "action"** and is used nowhere else, so the
   Draft button is never ambiguous.
 * **Numbers are tabular-figure aligned** so columns of points and VORP compare
   vertically at a glance.
 """
 from __future__ import annotations
+
+from string import Template
 
 # Position hues. These are NOT chosen by eye: they are slots 1-6 of a validated
 # categorical theme, assigned in a fixed order and never cycled.
@@ -81,6 +83,13 @@ MUTED = "#94A3B8"
 GOTHAM_GREEN = "#125740"
 ACCENT = "#2E9E6B"
 ACCENT_BRIGHT = "#3FBF85"
+
+
+def _rgb(hex_color: str) -> str:
+    """"#2E9E6B" -> "46,158,107", so rgba() shares one source of truth with hex."""
+    h = hex_color.lstrip("#")
+    return ",".join(str(int(h[i:i + 2], 16)) for i in (0, 2, 4))
+
 
 #: Injury status -> colour. Anything unlisted is treated as healthy.
 STATUS_COLORS = {
@@ -177,7 +186,7 @@ def survival_bar(probability: float) -> str:
     )
 
 
-CSS = """
+_CSS = Template("""
 <style>
   /* The default top padding clipped the first row of metrics, so the header
      had its labels cut off at the viewport edge. */
@@ -187,7 +196,11 @@ CSS = """
     max-width: 1500px;
   }
   #MainMenu, footer { visibility: hidden; }
-  header[data-testid="stHeader"] { background: transparent; height: 0; }
+  /* Transparent, but NOT zero-height: that container also holds the sidebar
+     expand control, and collapsing it left no way to reopen the sidebar - which
+     is where the Draft/Season switch lives. The padding-top above is what
+     actually fixed the clipped metric labels. */
+  header[data-testid="stHeader"] { background: transparent; }
 
   /* Numbers should line up vertically for comparison. */
   [data-testid="stMetricValue"], .stDataFrame { font-variant-numeric: tabular-nums; }
@@ -199,7 +212,7 @@ CSS = """
   }
 
   /* A thin club-green rule under the sidebar brand. */
-  [data-testid="stSidebar"] { border-right: 1px solid rgba(46,158,107,0.22); }
+  [data-testid="stSidebar"] { border-right: 1px solid rgba($ACCENT_RGB,0.22); }
 
   .fcc-card {
     border: 1px solid rgba(148,163,184,0.16);
@@ -212,7 +225,7 @@ CSS = """
   }
   .fcc-card:hover {
     background: rgba(21,32,27,0.95);
-    border-color: rgba(46,158,107,0.4);
+    border-color: rgba($ACCENT_RGB,0.4);
   }
   .fcc-name { font-size: 1.02rem; font-weight: 700; letter-spacing: -0.01em; }
   .fcc-rank {
@@ -230,8 +243,8 @@ CSS = """
 
   /* On the clock: the one moment the page should shout, in club green. */
   .fcc-clock {
-    background: linear-gradient(90deg, rgba(46,158,107,0.22), rgba(18,87,64,0.04));
-    border-left: 3px solid #2E9E6B;
+    background: linear-gradient(90deg, rgba($ACCENT_RGB,0.22), rgba($GREEN_RGB,0.04));
+    border-left: 3px solid $ACCENT;
     padding: 10px 14px; border-radius: 8px; margin-bottom: 14px;
     font-weight: 650;
   }
@@ -240,18 +253,18 @@ CSS = """
     display:inline-block; padding:3px 9px; border-radius:6px; margin:2px 4px 2px 0;
     font-size:0.76rem; font-weight:650; font-variant-numeric: tabular-nums;
   }
-  .fcc-slot-filled { background: rgba(46,158,107,0.18); color:#6EE7B7; }
+  .fcc-slot-filled { background: rgba($ACCENT_RGB,0.18); color:#6EE7B7; }
   .fcc-slot-open   { background: rgba(251,191,36,0.14); color:#FBBF24; }
 
   /* Green means action, and nothing else uses it. */
   .stButton button[kind="primary"] {
-    background: #2E9E6B; color: #06120C; border: none; font-weight: 700;
+    background: $ACCENT; color: #06120C; border: none; font-weight: 700;
   }
-  .stButton button[kind="primary"]:hover { background: #3FBF85; color: #06120C; }
+  .stButton button[kind="primary"]:hover { background: $ACCENT_BRIGHT; color: #06120C; }
 
   .fcc-brand {
     font-weight: 800; letter-spacing: -0.02em; font-size: 1.05rem;
-    color: #E9EDEA; border-left: 4px solid #2E9E6B; padding-left: 9px;
+    color: #E9EDEA; border-left: 4px solid $ACCENT; padding-left: 9px;
     margin-bottom: 2px;
   }
   .fcc-brand-sub {
@@ -259,7 +272,14 @@ CSS = """
     text-transform: uppercase; padding-left: 13px;
   }
 </style>
-"""
+""")
+
+CSS = _CSS.substitute(
+    ACCENT=ACCENT,
+    ACCENT_BRIGHT=ACCENT_BRIGHT,
+    ACCENT_RGB=_rgb(ACCENT),
+    GREEN_RGB=_rgb(GOTHAM_GREEN),
+)
 
 
 def inject_css() -> None:

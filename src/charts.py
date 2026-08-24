@@ -186,8 +186,11 @@ def projection_drift(rows: Sequence[dict], height: int = 280):
         return None
 
     sources = sorted(set(frame["source"]))
-    # Reuse the same fixed slot order so a source keeps its colour everywhere.
-    slots = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"]
+    # Taken from the single palette definition rather than copied. A duplicated
+    # copy here went stale when QB moved off the aqua slot, and still contained
+    # an aqua only a few dE from the action accent - reintroducing exactly the
+    # ambiguity that move was meant to remove.
+    slots = list(POSITION_HUES.values())
     scale = alt.Scale(domain=sources, range=slots[: len(sources)])
 
     chart = (

@@ -33,7 +33,12 @@ class Context:
 
     def __init__(self, config_path: str = "config.yaml", db_path: str | None = None):
         self.cfg = Config.load(config_path)
-        self.conn = db.init_db(db_path or self.cfg.db_path)
+        # `--db` names a file, so it means SQLite - even when .env or Streamlit
+        # secrets define DATABASE_URL. Without this the flag looked like it
+        # worked and quietly operated on the hosted league database instead.
+        self.conn = db.init_db(
+            db_path or self.cfg.db_path, force_sqlite=db_path is not None
+        )
         self.idmap = IdMapper(self.conn, self.cfg.get("paths.manual_id_overrides"))
         self._yahoo = None
         self._settings: dict[str, Any] | None = None
@@ -98,6 +103,33 @@ class Context:
         week = int(state.get("week") or 1)
         return week if str(state.get("season_type")) == "regular" else 1
 
+    def yahoo_configured(self) -> bool:
+        """Whether Yahoo credentials are present, without authenticating.
+
+        Checked in two places because the two deployments differ: locally the
+        credentials live in a .env file, while on Streamlit Cloud and GitHub
+        Actions they arrive as environment variables and no .env exists. Looking
+        only at the file made every hosted run silently skip the league sync.
+
+        A real assignment with a real value, not a substring match: the file
+        ships with `# YAHOO_CONSUMER_KEY=...` commented out as a template, and
+        a naive `in` test reported that placeholder as configured - which would
+        have sent every scheduled run off to authenticate with nothing.
+        """
+        if (os.environ.get("YAHOO_CONSUMER_KEY") or "").strip():
+            return True
+        env_file = Path(self.cfg.get("paths.env_dir", ".")) / ".env"
+        if not env_file.exists():
+            return False
+        for line in env_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = line.strip()
+            if line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            if key.strip() == "YAHOO_CONSUMER_KEY" and value.strip().strip("\"'"):
+                return True
+        return False
+
     def team_key(self) -> str | None:
         configured = self.cfg.get("league.my_team_id")
         return str(configured) if configured else None
@@ -151,16 +183,14 @@ def cmd_doctor(ctx: Context, args) -> int:
         )
         print(f"    [{mark}] {health['source']:<14} {detail}")
 
-    env_file = Path(ctx.cfg.get("paths.env_dir", ".")) / ".env"
-    has_creds = env_file.exists() and "YAHOO_CONSUMER_KEY" in env_file.read_text(
-        encoding="utf-8", errors="ignore"
-    )
+    has_creds = ctx.yahoo_configured()
     print(f"\n  yahoo oauth : {'configured' if has_creds else 'NOT configured - run: fcc setup'}")
 
     counts = {
         table: ctx.conn.execute(f"SELECT COUNT(*) c FROM {table}").fetchone()["c"]
         for table in ("players", "projections", "projections_blended", "adp",
-                      "injuries", "trending", "rosters", "free_agents", "draft_picks")
+                      "injuries", "trending", "rosters", "free_agents", "draft_picks",
+                      "transactions", "team_budgets")
     }
     print("\n  stored rows :")
     for table, count in counts.items():
@@ -250,6 +280,83 @@ def cmd_sync(ctx: Context, args) -> int:
     print(f"  blended     : {blended:,} season projections")
     if week:
         proj.blend_all(ctx.conn, season, week, weights=ctx.cfg.get("projections.weights"))
+
+    # The league's own state, which only Yahoo has. Skipped rather than failed
+    # when credentials are absent, so `fcc sync` keeps working before access is
+    # granted - which is exactly the state this project has been in.
+    if ctx.yahoo_configured():
+        sync_yahoo_league(ctx, season, week or 1, force=args.force)
+    else:
+        print("  yahoo       : skipped (no credentials; run: fcc setup)")
+    return EXIT_OK
+
+
+def sync_yahoo_league(ctx: Context, season: int, week: int, force: bool = False) -> dict:
+    """Pull the league's own state: teams, rosters, free agents, transactions.
+
+    Every season job reads these four tables and nothing else filled them, so
+    until this ran the whole of season mode was querying empty tables and
+    reporting "no claims" rather than failing - the quietest possible way for a
+    feature to be broken.
+
+    Each leg is independent: a failure in one is reported and the rest still
+    run, because a waiver run with stale free agents is far better than none.
+    """
+    yahoo = ctx.yahoo
+    out = {"teams": 0, "rosters": 0, "free_agents": 0, "transactions": 0}
+
+    try:
+        teams = yahoo.fetch_teams(force=force)
+        out["teams"] = yahoo.store_teams(teams, season)
+        print(f"  teams       : {out['teams']}")
+    except Exception as exc:
+        log.warning("Yahoo teams sync failed: %s", exc)
+        print(f"  teams       : unavailable ({exc})")
+        teams = []
+
+    for team in teams:
+        team_id = team.get("team_id")
+        if team_id in (None, ""):
+            continue
+        try:
+            players = yahoo.fetch_roster(int(team_id), week, force=force)
+            out["rosters"] += yahoo.store_roster(
+                int(team_id), week, players, team.get("name")
+            )
+        except Exception as exc:
+            log.warning("Roster sync failed for team %s: %s", team_id, exc)
+    if teams:
+        print(f"  rosters     : {out['rosters']:,} slots across {len(teams)} teams")
+
+    try:
+        free_agents = yahoo.fetch_free_agents(
+            count=int(ctx.cfg.get("sources.yahoo.free_agent_count", 200)), force=force
+        )
+        out["free_agents"] = yahoo.store_free_agents(free_agents, week)
+        print(f"  free agents : {out['free_agents']:,}")
+    except Exception as exc:
+        log.warning("Free agent sync failed: %s", exc)
+        print(f"  free agents : unavailable ({exc})")
+
+    try:
+        txns = yahoo.fetch_transactions(force=force)
+        out["transactions"] = yahoo.store_transactions(txns)
+        print(f"  transactions: {out['transactions']:,} (FAAB bid history)")
+    except Exception as exc:
+        log.warning("Transaction sync failed: %s", exc)
+        print(f"  transactions: unavailable ({exc})")
+
+    return out
+
+
+def cmd_sync_league(ctx: Context, args) -> int:
+    """`fcc sync-league` - the Yahoo half of the sync on its own."""
+    if not ctx.yahoo_configured():
+        print("Yahoo credentials are not configured; run: fcc setup")
+        return EXIT_FAIL
+    week = args.week if args.week is not None else ctx.current_week()
+    print(f"Syncing league state for week {week}...")
+    sync_yahoo_league(ctx, ctx.season, week, force=args.force)
     return EXIT_OK
 
 
@@ -397,6 +504,26 @@ def _print_recommendations(tracker, recommender, board, slots, my_slot, position
         print(f"\nStarting slots still open: {gaps or 'none'}")
 
 
+def _my_faab_left(ctx: Context, season: int, settings: dict) -> int:
+    """Your remaining FAAB, falling back to the full budget before any sync.
+
+    Recommending bids against the season-opening budget in week 11 is not a
+    small error - it is the difference between a bid you can make and one you
+    cannot.
+    """
+    default = int(settings.get("faab_budget") or 100)
+    if not ctx.conn.table_exists("team_budgets"):
+        return default
+    row = ctx.conn.fetchone(
+        "SELECT faab_balance FROM team_budgets "
+        "WHERE league_key=? AND season=? AND team_key=?",
+        (ctx.league_key, season, str(ctx.team_key() or "")),
+    )
+    if row and row["faab_balance"] is not None:
+        return int(row["faab_balance"])
+    return default
+
+
 def cmd_job(ctx: Context, args) -> int:
     """Run one season job and notify (spec 6)."""
     from src.season import byes, injuries, lineup, recap, reminders, trades, waivers
@@ -438,7 +565,7 @@ def cmd_job(ctx: Context, args) -> int:
             ctx.conn, ctx.league_key, team_key, season, week,
             uses_faab=str(settings.get("uses_faab", "1")) in ("1", "true", "True"),
             budget_left=int(args.budget if args.budget is not None
-                            else settings.get("faab_budget", 100)),
+                            else _my_faab_left(ctx, season, settings)),
             value_margin=float(ctx.cfg.get("season.waiver_value_margin", 8.0)),
         )
         print(f"{len(report.claims)} claim(s), {len(report.stashes)} stash(es), "
@@ -891,12 +1018,33 @@ def cmd_faab(ctx: Context, args) -> int:
             (ctx.league_key,),
         )
     }
-    budgets: dict[str, int] = {}
+    # Synced balances first; --budgets then overrides individual teams, so the
+    # flag stays useful for what-ifs without being the only way to supply them.
+    # Left unsupplied, every hard-ceiling branch in the model is skipped and the
+    # headline "who can actually afford him" constraint does nothing at all.
+    budgets: dict[str, int] = {
+        str(r["team_key"]): int(r["faab_balance"])
+        for r in ctx.conn.fetchall(
+            "SELECT team_key, faab_balance FROM team_budgets "
+            "WHERE league_key=? AND season=?",
+            (ctx.league_key, season),
+        )
+        if r["faab_balance"] is not None
+    } if ctx.conn.table_exists("team_budgets") else {}
+
+    my_budget = args.budget
+    if my_budget is None:
+        my_budget = budgets.get(str(ctx.team_key() or ""), budget_total)
     if args.budgets:
         for pair in args.budgets.split(","):
-            if ":" in pair:
-                key, amount = pair.split(":", 1)
-                budgets[key.strip()] = int(amount)
+            if ":" not in pair:
+                continue
+            key, amount = pair.split(":", 1)
+            try:
+                budgets[key.strip()] = int(amount.strip())
+            except ValueError:
+                print(f"Ignoring unreadable budget entry {pair.strip()!r} "
+                      "(expected team:amount, e.g. 3:40).")
 
     records = faab.parse_bids(ctx.conn, ctx.league_key)
     if records:
@@ -936,35 +1084,43 @@ def cmd_faab(ctx: Context, args) -> int:
 
     baseline = args.replacement
     if baseline is None:
+        # Only players who actually HAVE a projection can define the
+        # baseline. Coalescing a missing projection to zero made the worst
+        # roster spot look like a zero-point player, which it is not.
         worst = ctx.conn.fetchone(
-            "SELECT MIN(COALESCE(b.points, 0)) AS pts FROM rosters r "
-            "LEFT JOIN projections_blended b "
-            "       ON b.player_key=r.player_key AND b.season=? AND b.week=0 "
-            "WHERE r.league_key=? AND r.team_key=? AND r.week=?",
+            "SELECT MIN(b.points) AS pts FROM rosters r "
+            "JOIN projections_blended b "
+            "  ON b.player_key=r.player_key AND b.season=? AND b.week=0 "
+            "WHERE r.league_key=? AND r.team_key=? AND r.week=? "
+            "  AND b.points IS NOT NULL",
             (season, ctx.league_key, ctx.team_key() or "", week),
         )
-        baseline = float(worst["pts"] or 0) if worst else 0.0
+        baseline = float(worst["pts"]) if worst and worst["pts"] is not None else 0.0
 
-    # Season points above replacement, converted to a weekly-ish scale so the
-    # dollars-per-point figures stay in a range a human recognises.
-    value = max(0.0, (float(row["points"] or 0) - baseline)) * 0.12
+    # ROS points above replacement, on the same scale the model documents and
+    # ELITE_CLAIM_VALUE is calibrated against. An earlier 0.12 rescaling here
+    # silently put every recommendation on a different scale from the model.
+    value = max(0.0, float(row["points"] or 0) - baseline)
     weeks_left = max(1, 15 - week)
     rivals = [pr for key, pr in profiles.items() if key != str(ctx.team_key() or "")]
 
     advice = faab.recommend(
-        value=value, my_budget=args.budget, rivals=rivals, weeks_left=weeks_left
+        value=value, my_budget=my_budget, rivals=rivals, weeks_left=weeks_left
     )
 
     print(f"__{row['full_name']} ({row['position']})__")
     print(f"  value over your worst roster spot : {advice.value:.1f}")
-    print(f"  your budget                       : ${args.budget} "
+    print(f"  your budget                       : ${my_budget} "
           f"({weeks_left} weeks left)")
     print("")
     print(f"  RECOMMENDED BID  ${advice.recommended}   "
           f"({advice.win_probability:.0%} to win)")
-    print(f"  competitive from ${advice.min_competitive}, "
-          f"near-certain at ${advice.max_sane}")
-    print(f"  expected surplus at the recommended bid: {advice.expected_surplus:+.1f}")
+    print(f"  worth to you ${advice.worth_to_you}  |  "
+          f"going rate ${advice.price_to_win}  |  "
+          f"competitive from ${advice.min_competitive}")
+    if advice.walk_away:
+        print("  VERDICT: likely to cost well past his value - let him go unless "
+              "he fills a genuine hole")
     if advice.contenders:
         print(f"  likely rivals: {', '.join(advice.contenders)}")
     for note in advice.notes:
@@ -1071,6 +1227,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync.add_argument("--force", action="store_true", help="bypass caches")
     p_sync.add_argument("--week", type=int)
 
+    p_syncl = sub.add_parser(
+        "sync-league", help="pull rosters, free agents and transactions from Yahoo"
+    )
+    p_syncl.add_argument("--force", action="store_true", help="bypass caches")
+    p_syncl.add_argument("--week", type=int)
+
     sub.add_parser("sync-settings", help="pull league settings from Yahoo")
     sub.add_parser("verify-settings", help="diff bootstrap settings against Yahoo")
 
@@ -1134,7 +1296,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_faab = sub.add_parser("faab", help="what to bid, and what it will take")
     p_faab.add_argument("player", nargs="?", help="player to bid on")
-    p_faab.add_argument("--budget", type=int, default=100, help="your FAAB left")
+    p_faab.add_argument("--budget", type=int, help="your FAAB left "
+                        "(defaults to the league budget)")
     p_faab.add_argument("--week", type=int)
     p_faab.add_argument("--replacement", type=float,
                         help="season points of the player he would replace")
@@ -1145,6 +1308,31 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("test-notify", help="send a test notification on every channel")
     sub.add_parser("dashboard", help="launch the Streamlit dashboard")
     return parser
+
+
+# Command -> handler. Module level so the parser and the dispatch table can be
+# checked against each other; a hand-maintained copy of this list in the tests
+# passed while `sync-league` had no handler at all.
+HANDLERS = {
+    "doctor": cmd_doctor,
+    "sync": cmd_sync,
+    "sync-league": cmd_sync_league,
+    "sync-settings": cmd_sync_settings,
+    "verify-settings": cmd_verify_settings,
+    "rank": cmd_rank,
+    "draft": cmd_draft,
+    "mockdraft": cmd_mockdraft,
+    "daily": cmd_daily,
+    "sync-usage": cmd_sync_usage,
+    "regression": cmd_regression,
+    "accuracy": cmd_accuracy,
+    "startsit": cmd_startsit,
+    "playoffs": cmd_playoffs,
+    "faab": cmd_faab,
+    "test-notify": cmd_test_notify,
+    "migrate": cmd_migrate,
+    "dashboard": cmd_dashboard,
+}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1163,25 +1351,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Startup failed: {exc}", file=sys.stderr)
         return EXIT_FAIL
 
-    handlers = {
-        "doctor": cmd_doctor,
-        "sync": cmd_sync,
-        "sync-settings": cmd_sync_settings,
-        "verify-settings": cmd_verify_settings,
-        "rank": cmd_rank,
-        "draft": cmd_draft,
-        "mockdraft": cmd_mockdraft,
-        "daily": cmd_daily,
-        "sync-usage": cmd_sync_usage,
-        "regression": cmd_regression,
-        "accuracy": cmd_accuracy,
-        "startsit": cmd_startsit,
-        "playoffs": cmd_playoffs,
-        "faab": cmd_faab,
-        "test-notify": cmd_test_notify,
-        "migrate": cmd_migrate,
-        "dashboard": cmd_dashboard,
-    }
+    handlers = HANDLERS
     handler = handlers.get(args.command, cmd_job)
     try:
         return handler(ctx, args)

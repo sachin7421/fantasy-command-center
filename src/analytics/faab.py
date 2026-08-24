@@ -207,33 +207,103 @@ def _extract_add(payload: dict[str, Any]) -> tuple[str | None, str | None, str |
         if str(data.get("type")) != "add":
             continue
         name = player.get("full_name") or (player.get("name") or {}).get("full")
+        team = data.get("destination_team_key") or data.get("destination_team_id")
         return (
-            data.get("destination_team_key") or data.get("destination_team_id"),
+            _bare_team_id(team),
             str(player.get("player_id")) if player.get("player_id") else None,
             name,
         )
     return None, None, None
 
 
-def attach_values(conn: Database, records: Sequence[BidRecord], season: int) -> None:
-    """Fill in what each player was worth when he was claimed.
+def _bare_team_id(team_key: Any) -> str | None:
+    """Reduce a Yahoo team key to the bare id used everywhere else here.
 
-    Uses the season projection stored at the time. Without it a bid cannot be
-    turned into dollars-per-point, and the manager profile falls back to raw bid
-    sizes only.
+    Yahoo returns "449.l.12345.t.3" on transactions, while `rosters.team_key`
+    and `league.my_team_id` both hold "3". Left unreduced, each manager gets two
+    profiles - one carrying his history, one an empty league-average placeholder
+    - so the rival field doubles and you end up bidding against yourself.
+    """
+    if team_key in (None, ""):
+        return None
+    text = str(team_key)
+    if ".t." in text:
+        return text.rsplit(".t.", 1)[-1]
+    return text
+
+
+def resolve_player_keys(conn: Database, records: Sequence[BidRecord]) -> None:
+    """Turn Yahoo numeric player ids into our canonical player keys.
+
+    The transaction feed carries Yahoo's own numeric id ("31896"), while every
+    table here is keyed on a normalised name ("jamarr chase|WR"). Looking the
+    former up directly matches nothing, which silently leaves every bid without
+    a value and collapses the whole per-manager model to a constant.
     """
     for record in records:
         if not record.player_key:
             continue
         row = conn.fetchone(
-            "SELECT points FROM projections_blended "
-            "WHERE player_key=? AND season=? AND week=0",
+            "SELECT player_key FROM players WHERE yahoo_id=?", (record.player_key,)
+        )
+        if row is None:
+            row = conn.fetchone(
+                "SELECT player_key FROM player_id_map "
+                "WHERE source='yahoo' AND source_id=?",
+                (record.player_key,),
+            )
+        record.player_key = row["player_key"] if row else None
+
+
+def replacement_levels(conn: Database, season: int) -> dict[str, float]:
+    """Roughly what a freely available player at each position projects for.
+
+    Taken as the median projection among rostered players at the position: a
+    crude but stable stand-in for the board's replacement level, and stable is
+    what matters here since it only has to be CONSISTENT with how value is
+    computed at bid time.
+    """
+    rows = conn.fetchall(
+        "SELECT p.position, b.points FROM projections_blended b "
+        "JOIN players p USING(player_key) "
+        "WHERE b.season=? AND b.week=0 AND b.points IS NOT NULL",
+        (season,),
+    )
+    grouped: dict[str, list[float]] = {}
+    for r in rows:
+        grouped.setdefault(r["position"], []).append(float(r["points"]))
+    out: dict[str, float] = {}
+    for position, values in grouped.items():
+        values.sort()
+        if values:
+            out[position] = values[len(values) // 2]
+    return out
+
+
+def attach_values(conn: Database, records: Sequence[BidRecord], season: int) -> None:
+    """Fill in what each player was worth when he was claimed.
+
+    Value is ROS points ABOVE REPLACEMENT, the same quantity the bid callers
+    pass in. Training on one scale and predicting on another was a real bug
+    here: `beta` learned against a gross projection is several times too small
+    when applied to points-over-replacement, which drags every predicted rival
+    bid down and makes the model far too optimistic about winning.
+    """
+    resolve_player_keys(conn, records)
+    replacement = replacement_levels(conn, season)
+
+    for record in records:
+        if not record.player_key:
+            continue
+        row = conn.fetchone(
+            "SELECT b.points, p.position FROM projections_blended b "
+            "JOIN players p USING(player_key) "
+            "WHERE b.player_key=? AND b.season=? AND b.week=0",
             (record.player_key, season),
         )
-        if row and row["points"]:
-            # Value is what he is worth ABOVE a freely available player, not his
-            # gross projection - nobody bids on gross points.
-            record.value = max(0.0, float(row["points"]) * 0.12)
+        if row and row["points"] is not None:
+            baseline = replacement.get(row["position"], 0.0)
+            record.value = max(0.0, float(row["points"]) - baseline)
 
 
 def learn_profiles(

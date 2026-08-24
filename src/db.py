@@ -126,6 +126,17 @@ CREATE TABLE IF NOT EXISTS rosters (
     PRIMARY KEY (league_key, team_key, player_key, week)
 );
 
+CREATE TABLE IF NOT EXISTS team_budgets (
+    league_key      TEXT NOT NULL,
+    season          INTEGER NOT NULL,
+    team_key        TEXT NOT NULL,
+    team_name       TEXT,
+    faab_balance    INTEGER,
+    waiver_priority INTEGER,
+    fetched_at      TEXT NOT NULL,
+    PRIMARY KEY (league_key, season, team_key)
+);
+
 CREATE TABLE IF NOT EXISTS transactions (
     league_key   TEXT NOT NULL,
     txn_id       TEXT NOT NULL,
@@ -402,8 +413,11 @@ def connect(
     *,
     same_thread: bool = True,
     url: str | None = None,
+    force_sqlite: bool = False,
 ) -> Database:
-    return _connect(db_path, url=url, same_thread=same_thread)
+    return _connect(
+        db_path, url=url, same_thread=same_thread, force_sqlite=force_sqlite
+    )
 
 
 def init_db(
@@ -411,8 +425,9 @@ def init_db(
     *,
     same_thread: bool = True,
     url: str | None = None,
+    force_sqlite: bool = False,
 ) -> Database:
-    conn = connect(db_path, same_thread=same_thread, url=url)
+    conn = connect(db_path, same_thread=same_thread, url=url, force_sqlite=force_sqlite)
     conn.executescript(schema_for(conn.dialect))
     return conn
 

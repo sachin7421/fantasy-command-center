@@ -85,14 +85,27 @@ def _ros_weeks(week: int, final_week: int = 17) -> int:
 def load_free_agents(
     conn: sqlite3.Connection, league_key: str, season: int, week: int, limit: int = 200
 ) -> list[Candidate]:
+    """Available players, valued on rest-of-season points.
+
+Both projection joins prefer the SEASON line (week 0) and fall back to the
+weekly one. The field is called `ros_points` and the output says "ROS pts", but
+the query used to read week N only - so every number here was a single week's
+projection wearing a rest-of-season label. That is not just cosmetic: the value
+is handed to the FAAB model, whose `ELITE_CLAIM_VALUE` and whose learned rival
+bids are both calibrated against season points above replacement. Feeding it a
+weekly figure understated every claim by roughly the number of weeks left, and
+recommended $1 bids on players worth real money.
+    """
     rows = conn.execute(
         """
         SELECT f.player_key, f.pct_owned, p.full_name, p.position, p.team, p.bye_week,
-               COALESCE(b.points, j.points, 0) AS pts,
-               COALESCE(t.count, 0)            AS trending,
+               COALESCE(s.points, b.points, j.points, 0) AS pts,
+               COALESCE(t.count, 0)                      AS trending,
                i.status                        AS injury_status
         FROM free_agents f
         JOIN players p USING(player_key)
+        LEFT JOIN projections_blended s
+               ON s.player_key=f.player_key AND s.season=:season AND s.week=0
         LEFT JOIN projections_blended b
                ON b.player_key=f.player_key AND b.season=:season AND b.week=:week
         LEFT JOIN projections j
@@ -130,13 +143,20 @@ def load_free_agents(
 def load_my_droppables(
     conn: sqlite3.Connection, league_key: str, team_key: str, season: int, week: int
 ) -> list[Candidate]:
+    """Your roster, worst first, on the same season scale as the free agents.
+
+    Both sides of the comparison have to be measured the same way or the margin
+    is meaningless; see `load_free_agents` for why that is week 0.
+    """
     rows = conn.execute(
         """
         SELECT r.player_key, p.full_name, p.position, p.team, p.bye_week,
-               COALESCE(b.points, j.points, 0) AS pts,
+               COALESCE(s.points, b.points, j.points, 0) AS pts,
                i.status AS injury_status
         FROM rosters r
         JOIN players p USING(player_key)
+        LEFT JOIN projections_blended s
+               ON s.player_key=r.player_key AND s.season=:season AND s.week=0
         LEFT JOIN projections_blended b
                ON b.player_key=r.player_key AND b.season=:season AND b.week=:week
         LEFT JOIN projections j
@@ -253,7 +273,7 @@ def run(
     week: int,
     uses_faab: bool = True,
     budget_left: int = 100,
-    value_margin: float = 8.0,
+    value_margin: float = 25.0,
     top_n: int = 8,
 ) -> WaiverReport:
     free_agents = load_free_agents(conn, league_key, season, week)
@@ -281,8 +301,21 @@ def run(
                     (league_key,),
                 )
             }
+            # Remaining budgets are the sharpest input the model has: a
+            # manager with $2 left is not a rival whatever his habits. Without
+            # them every hard-ceiling branch is skipped and the feature is inert.
+            balances = {
+                str(r["team_key"]): int(r["faab_balance"])
+                for r in conn.fetchall(
+                    "SELECT team_key, faab_balance FROM team_budgets "
+                    "WHERE league_key=? AND season=?",
+                    (league_key, season),
+                )
+                if r["faab_balance"] is not None
+            } if conn.table_exists("team_budgets") else {}
+
             if records or names:
-                profiles = faab_model.learn_profiles(records, names)
+                profiles = faab_model.learn_profiles(records, names, balances)
         except Exception as exc:  # pragma: no cover - optional enrichment
             log.info("FAAB profiles unavailable: %s", exc)
 
@@ -327,14 +360,28 @@ def run(
                 rivals = [
                     p for key, p in profiles.items() if key != str(team_key)
                 ]
+                # `gain` is already ROS points above the droppable, which is
+                # exactly the scale the model documents. It must NOT be rescaled.
                 advice = faab_model.recommend(
-                    value=gain * 0.12, my_budget=budget_left,
+                    value=gain, my_budget=budget_left,
                     rivals=rivals, weeks_left=weeks_left,
                 )
             if advice and advice.recommended:
-                claim.bid_min = advice.min_competitive
+                # The three numbers are rendered as a range around the
+                # recommendation, so they have to bracket it. When a player is
+                # worth less to you than the league will pay, the recommendation
+                # sits BELOW the competitive floor, and printing the raw numbers
+                # gave "$63-$63, recommend $46" - three true figures arranged
+                # into something unreadable. The note below says the same thing
+                # in words.
                 claim.bid_rec = advice.recommended
-                claim.bid_max = advice.max_sane
+                claim.bid_min = min(advice.min_competitive, advice.recommended)
+                claim.bid_max = max(advice.price_to_win, advice.recommended)
+                if advice.recommended < advice.min_competitive:
+                    claim.reasons.append(
+                        f"he is worth ${advice.recommended} to you but the league "
+                        f"is paying about ${advice.price_to_win}"
+                    )
                 if advice.win_probability:
                     claim.reasons.append(
                         f"{advice.win_probability:.0%} to win at ${advice.recommended} "

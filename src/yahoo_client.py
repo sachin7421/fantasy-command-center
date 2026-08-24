@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -86,7 +87,12 @@ class YahooClient:
                 game_id=self.cfg.get("league.game_id"),
                 env_file_location=env_dir,
                 save_token_data_to_env_file=True,
-                browser_callback=bool(self.cfg.get("league.browser_callback", True)),
+                # Defaults to whether anyone is actually there to click it. A
+                # scheduled run with no TTY would otherwise block on an OAuth
+                # browser prompt until the job timed out.
+                browser_callback=bool(
+                    self.cfg.get("league.browser_callback", sys.stdin.isatty())
+                ),
                 retries=3,
                 backoff=1,
             )
@@ -213,6 +219,36 @@ class YahooClient:
         key = f"yahoo:teams:{self.league_key}"
         payload, _ = self._cached(key, self.query.get_league_teams, force)
         return payload or []
+
+    def store_teams(self, teams: Iterable[dict[str, Any]], season: int) -> int:
+        """Persist the team list and each manager's remaining FAAB.
+
+        Remaining budget is the sharpest input the bid model has - a manager
+        sitting on $2 is not a rival however aggressively he normally bids - so
+        it is worth a table of its own rather than being re-derived from the
+        transaction log, which only shows what was spent, not what was carried.
+        """
+        stored = 0
+        for team in teams:
+            team_id = team.get("team_id")
+            if team_id in (None, ""):
+                continue
+            self.conn.execute(
+                "INSERT INTO team_budgets(league_key, season, team_key, team_name, "
+                "faab_balance, waiver_priority, fetched_at) VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(league_key, season, team_key) DO UPDATE SET "
+                "team_name=excluded.team_name, faab_balance=excluded.faab_balance, "
+                "waiver_priority=excluded.waiver_priority, fetched_at=excluded.fetched_at",
+                (
+                    self.league_key, int(season), str(team_id), team.get("name"),
+                    _as_int(team.get("faab_balance")),
+                    _as_int(team.get("waiver_priority")),
+                    db.utcnow(),
+                ),
+            )
+            stored += 1
+        self.conn.commit()
+        return stored
 
     def my_team_id(self) -> int | None:
         """The configured team id, or auto-detect via the authenticated user."""

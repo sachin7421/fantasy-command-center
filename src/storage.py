@@ -252,13 +252,23 @@ def connect(
     db_path: str | Path | None = None,
     url: str | None = None,
     same_thread: bool = True,
+    force_sqlite: bool = False,
 ) -> Database:
     """Open the configured database.
 
-    Precedence: an explicit `url`, then DATABASE_URL from the environment, then
-    the local SQLite file. This means the same code path serves a laptop with no
-    configuration and a cloud deployment with one secret set.
+    Precedence: `force_sqlite`, then an explicit `url`, then DATABASE_URL from
+    the environment, then the local SQLite file. This means the same code path
+    serves a laptop with no configuration and a cloud deployment with one secret
+    set.
+
+    `force_sqlite` exists because naming a file is an unambiguous statement of
+    intent. `fcc --db scratch.db` silently opening the hosted Postgres instead -
+    because .env happened to define DATABASE_URL - is not a preference being
+    overridden, it is the wrong database, and it took a test run writing fixture
+    rows into the live league to notice.
     """
+    if force_sqlite:
+        return connect_sqlite(db_path or "data/league.db", same_thread=same_thread)
     target = url or database_url()
     if is_postgres_url(target):
         return connect_postgres(target)

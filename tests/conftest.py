@@ -14,6 +14,63 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _never_touch_the_real_database():
+    """Pin the whole suite to SQLite, whatever the ambient configuration says.
+
+    `Config.load()` overlays .env into os.environ, so merely importing the CLI
+    makes DATABASE_URL live. A test that then opened a database got the hosted
+    league rather than a temp file - which is how a set of fixture players once
+    ended up in the production Supabase tables.
+
+    Two guards, because either alone is escapable. Connections are routed to
+    SQLite at the one place every caller funnels through, and the Postgres
+    connector is replaced with something that fails loudly, so a future test
+    that finds another route says so instead of quietly writing to the league.
+    `database_url` itself is left alone - it has its own tests.
+    """
+    from src import db, storage
+
+    original_connect = db._connect
+    original_pg = storage.connect_postgres
+
+    def sqlite_only(db_path=None, url=None, same_thread=True, force_sqlite=False):
+        return original_connect(db_path, same_thread=same_thread, force_sqlite=True)
+
+    def refuse(url):
+        raise AssertionError(
+            "a test tried to open the hosted Postgres database; "
+            "pass an explicit db path instead"
+        )
+
+    db._connect = sqlite_only
+    storage.connect_postgres = refuse
+    try:
+        yield
+    finally:
+        db._connect = original_connect
+        storage.connect_postgres = original_pg
+
+
+@pytest.fixture(autouse=True)
+def _isolate_environment():
+    """Undo any environment a test causes to be set.
+
+    `Config.load()` overlays .env into os.environ with `setdefault`, so merely
+    constructing a Context leaks that file's keys into the process for every
+    later test. One test writing a fixture .env then made an unrelated test
+    believe Yahoo was configured, and it went off to authenticate.
+    """
+    import os
+
+    saved = dict(os.environ)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+
+
 def _stat(stat_id, name, display_name, position_type, display_only=0):
     return {
         "stat": {

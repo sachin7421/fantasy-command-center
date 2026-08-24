@@ -67,7 +67,9 @@ draft:
 
 season:
   # Margin (in ROS points) an FA must beat your droppable player by (spec 6.1).
-  waiver_value_margin: 8.0
+  # Season-scale: ~1.5 points a week over a full season. It was 8.0 while the
+  # comparison was accidentally being made on a single week's projection.
+  waiver_value_margin: 25.0
   # Lineup change alerts only fire above this projected-points gap (spec 6.3).
   lineup_swap_min_gap: 1.5
   # Risk mode: tilt to ceiling when projected underdog, floor when favorite.
