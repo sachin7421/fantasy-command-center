@@ -806,6 +806,74 @@ def cmd_startsit(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+def cmd_playoffs(ctx: Context, args) -> int:
+    """Playoff odds for every team, by simulating the rest of the season."""
+    from src.analytics.season_sim import Matchup, TeamSeason, simulate
+
+    season = ctx.season
+    week = args.week if args.week is not None else ctx.current_week()
+    settings = ctx.settings()
+    spots = int(settings.get("num_playoff_teams") or 6)
+    final_week = int(settings.get("playoff_start_week") or 15) - 1
+
+    standings = ctx.conn.fetchall(
+        "SELECT team_key, team_name, wins, losses, ties, points_for "
+        "FROM standings_history WHERE league_key=? AND season=? "
+        "AND week=(SELECT MAX(week) FROM standings_history "
+        "          WHERE league_key=? AND season=?)",
+        (ctx.league_key, season, ctx.league_key, season),
+    )
+    if not standings:
+        print("No standings stored yet.")
+        print("This needs Yahoo data: run `fcc sync-settings` once access is")
+        print("approved, then the Monday recap job records standings each week.")
+        return EXIT_OK
+
+    # Each team scores at the rate it has been scoring, with the spread implied
+    # by the league. Better than a league-average assumption, and it is what is
+    # actually knowable before any games in the remaining schedule are played.
+    teams = []
+    for row in standings:
+        played = max(1, (row["wins"] or 0) + (row["losses"] or 0) + (row["ties"] or 0))
+        mean = float(row["points_for"] or 0) / played
+        teams.append(
+            TeamSeason(
+                team_key=str(row["team_key"]), name=row["team_name"] or row["team_key"],
+                wins=int(row["wins"] or 0), losses=int(row["losses"] or 0),
+                ties=int(row["ties"] or 0), points_for=float(row["points_for"] or 0),
+                mean=mean if mean > 0 else 100.0, sd=max(12.0, mean * 0.22),
+            )
+        )
+
+    stored = ctx.conn.fetchall(
+        "SELECT week, team_key, opponent_key FROM matchups "
+        "WHERE league_key=? AND season=? AND week>? ORDER BY week",
+        (ctx.league_key, season, week),
+    )
+    seen = set()
+    remaining = []
+    for row in stored:
+        pair = tuple(sorted((str(row["team_key"]), str(row["opponent_key"] or ""))))
+        if not pair[1] or (row["week"], pair) in seen:
+            continue
+        seen.add((row["week"], pair))
+        remaining.append(Matchup(int(row["week"]), pair[0], pair[1]))
+
+    if not remaining:
+        print(f"No remaining schedule stored beyond week {week}; nothing to simulate.")
+        return EXIT_OK
+
+    results = simulate(teams, remaining, playoff_spots=spots, trials=args.trials)
+    print(f"Playoff odds after week {week} "
+          f"({len(remaining)} games left, {spots} spots, {args.trials:,} simulations)")
+    print("")
+    mine = ctx.team_key()
+    for o in results:
+        marker = " <- you" if mine and o.team_key == str(mine) else ""
+        print(f"  {o.describe()}{marker}")
+    return EXIT_OK
+
+
 def cmd_test_notify(ctx: Context, args) -> int:
     """Send a test notification through every configured channel.
 
@@ -953,6 +1021,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_ss.add_argument("--opponent-sd", type=float, default=20.0)
     p_ss.add_argument("--simulate", action="store_true", help="also run Monte Carlo")
 
+    p_po = sub.add_parser("playoffs", help="playoff odds from a season simulation")
+    p_po.add_argument("--week", type=int)
+    p_po.add_argument("--trials", type=int, default=5000)
+
     sub.add_parser("test-notify", help="send a test notification on every channel")
     sub.add_parser("dashboard", help="launch the Streamlit dashboard")
     return parser
@@ -987,6 +1059,7 @@ def main(argv: list[str] | None = None) -> int:
         "regression": cmd_regression,
         "accuracy": cmd_accuracy,
         "startsit": cmd_startsit,
+        "playoffs": cmd_playoffs,
         "test-notify": cmd_test_notify,
         "migrate": cmd_migrate,
         "dashboard": cmd_dashboard,

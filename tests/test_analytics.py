@@ -301,3 +301,100 @@ def test_report_is_honest_when_there_is_no_data():
 def test_report_names_the_better_source():
     lines = accuracy.report([acc("good", "RB", 400, 2.0), acc("poor", "RB", 400, 5.0)])
     assert any("good" in line and "better" in line for line in lines)
+
+
+# --- season simulation -------------------------------------------------------
+
+def _league(n=12, weeks=6):
+    from src.analytics.season_sim import Matchup, TeamSeason
+
+    teams = [
+        TeamSeason(
+            team_key=str(i), name=f"Team {i}", wins=i % 4, losses=(3 - i % 4),
+            points_for=500 + i * 10,
+            # A spread of strengths so the odds are not all identical.
+            mean=95 + i * 2, sd=22,
+        )
+        for i in range(1, n + 1)
+    ]
+    schedule = []
+    for week in range(1, weeks + 1):
+        for i in range(0, n, 2):
+            schedule.append(Matchup(week, str(i + 1), str(n - i)))
+    return teams, schedule
+
+
+def test_playoff_odds_are_probabilities_that_sum_to_the_field():
+    from src.analytics.season_sim import simulate
+
+    teams, schedule = _league()
+    odds = simulate(teams, schedule, playoff_spots=6, trials=600)
+    assert all(0.0 <= o.playoff_odds <= 1.0 for o in odds)
+    # Six of twelve make it every trial, so the odds must total six.
+    assert sum(o.playoff_odds for o in odds) == pytest.approx(6.0, abs=0.05)
+
+
+def test_title_odds_sum_to_one():
+    from src.analytics.season_sim import simulate
+
+    teams, schedule = _league()
+    odds = simulate(teams, schedule, trials=600)
+    assert sum(o.title_odds for o in odds) == pytest.approx(1.0, abs=0.02)
+
+
+def test_a_stronger_team_has_better_odds():
+    from src.analytics.season_sim import simulate
+
+    teams, schedule = _league()
+    odds = simulate(teams, schedule, trials=800)
+    best = max(teams, key=lambda t: t.mean).team_key
+    worst = min(teams, key=lambda t: t.mean).team_key
+    lookup = {o.team_key: o for o in odds}
+    assert lookup[best].playoff_odds > lookup[worst].playoff_odds
+
+
+def test_simulation_is_deterministic_for_a_given_seed():
+    from src.analytics.season_sim import simulate
+
+    teams, schedule = _league()
+    a = simulate(teams, schedule, trials=300, seed=7)
+    b = simulate(teams, schedule, trials=300, seed=7)
+    assert [o.playoff_odds for o in a] == [o.playoff_odds for o in b]
+
+
+def test_improving_a_team_raises_its_playoff_odds():
+    """The point of the whole module: value a decision in playoff odds."""
+    from src.analytics.season_sim import evaluate_change
+
+    teams, schedule = _league()
+    target = teams[0]
+    impact = evaluate_change(
+        teams, schedule, target.team_key,
+        new_mean=target.mean + 18, label="big upgrade", trials=1200,
+    )
+    assert impact.delta > 0
+    assert "worth doing" in impact.verdict
+
+
+def test_weakening_a_team_lowers_its_playoff_odds():
+    from src.analytics.season_sim import evaluate_change
+
+    teams, schedule = _league()
+    target = teams[0]
+    impact = evaluate_change(
+        teams, schedule, target.team_key,
+        new_mean=target.mean - 18, label="bad trade", trials=1200,
+    )
+    assert impact.delta < 0
+
+
+def test_a_negligible_change_reads_as_negligible():
+    """Paired seeds mean a tiny change must not surface as simulation noise."""
+    from src.analytics.season_sim import evaluate_change
+
+    teams, schedule = _league()
+    impact = evaluate_change(
+        teams, schedule, teams[0].team_key,
+        new_mean=teams[0].mean + 0.2, label="marginal", trials=1200,
+    )
+    assert abs(impact.delta) < 0.03
