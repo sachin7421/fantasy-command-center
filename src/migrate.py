@@ -43,7 +43,9 @@ TABLES: list[tuple[str, tuple[str, ...]]] = [
     ("recommendations", ()),
 ]
 
-BATCH = 500
+# Postgres allows at most 65535 bind parameters per statement, so the batch is
+# sized so that (BATCH x widest table) stays comfortably under that ceiling.
+BATCH = 400
 
 
 def _columns(conn: Database, table: str) -> list[str]:
@@ -85,27 +87,36 @@ def copy_table(
     if not columns:
         return {"read": 0, "written": 0}
 
-    placeholders = ", ".join("?" for _ in columns)
     column_list = ", ".join(columns)
     conflict = (
         f" ON CONFLICT ({', '.join(conflict_keys)}) DO NOTHING" if conflict_keys else ""
     )
-    insert = f"INSERT INTO {table} ({column_list}) VALUES ({placeholders}){conflict}"
+    row_placeholder = "(" + ", ".join("?" for _ in columns) + ")"
 
     read = written = 0
     cursor = source.execute(f"SELECT {column_list} FROM {table}")
     batch: list[tuple] = []
 
     def flush() -> int:
+        """Write the batch as ONE multi-row INSERT.
+
+        A row-at-a-time loop costs a network round trip per row, which against a
+        hosted database turns 30k rows into many minutes. Batching the VALUES
+        list cuts that to one round trip per BATCH rows.
+        """
         nonlocal batch
-        if not batch or dry_run:
-            count = len(batch)
-            batch = []
-            return 0 if dry_run else count
-        for values in batch:
-            target.execute(insert, values)
-        target.commit()
+        if not batch:
+            return 0
         count = len(batch)
+        if dry_run:
+            batch = []
+            return 0
+        values_sql = ", ".join(row_placeholder for _ in batch)
+        flat: list[Any] = [v for row in batch for v in row]
+        target.execute(
+            f"INSERT INTO {table} ({column_list}) VALUES {values_sql}{conflict}", flat
+        )
+        target.commit()
         batch = []
         return count
 
