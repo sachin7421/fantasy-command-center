@@ -3,6 +3,9 @@
 A season-long advantage engine for the Yahoo league **Extra Fun League** (ID `796511`),
 team **Butt Fumblers**.
 
+**Live:** <https://fantasy-command-center-fkixkm6fbqbtsmfhqkgmyu.streamlit.app>
+(password protected; backed by Supabase Postgres)
+
 Two modes:
 
 - **Draft Mode** — a live draft assistant that ranks every available player by value
