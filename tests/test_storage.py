@@ -212,3 +212,46 @@ def test_migration_copies_rows_and_is_idempotent(tmp_path):
 
     source.close()
     target.close()
+
+
+def test_database_url_prefers_environment(monkeypatch):
+    from src import storage
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/d")
+    assert storage.database_url() == "postgresql://u:p@h:5432/d"
+
+
+def test_database_url_falls_back_to_streamlit_secrets(monkeypatch):
+    """Streamlit Cloud supplies secrets via st.secrets, not os.environ.
+
+    Reading only the environment would silently drop a hosted deployment back
+    onto an empty SQLite file, which looks like total data loss.
+    """
+    import sys
+    import types
+
+    from src import storage
+
+    for key in storage.DB_URL_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+    fake = types.ModuleType("streamlit")
+    fake.secrets = {"DATABASE_URL": "postgresql://from:secrets@h:5432/d"}
+    monkeypatch.setitem(sys.modules, "streamlit", fake)
+
+    assert storage.database_url() == "postgresql://from:secrets@h:5432/d"
+
+
+def test_database_url_none_when_nothing_configured(monkeypatch):
+    import sys
+    import types
+
+    from src import storage
+
+    for key in storage.DB_URL_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    fake = types.ModuleType("streamlit")
+    fake.secrets = {}
+    monkeypatch.setitem(sys.modules, "streamlit", fake)
+
+    assert storage.database_url() is None

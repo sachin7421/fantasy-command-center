@@ -34,15 +34,32 @@ def is_postgres_url(url: str | None) -> bool:
     return bool(url) and str(url).startswith(POSTGRES_SCHEMES)
 
 
-def database_url() -> str | None:
-    """Connection string from the environment, if configured.
+DB_URL_KEYS = ("DATABASE_URL", "SUPABASE_DB_URL", "POSTGRES_URL")
 
-    Streamlit Cloud injects secrets as env vars; locally this comes from .env.
+
+def database_url() -> str | None:
+    """Connection string from the environment or Streamlit secrets.
+
+    Both are checked because the two hosts differ: locally the value comes from
+    `.env` into `os.environ`, while Streamlit Community Cloud supplies it
+    through `st.secrets`. Reading only the environment would let a hosted
+    deployment fall back to an empty local SQLite file and look like it had
+    simply lost all its data - a silent failure worth ruling out.
     """
-    for key in ("DATABASE_URL", "SUPABASE_DB_URL", "POSTGRES_URL"):
+    for key in DB_URL_KEYS:
         value = os.environ.get(key)
         if value:
             return value
+
+    try:
+        import streamlit as st
+
+        for key in DB_URL_KEYS:
+            if key in st.secrets:
+                return str(st.secrets[key])
+    except Exception:
+        # Not running under Streamlit, or no secrets file: fall through.
+        pass
     return None
 
 
