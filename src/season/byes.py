@@ -42,10 +42,18 @@ class ByeReport:
     playoff: list[PlayoffOutlook] = field(default_factory=list)
     playoff_available: bool = False
     current_week: int = 0
+    #: Size of the roster the outlook was computed from. An empty roster cannot
+    #: fill a lineup in any week, so every week came back a "problem" and the
+    #: planner raised a four-week alarm about having no data.
+    roster_size: int = 0
 
     @property
     def problem_weeks(self) -> list[WeekOutlook]:
         return [w for w in self.weeks if not w.can_fill_lineup]
+
+    @property
+    def has_data(self) -> bool:
+        return self.roster_size > 0
 
 
 @dataclass
@@ -95,7 +103,9 @@ def run(
     playoff_weeks: tuple[int, ...] = (15, 16, 17),
 ) -> ByeReport:
     rows = _roster_rows(conn, league_key, team_key, season, week)
-    report = ByeReport(current_week=week)
+    report = ByeReport(current_week=week, roster_size=len(rows))
+    if not report.has_data:
+        return report
 
     for offset in range(horizon):
         target = week + offset
@@ -222,6 +232,18 @@ def _load_schedule(
 
 
 def to_notification(report: ByeReport, season: int) -> Notification | None:
+    if not report.has_data:
+        return Notification(
+            title="Bye planner: no roster to plan around",
+            lines=[
+                "No players are stored for your team, so every week looks like",
+                "a gap. Run `fcc sync-league` once Yahoo access is approved.",
+            ],
+            job="byes",
+            season=season,
+            week=report.current_week,
+        )
+
     lines: list[str] = []
 
     for outlook in report.weeks:

@@ -605,7 +605,10 @@ def cmd_job(ctx: Context, args) -> int:
             return EXIT_OK
         report = byes.run(ctx.conn, ctx.league_key, team_key, season, week, slots,
                           playoff_weeks=tuple(ctx.cfg.get("season.playoff_weeks", [15, 16, 17])))
-        print(f"{len(report.problem_weeks)} problem week(s) in the next 4.")
+        if not report.has_data:
+            print("No roster stored for your team - nothing to plan around.")
+        else:
+            print(f"{len(report.problem_weeks)} problem week(s) in the next 4.")
         notification = byes.to_notification(report, season)
 
     elif args.job == "recap":

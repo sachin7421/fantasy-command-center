@@ -337,7 +337,7 @@ def _pane_shape(board, drafted):
     if chart is None:
         st.caption("Not enough data to plot.")
         return
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, width='stretch')
     st.caption(
         "Steeper means waiting costs more. The dashed rule is replacement level — "
         "where a line crosses it, that position stops being worth a starting slot."
@@ -604,7 +604,7 @@ def season_view(cfg, conn, league_key):
         board = board_for(cfg, conn, season, slots, teams)
         chart = charts.value_curve(board.players, height=380)
         if chart is not None:
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width='stretch')
         available = sorted({p.position for p in board.players})
         # Default to RB: it is the scarcest position in this league, so its tier
         # structure is the one worth looking at first.
@@ -612,7 +612,44 @@ def season_view(cfg, conn, league_key):
         pos = st.selectbox("Tier breakdown", available, index=default)
         cliff = charts.tier_cliff(board.players, pos)
         if cliff is not None:
-            st.altair_chart(cliff, use_container_width=True)
+            st.altair_chart(cliff, width='stretch')
+
+        # How one player's projection has moved, per source. Written months ago
+        # and never rendered anywhere, so the projection_history table was being
+        # written on every sync and read by nothing.
+        st.markdown("<div class='fcc-section'>Projection drift</div>",
+                    unsafe_allow_html=True)
+        tracked = conn.fetchall(
+            "SELECT DISTINCT h.player_key, p.full_name "
+            "FROM projection_history h JOIN players p USING(player_key) "
+            "WHERE h.season=? AND h.week=0 "
+            "  AND p.player_key IN (SELECT player_key FROM projections_blended "
+            "                       WHERE season=? AND week=0 "
+            "                       ORDER BY points DESC LIMIT 150) "
+            "ORDER BY p.full_name",
+            (season, season),
+        )
+        if not tracked:
+            st.caption(
+                "Nothing to plot yet: this needs the same player projected on "
+                "at least two different days, which builds up over a season."
+            )
+        else:
+            names = {r["full_name"]: r["player_key"] for r in tracked}
+            who = st.selectbox("Player", sorted(names), key="drift_player")
+            rows = conn.fetchall(
+                "SELECT source, points, observed_at FROM projection_history "
+                "WHERE player_key=? AND season=? AND week=0 ORDER BY observed_at",
+                (names[who], season),
+            )
+            drift = charts.projection_drift([dict(r) for r in rows])
+            if drift is None:
+                st.caption(
+                    f"{who} has been projected on only one day so far - a drift "
+                    "line needs at least two."
+                )
+            else:
+                st.altair_chart(drift, width='stretch')
 
 
 def main():

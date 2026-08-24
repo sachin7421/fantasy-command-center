@@ -514,3 +514,71 @@ def test_the_daily_run_syncs_the_table_its_analytics_read():
 
     source = inspect.getsource(cli.cmd_daily)
     assert "cmd_sync_usage" in source, "fcc daily must populate player_week_usage"
+
+
+# --- no job may raise an alarm about missing data ---------------------------
+
+def test_the_bye_planner_does_not_alarm_about_an_empty_roster(tmp_path):
+    """With no players, every week is unfillable - which is not four problems."""
+    from src.season import byes
+
+    conn = db.init_db(tmp_path / "nobody.db")
+    report = byes.run(conn, LEAGUE, MY_TEAM, SEASON, 3, SLOTS)
+    assert report.has_data is False
+    assert report.roster_size == 0
+
+    notification = byes.to_notification(report, SEASON)
+    assert notification is not None
+    assert "no roster" in notification.title.lower()
+
+
+def test_the_recap_of_an_unplayed_week_is_not_a_zero_point_recap(tmp_path):
+    from src.season import recap
+
+    conn = db.init_db(tmp_path / "unplayed.db")
+    report = recap.run(conn, LEAGUE, MY_TEAM, SEASON, 3, SLOTS)
+    assert report.has_data is False
+    notification = recap.to_notification(report, SEASON)
+    assert notification is not None
+    assert "no scores" in notification.title.lower()
+
+
+def test_no_command_raises_against_an_empty_database(tmp_path, capsys):
+    """A first run on a new machine, and the state right after a migration.
+
+    Not one of these should traceback; every one should say what it needs.
+    """
+    config = tmp_path / "empty.yaml"
+    config.write_text(
+        "league:\n"
+        '  league_id: "796511"\n'
+        "  season: 2026\n"
+        "  my_team_id: 3\n"
+        "paths:\n"
+        f'  env_dir: "{tmp_path.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    database = tmp_path / "empty.db"
+
+    commands = [
+        ["rank"],
+        ["draft", "--slot", "3", "--rounds", "3", "--offline"],
+        ["injuries", "--week", "3", "--dry-run"],
+        ["lineup", "--week", "3", "--dry-run"],
+        ["waivers", "--week", "3", "--dry-run"],
+        ["byes", "--week", "3", "--dry-run"],
+        ["recap", "--week", "3", "--dry-run"],
+        ["trades", "--week", "3", "--dry-run"],
+        ["reminders", "--week", "3", "--dry-run"],
+        ["regression", "--season", "2026", "--week", "3"],
+        ["accuracy", "--season", "2026", "--week", "3"],
+        ["startsit", "--week", "3"],
+        ["playoffs", "--week", "3", "--trials", "50"],
+        ["faab", "--week", "3"],
+    ]
+    for argv in commands:
+        code = cli.main(["--config", str(config), "--db", str(database)] + argv)
+        out = capsys.readouterr().out
+        assert code == 0, f"fcc {' '.join(argv)} exited {code}: {out}"
+        assert "Traceback" not in out, f"fcc {' '.join(argv)}:\n{out}"
+        assert out.strip(), f"fcc {' '.join(argv)} said nothing at all"
