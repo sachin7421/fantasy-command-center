@@ -658,6 +658,154 @@ def cmd_migrate(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+def cmd_sync_usage(ctx: Context, args) -> int:
+    """Pull opportunity, expected points, practice reports and depth charts."""
+    from src.sources.context import ContextSource
+    from src.sources.usage import UsageSource
+
+    season = args.season or ctx.season
+    usage = UsageSource(ctx.conn)
+    rules = ctx.scoring()
+
+    print(f"Syncing usage and context for {season}...")
+    stats = usage.sync_usage(ctx.idmap, rules, season, force=args.force)
+    print(f"  usage       : {stats['stored']:,} player-weeks "
+          f"({stats['unmatched']} unmatched)")
+
+    practice = usage.sync_practice_reports(ctx.idmap, season)
+    print(f"  practice    : {practice:,} official injury-report rows")
+
+    depth = usage.sync_depth_charts(ctx.idmap, season)
+    print(f"  depth charts: {depth:,} slots")
+
+    week = args.week if args.week is not None else ctx.current_week()
+    context = ContextSource(ctx.conn)
+    odds = context.sync_odds(season, week, force=args.force)
+    if odds:
+        weather = context.sync_weather(season, week, force=args.force)
+        print(f"  betting mkt : {odds} team-weeks, weather for {weather} venues")
+    else:
+        print("  betting mkt : skipped (set ODDS_API_KEY in .env to enable)")
+    return EXIT_OK
+
+
+def cmd_regression(ctx: Context, args) -> int:
+    """Buy-low and sell-high candidates from expected-points regression."""
+    from src.analytics import regression
+
+    season = args.season or ctx.season
+    signals = regression.scan(
+        ctx.conn, season, through_week=args.week, window=args.window
+    )
+    if not signals:
+        print(f"No actionable signals for {season}.")
+        print("This needs several weeks of played games; run `fcc sync-usage` first.")
+        return EXIT_OK
+
+    for verdict, label in (
+        ("buy", "BUY LOW - underperforming their usage"),
+        ("sell", "SELL HIGH - outscoring their usage"),
+    ):
+        group = [s for s in signals if s.verdict == verdict][: args.limit]
+        if not group:
+            continue
+        print("")
+        print(label)
+        print("-" * len(label))
+        for s in group:
+            print(f"  {s.name:<22} {s.position} {s.team:<4} "
+                  f"actual {s.points_actual:5.1f}  expected {s.points_expected:5.1f}  "
+                  f"gap {s.residual:+5.1f}/gm  ({s.games}g, {s.confidence:.0%} conf)")
+            for reason in s.reasons:
+                print(f"      {reason}")
+    return EXIT_OK
+
+
+def cmd_accuracy(ctx: Context, args) -> int:
+    """Which projection source is most accurate for this league scoring."""
+    from src.analytics import accuracy
+
+    season = args.season or ctx.season
+    results = accuracy.score_sources(ctx.conn, season, through_week=args.week)
+    for line in accuracy.report(results):
+        print(line)
+
+    if results:
+        weights = accuracy.derive_weights(results)
+        print("Earned blend weights (shrunk toward equal while evidence is thin):")
+        for source, w in sorted(weights.items(), key=lambda kv: -kv[1]):
+            print(f"  {source:<14} {w:.3f}")
+        accuracy.store(ctx.conn, results, season, args.week or ctx.current_week())
+    return EXIT_OK
+
+
+def cmd_startsit(ctx: Context, args) -> int:
+    """The lineup with the best chance of beating a given opponent total."""
+    from src.analytics.distributions import (
+        PlayerForecast, optimise, simulate, swap_impact,
+    )
+
+    season = ctx.season
+    week = args.week if args.week is not None else ctx.current_week()
+    team_key = ctx.team_key()
+    if not team_key:
+        print("league.my_team_id is not set; run `fcc sync-settings` once Yahoo is wired.")
+        return EXIT_OK
+
+    rows = ctx.conn.fetchall(
+        """
+        SELECT r.player_key, p.full_name, p.position, p.team,
+               COALESCE(b.points, j.points, 0) AS mean,
+               COALESCE(b.stdev, 0)            AS sd
+        FROM rosters r
+        JOIN players p USING(player_key)
+        LEFT JOIN projections_blended b
+               ON b.player_key=r.player_key AND b.season=? AND b.week=?
+        LEFT JOIN projections j
+               ON j.player_key=r.player_key AND j.season=? AND j.week=?
+              AND j.source='sleeper'
+        WHERE r.league_key=? AND r.team_key=? AND r.week=?
+        """,
+        (season, week, season, week, ctx.league_key, team_key, week),
+    )
+    if not rows:
+        print(f"No roster stored for week {week}. Yahoo sync is needed for this.")
+        return EXIT_OK
+
+    roster = [
+        PlayerForecast(
+            r["player_key"], r["full_name"], r["position"], r["team"] or "",
+            float(r["mean"] or 0.0),
+            # A missing spread would imply certainty; fall back to a positional
+            # rule of thumb rather than zero.
+            float(r["sd"]) if r["sd"] else max(2.0, float(r["mean"] or 0) * 0.45),
+        )
+        for r in rows
+    ]
+    slots = ctx.starting_slots()
+    outcome = optimise(roster, slots, args.opponent, args.opponent_sd)
+
+    print(f"Week {week} vs a projected {args.opponent:.0f} +/- {args.opponent_sd:.0f}")
+    print("")
+    print(f"  {outcome.describe()}")
+    print("")
+    for slot in sorted(outcome.players, key=lambda p: -p.mean):
+        print(f"    {slot.name:<22} {slot.position:<4} "
+              f"{slot.mean:5.1f} +/- {slot.sd:4.1f}")
+
+    impact = swap_impact(roster, slots, args.opponent, args.opponent_sd)
+    print("")
+    print(f"  highest-mean lineup wins {impact['highest_mean_win_probability']:.0%}")
+    print(f"  best lineup wins         {impact['best_win_probability']:.0%}"
+          f"  ({impact['gain']:+.1%})")
+
+    if args.simulate:
+        result = simulate(outcome.players, args.opponent, args.opponent_sd)
+        print("")
+        print(f"  simulation: {result}")
+    return EXIT_OK
+
+
 def cmd_test_notify(ctx: Context, args) -> int:
     """Send a test notification through every configured channel.
 
@@ -783,6 +931,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_mig.add_argument("--source", help="source sqlite file (default: config paths.db)")
     p_mig.add_argument("--dry-run", action="store_true")
 
+    p_usage = sub.add_parser("sync-usage", help="pull opportunity, practice reports, odds")
+    p_usage.add_argument("--season", type=int)
+    p_usage.add_argument("--week", type=int)
+    p_usage.add_argument("--force", action="store_true")
+
+    p_reg = sub.add_parser("regression", help="buy-low / sell-high candidates")
+    p_reg.add_argument("--season", type=int)
+    p_reg.add_argument("--week", type=int)
+    p_reg.add_argument("--window", type=int, default=6, help="trailing games to judge")
+    p_reg.add_argument("--limit", type=int, default=8)
+
+    p_acc = sub.add_parser("accuracy", help="score each projection source against reality")
+    p_acc.add_argument("--season", type=int)
+    p_acc.add_argument("--week", type=int)
+
+    p_ss = sub.add_parser("startsit", help="lineup that maximises win probability")
+    p_ss.add_argument("--week", type=int)
+    p_ss.add_argument("--opponent", type=float, default=110.0,
+                      help="opponent projected total")
+    p_ss.add_argument("--opponent-sd", type=float, default=20.0)
+    p_ss.add_argument("--simulate", action="store_true", help="also run Monte Carlo")
+
     sub.add_parser("test-notify", help="send a test notification on every channel")
     sub.add_parser("dashboard", help="launch the Streamlit dashboard")
     return parser
@@ -813,6 +983,10 @@ def main(argv: list[str] | None = None) -> int:
         "draft": cmd_draft,
         "mockdraft": cmd_mockdraft,
         "daily": cmd_daily,
+        "sync-usage": cmd_sync_usage,
+        "regression": cmd_regression,
+        "accuracy": cmd_accuracy,
+        "startsit": cmd_startsit,
         "test-notify": cmd_test_notify,
         "migrate": cmd_migrate,
         "dashboard": cmd_dashboard,

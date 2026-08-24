@@ -394,6 +394,109 @@ def _pane_roster(roster, my_players, slots, tracker, board):
 
 # --- season view -------------------------------------------------------------
 
+def _tab_edge(conn, season: int):
+    """The models: who is due to regress, and which source to believe."""
+    from src.analytics import accuracy, regression
+
+    st.markdown(
+        "<div class='fcc-section'>Buy low / sell high — expected points regression</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Fantasy points mix opportunity with efficiency. Opportunity persists "
+        "week to week; efficiency, and touchdowns above all, mostly does not. "
+        "A player scoring far from what his usage implies is likelier to move "
+        "toward it than to keep going."
+    )
+
+    try:
+        signals = regression.scan(conn, season)
+    except Exception as exc:
+        st.info(f"Usage data not loaded yet ({exc}). Run `python fcc.py sync-usage`.")
+        signals = []
+
+    if not signals:
+        st.info(
+            "No actionable signals. This needs several weeks of played games — "
+            "run `python fcc.py sync-usage` once the season is under way."
+        )
+    else:
+        buy = [s for s in signals if s.verdict == "buy"]
+        sell = [s for s in signals if s.verdict == "sell"]
+        left, right = st.columns(2)
+
+        for column, group, label, tone in (
+            (left, buy, "Buy low", ui.POSITIVE),
+            (right, sell, "Sell high", ui.WARNING),
+        ):
+            with column:
+                st.markdown(
+                    f"<div style='color:{tone};font-weight:700;font-size:0.8rem;"
+                    f"letter-spacing:0.06em;text-transform:uppercase;'>{label}</div>",
+                    unsafe_allow_html=True,
+                )
+                if not group:
+                    st.caption("Nothing flagged.")
+                for s in group[:8]:
+                    hue = ui.position_hue(s.position)
+                    st.markdown(
+                        f"<div class='fcc-card' style='border-left-color:{hue};'>"
+                        f"<span class='fcc-name'>{s.name}</span>&nbsp;&nbsp;"
+                        f"{ui.position_badge(s.position)}"
+                        f"<div style='margin-top:7px;'>"
+                        f"{ui.stat('Actual', f'{s.points_actual:.1f}')}"
+                        f"{ui.stat('Expected', f'{s.points_expected:.1f}')}"
+                        f"{ui.stat('Gap/gm', f'{s.residual:+.1f}', tone)}"
+                        f"{ui.stat('Games', str(s.games))}"
+                        f"{ui.stat('Conf', f'{s.confidence:.0%}')}"
+                        f"</div>"
+                        + "".join(
+                            f"<div class='fcc-reason'>{r}</div>" for r in s.reasons[:2]
+                        )
+                        + "</div>",
+                        unsafe_allow_html=True,
+                    )
+
+    st.divider()
+    st.markdown(
+        "<div class='fcc-section'>Which projection source is actually right</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Every stored projection graded against what happened, in this league's "
+        "scoring. Weights are earned rather than assumed — and shrunk toward "
+        "equal while the evidence is still thin."
+    )
+    try:
+        results = accuracy.score_sources(conn, season)
+    except Exception:
+        results = []
+
+    if not results:
+        st.info(
+            "Not enough paired projections and results yet. This becomes "
+            "meaningful a few weeks into the season."
+        )
+    else:
+        st.dataframe(
+            [
+                {
+                    "Source": r.source, "Pos": r.position, "n": r.n,
+                    "MAE": r.mae, "RMSE": r.rmse, "Bias": r.bias,
+                }
+                for r in results
+            ],
+            width="stretch", hide_index=True, height=320,
+        )
+        weights = accuracy.derive_weights(results)
+        if weights:
+            chips = "".join(
+                f"<span class='fcc-slot fcc-slot-filled'>{s}&nbsp;&nbsp;{w:.2f}</span>"
+                for s, w in sorted(weights.items(), key=lambda kv: -kv[1])
+            )
+            st.markdown("Earned blend weights: " + chips, unsafe_allow_html=True)
+
+
 def season_view(cfg, conn, league_key):
     settings = settings_of(conn, league_key)
     slots = starting_slots_of(settings)
@@ -403,9 +506,15 @@ def season_view(cfg, conn, league_key):
     st.sidebar.divider()
     st.sidebar.caption(f"Data: {db.describe_backend()}")
 
-    tabs = st.tabs(["Activity", "Injuries", "Waiver heat", "Board", "Positional shape"])
+    tabs = st.tabs(
+        ["Edge", "Activity", "Injuries", "Waiver heat", "Board", "Positional shape"]
+    )
 
     with tabs[0]:
+        _tab_edge(conn, season)
+
+
+    with tabs[1]:
         st.markdown("<div class='fcc-section'>Recent job output</div>",
                     unsafe_allow_html=True)
         rows = conn.fetchall(
@@ -425,7 +534,7 @@ def season_view(cfg, conn, league_key):
             ):
                 st.text("\n".join(payload.get("lines", [])))
 
-    with tabs[1]:
+    with tabs[2]:
         rows = conn.fetchall(
             """
             SELECT p.full_name AS player, p.position, p.team, i.status,
@@ -441,7 +550,7 @@ def season_view(cfg, conn, league_key):
         )
         st.dataframe([dict(r) for r in rows], width="stretch", hide_index=True, height=520)
 
-    with tabs[2]:
+    with tabs[3]:
         st.caption(
             "Trending adds across all Sleeper leagues — a leading indicator of who "
             "your league-mates are about to claim."
@@ -458,7 +567,7 @@ def season_view(cfg, conn, league_key):
         )
         st.dataframe([dict(r) for r in rows], width="stretch", hide_index=True, height=520)
 
-    with tabs[3]:
+    with tabs[4]:
         board = load_board(conn, season, slots, teams, 0.08)
         st.dataframe(
             [
@@ -473,7 +582,7 @@ def season_view(cfg, conn, league_key):
             width="stretch", hide_index=True, height=560,
         )
 
-    with tabs[4]:
+    with tabs[5]:
         board = load_board(conn, season, slots, teams, 0.08)
         chart = charts.value_curve(board.players, height=380)
         if chart is not None:

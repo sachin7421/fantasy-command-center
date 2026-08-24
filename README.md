@@ -364,6 +364,115 @@ adds predicted anything, and whether the tool's own advice was any good.
 
 ---
 
+## The models
+
+Three ideas do most of the work. All three are statistical rather than
+machine-learned, deliberately: a season is seventeen games and roughly fifty
+relevant players, so anything with many parameters fits noise.
+
+### 1. Expected points — separating luck from usage
+
+```
+fantasy points = opportunity x efficiency
+```
+
+Opportunity (targets, carries, snaps, share of the team's work) persists week to
+week. Efficiency, and touchdown rate above all, largely does not. So the signal
+is the gap:
+
+```
+residual = actual points - expected points from usage
+```
+
+A player far above his expected points is a **sell** before the market catches
+up; far below is the cheapest **buy** on the wire. Two guards stop it being
+noise: the residual is shrunk by sample size, and a player is only flagged when
+his usage is stable or rising. Underperforming *while* losing snaps is not bad
+luck — it is a shrinking role, and the model says so instead of recommending him.
+
+It is measured over a **trailing window**, not the season. Across seventeen games
+luck cancels out, which is the entire point; the tradeable signal lives in the
+recent stretch, before it has.
+
+```bash
+python fcc.py regression
+```
+
+### 2. Shrinkage — how much to believe a small sample
+
+```
+theta = w * observed + (1 - w) * prior,     w = n / (n + k)
+```
+
+`k` is where the sample and the prior carry equal weight, and it is **not one
+number**. Target share is a coaching decision and settles in about five games;
+touchdown rate barely stabilises within a season at all. Using a single `k` for
+everything is the usual mistake, and it is why people drop good players in week 3
+and pay a fortune for three-week flukes.
+
+### 3. Win probability — start/sit as the question it actually is
+
+Head-to-head fantasy is not scored on expected points. It is scored on beating
+one opponent, once:
+
+```
+P(win) = Phi( (mu_me - mu_opp) / sqrt(var_me + var_opp) )
+```
+
+Projected 96 against their 118, the highest-mean lineup still loses most of the
+time — what you want is variance. Twenty points ahead, the reverse. Sweeping a
+risk parameter through the exact lineup solver traces an efficient frontier of
+*legal* lineups, and the best point on it is the answer. Team-mates are
+correlated (a quarterback and his receiver move together; two backs split the
+same carries), so lineup variance accounts for that rather than assuming
+independence.
+
+```bash
+python fcc.py startsit --opponent 118 --simulate
+```
+
+### Grading the sources — and the tool
+
+Every projection is stored and every actual result recorded, so each source is
+scored in **this league's** points: MAE, RMSE, and bias. Blend weights are then
+earned from measured accuracy rather than assumed, shrunk toward equal while the
+evidence is thin.
+
+```bash
+python fcc.py accuracy
+```
+
+No commercial tool does this, because no vendor will tell you a competitor
+projects your league better than they do.
+
+---
+
+## Data the models run on
+
+| Source | What it adds | Auth |
+| --- | --- | --- |
+| nflverse `ff_opportunity` | **Expected fantasy points** from usage | none |
+| nflverse `snap_counts` | Snap share — role changes before the box score shows them | none |
+| nflverse `injuries` | The **official** report, including practice participation | none |
+| nflverse `depth_charts` | Real depth order, so handcuffs are looked up not guessed | none |
+| The Odds API | Implied team totals and game script from the betting market | free key |
+| Open-Meteo | Wind, temperature, precipitation at outdoor venues | none |
+
+```bash
+python fcc.py sync-usage
+```
+
+Practice participation is the piece the Sleeper feed does not carry, and it is
+the more predictive half: a player who did not practise midweek is far likelier
+to sit than his game-status tag alone suggests, and it is knowable on Thursday
+rather than at kickoff.
+
+Betting odds need a free key from the-odds-api.com in `.env` as `ODDS_API_KEY`.
+Without it the app degrades to weather only, and without that, to nothing —
+neither is required.
+
+---
+
 ## Project layout
 
 ```
@@ -379,9 +488,14 @@ src/
   idmap.py               cross-source player identity
   yahoo_client.py        yfpy wrapper
   league_bootstrap.py    verified settings, used until OAuth is configured
+  analytics/             shrinkage, expected-points regression, win probability,
+                         source accuracy
   draft/                 survival model, recommender, live tracker, mock drafts
-  season/                waivers, injuries, lineup, byes, recap, trades
-  sources/               sleeper, sleeper_projections, espn, fantasypros, nflverse
+  season/                waivers, injuries, lineup, byes, recap, trades, reminders
+  sources/               sleeper, sleeper_projections, espn, fantasypros, nflverse,
+                         usage (opportunity/practice/depth), context (odds/weather)
+  ui.py, charts.py       design system and charts
+  email_render.py        HTML email
 jobs/install_schedule.*  Task Scheduler / cron installers
 tests/                   107 tests
 ```

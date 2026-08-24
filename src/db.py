@@ -269,6 +269,109 @@ CREATE TABLE IF NOT EXISTS recommendations (
 );
 CREATE INDEX IF NOT EXISTS idx_recs_dedup ON recommendations(job, dedup_key);
 
+-- ===================== usage, opportunity, context ======================
+-- Everything below is *inputs to a forecast* rather than a forecast itself.
+-- Opportunity is far stickier week to week than fantasy points, so these are
+-- what the models actually lean on.
+
+-- Expected fantasy points from nflverse ff_opportunity. The gap between actual
+-- and expected is the regression signal: efficiency reverts, usage persists.
+CREATE TABLE IF NOT EXISTS player_week_usage (
+    player_key     TEXT NOT NULL,
+    season         INTEGER NOT NULL,
+    week           INTEGER NOT NULL,
+    team           TEXT,
+    -- volume
+    pass_attempts  {REAL},
+    rush_attempts  {REAL},
+    targets        {REAL},
+    receptions     {REAL},
+    -- share of the team's opportunity (the sticky part)
+    target_share   {REAL},
+    rush_share     {REAL},
+    snap_pct       {REAL},
+    air_yards      {REAL},
+    -- league-scored actual vs expected
+    points_actual  {REAL},
+    points_expected {REAL},
+    recorded_at    TEXT NOT NULL,
+    PRIMARY KEY (player_key, season, week)
+);
+CREATE INDEX IF NOT EXISTS idx_usage_period ON player_week_usage(season, week);
+
+-- Official NFL injury report. Unlike the Sleeper feed this carries PRACTICE
+-- participation, which is the part that predicts Sunday availability.
+CREATE TABLE IF NOT EXISTS practice_reports (
+    player_key      TEXT NOT NULL,
+    season          INTEGER NOT NULL,
+    week            INTEGER NOT NULL,
+    report_status   TEXT,
+    practice_status TEXT,
+    primary_injury  TEXT,
+    recorded_at     TEXT NOT NULL,
+    PRIMARY KEY (player_key, season, week)
+);
+
+-- Real depth charts, so handcuffs are looked up rather than guessed at.
+CREATE TABLE IF NOT EXISTS depth_charts (
+    season       INTEGER NOT NULL,
+    week         INTEGER NOT NULL,
+    team         TEXT NOT NULL,
+    position     TEXT NOT NULL,
+    depth_rank   INTEGER NOT NULL,
+    player_key   TEXT,
+    player_name  TEXT,
+    recorded_at  TEXT NOT NULL,
+    PRIMARY KEY (season, week, team, position, depth_rank)
+);
+
+-- Betting market context. Implied team total is the sharpest public forecast of
+-- how many points a team will score, and the spread sets the game script.
+CREATE TABLE IF NOT EXISTS game_context (
+    season         INTEGER NOT NULL,
+    week           INTEGER NOT NULL,
+    team           TEXT NOT NULL,
+    opponent       TEXT,
+    is_home        INTEGER,
+    spread         {REAL},
+    total          {REAL},
+    implied_total  {REAL},
+    wind_mph       {REAL},
+    temp_f         {REAL},
+    precip_pct     {REAL},
+    is_dome        INTEGER,
+    fetched_at     TEXT NOT NULL,
+    PRIMARY KEY (season, week, team)
+);
+
+-- How accurate each projection source turned out to be, for OUR scoring.
+-- Lets the blend weights be earned rather than assumed.
+CREATE TABLE IF NOT EXISTS source_accuracy (
+    source       TEXT NOT NULL,
+    season       INTEGER NOT NULL,
+    week         INTEGER NOT NULL,
+    position     TEXT NOT NULL,
+    n            INTEGER,
+    mae          {REAL},
+    rmse         {REAL},
+    bias         {REAL},
+    computed_at  TEXT NOT NULL,
+    PRIMARY KEY (source, season, week, position)
+);
+
+-- Did the advice work? Every recommendation is already logged; this records
+-- what happened afterwards so the tool can be graded rather than trusted.
+CREATE TABLE IF NOT EXISTS recommendation_outcomes (
+    recommendation_id INTEGER NOT NULL,
+    subject_key       TEXT NOT NULL,
+    kind              TEXT,
+    projected         {REAL},
+    actual            {REAL},
+    followed          INTEGER,
+    recorded_at       TEXT NOT NULL,
+    PRIMARY KEY (recommendation_id, subject_key)
+);
+
 CREATE TABLE IF NOT EXISTS snapshots (
     kind         TEXT NOT NULL,
     taken_at     TEXT NOT NULL,

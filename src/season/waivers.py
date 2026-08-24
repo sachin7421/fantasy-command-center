@@ -14,8 +14,12 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
 
+import logging
+
 from src.notify import Notification
 from src.sources.sleeper import severity_of
+
+log = logging.getLogger(__name__)
 
 #: Statuses that make a player a stash rather than a starter.
 STASH_STATUSES = {"IR", "PUP", "Out", "Doubtful", "Suspended"}
@@ -66,6 +70,9 @@ class WaiverReport:
     claims: list[Claim] = field(default_factory=list)
     stashes: list[Claim] = field(default_factory=list)
     handcuffs: list[dict[str, Any]] = field(default_factory=list)
+    #: Buy-low targets and sell-high holdings from expected-points regression.
+    buy_low: list[Any] = field(default_factory=list)
+    sell_high: list[Any] = field(default_factory=list)
     uses_faab: bool = True
     budget_left: int = 100
     week: int = 0
@@ -311,6 +318,33 @@ def run(
     report.handcuffs = [
         h for h in find_handcuffs(conn, league_key, team_key, week) if not h["rostered"]
     ]
+
+    # Expected-points regression. The waiver wire is exactly where this pays:
+    # a free agent scoring below what his usage implies is the cheapest player
+    # on the board, and one of your own scoring above it is the one to move
+    # before the market notices.
+    try:
+        from src.analytics import regression
+
+        signals = regression.scan(conn, season, through_week=week)
+        available = {c.player_key for c in free_agents}
+        mine = {
+            r["player_key"]
+            for r in conn.fetchall(
+                "SELECT player_key FROM rosters WHERE league_key=? AND team_key=? "
+                "AND week=?",
+                (league_key, str(team_key), week),
+            )
+        }
+        report.buy_low = [
+            s for s in signals if s.verdict == "buy" and s.player_key in available
+        ][:5]
+        report.sell_high = [
+            s for s in signals if s.verdict == "sell" and s.player_key in mine
+        ][:5]
+    except Exception as exc:  # pragma: no cover - analytics are optional
+        log.info("regression signals unavailable: %s", exc)
+
     return report
 
 
@@ -328,6 +362,22 @@ def to_notification(report: WaiverReport, season: int) -> Notification | None:
     if report.stashes:
         lines.append("__STASH CANDIDATES__")
         lines.extend(f"  {s.add.name} ({s.add.position}) - {s.reasons[0]}" for s in report.stashes)
+        lines.append("")
+    if report.buy_low:
+        lines.append("__BUY LOW - available and underperforming their usage__")
+        for s in report.buy_low:
+            lines.append(
+                f"  {s.name} ({s.position} {s.team}): scoring {abs(s.residual):.1f} "
+                f"pts/gm below what his usage implies over {s.games} games"
+            )
+        lines.append("")
+    if report.sell_high:
+        lines.append("__SELL HIGH - yours, and outscoring their usage__")
+        for s in report.sell_high:
+            lines.append(
+                f"  {s.name} ({s.position} {s.team}): scoring {s.residual:.1f} "
+                f"pts/gm above what his usage implies - trade while the price holds"
+            )
         lines.append("")
     if report.handcuffs:
         lines.append("__UNROSTERED HANDCUFFS__")

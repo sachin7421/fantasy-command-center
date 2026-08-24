@@ -31,6 +31,8 @@ class StatusChange:
     body_part: str | None
     context: str          # roster | opponent | free_agent | watch
     replacement: str | None = None
+    #: Practice participation from the official report, when available.
+    practice: str | None = None
 
     @property
     def is_escalation(self) -> bool:
@@ -46,6 +48,8 @@ class StatusChange:
         arrow = "->"
         detail = f" ({self.body_part})" if self.body_part else ""
         line = f"{self.name} {self.position} {self.team}: {before} {arrow} {after}{detail}"
+        if self.practice:
+            line += f"\n    practice: {self.practice}"
         if self.replacement:
             line += f"\n    replacement: {self.replacement}"
         return line
@@ -120,6 +124,31 @@ def top_free_agent_keys(
         (league_key, limit),
     ).fetchall()
     return {r["player_key"] for r in rows}
+
+
+def practice_note(conn, player_key: str, season: int, week: int) -> str | None:
+    """Practice participation for the week, when the official report has it.
+
+    This is the part the Sleeper feed does not carry, and it is the more
+    predictive half: a player who did not practise on Wednesday and Thursday is
+    far likelier to sit than his game-status tag alone suggests - and it is
+    knowable midweek rather than at kickoff.
+    """
+    row = conn.fetchone(
+        "SELECT report_status, practice_status, primary_injury "
+        "FROM practice_reports WHERE player_key=? AND season=? AND week=?",
+        (player_key, season, week),
+    )
+    if not row or not row["practice_status"]:
+        return None
+    status = str(row["practice_status"])
+    short = (
+        "did not practise" if "Did Not" in status
+        else "limited in practice" if "Limited" in status
+        else "full practice"
+    )
+    injury = row["primary_injury"]
+    return f"{short}{f' ({injury})' if injury else ''}"
 
 
 def best_bench_replacement(
@@ -217,6 +246,7 @@ def run(
             change.replacement = best_bench_replacement(
                 conn, league_key, my_team_key, change.position, season, week, player_key
             )
+        change.practice = practice_note(conn, player_key, season, week)
         report.changes.append(change)
 
     report.changes.sort(
