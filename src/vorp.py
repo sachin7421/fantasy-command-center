@@ -1,0 +1,354 @@
+"""Value over replacement, tiers and positional scarcity (spec 5.1).
+
+Raw projected points are a trap: a QB out-scores every RB, yet QBs go late
+because the *replacement* QB also scores a lot. Value is what a player adds over
+the player you could have had for free at that position, which is what this
+module computes.
+
+Everything is derived from the league's real roster settings - starting slots,
+flex slots and team count all come from Yahoo (spec 2.3).
+"""
+from __future__ import annotations
+
+import math
+import sqlite3
+from dataclasses import dataclass, field
+from typing import Any, Iterable, Sequence
+
+# Which real positions each Yahoo flex slot can absorb.
+FLEX_ELIGIBILITY: dict[str, set[str]] = {
+    "W/R": {"WR", "RB"},
+    "W/T": {"WR", "TE"},
+    "R/T": {"RB", "TE"},
+    "W/R/T": {"WR", "RB", "TE"},
+    "Q/W/R/T": {"QB", "WR", "RB", "TE"},
+    "W/R/T/Q": {"QB", "WR", "RB", "TE"},
+    "OP": {"QB", "WR", "RB", "TE"},
+    "SUPERFLEX": {"QB", "WR", "RB", "TE"},
+}
+
+DEFENSIVE_SLOTS = {"DEF", "DST", "D"}
+BENCH_SLOTS = {"BN", "IR", "IR+", "NA"}
+
+REAL_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DEF")
+
+
+@dataclass
+class PlayerValue:
+    player_key: str
+    name: str
+    position: str
+    team: str
+    points: float
+    vorp: float = 0.0
+    tier: int = 0
+    position_rank: int = 0
+    overall_rank: int = 0
+    adp: float | None = None
+    adp_stdev: float | None = None
+    bye_week: int | None = None
+    injury_status: str | None = None
+    floor: float | None = None
+    ceiling: float | None = None
+
+    @property
+    def adp_delta(self) -> float | None:
+        """Positive means he is still on the board later than ADP expects."""
+        if self.adp is None or not self.overall_rank:
+            return None
+        return self.adp - self.overall_rank
+
+
+@dataclass
+class ReplacementLevel:
+    position: str
+    rank: int                 # league-wide rank that defines replacement
+    points: float
+    dedicated_starters: int
+    flex_share: float
+
+
+@dataclass
+class Board:
+    """A fully valued draft board."""
+
+    players: list[PlayerValue] = field(default_factory=list)
+    replacement: dict[str, ReplacementLevel] = field(default_factory=dict)
+    tiers: dict[str, list[list[PlayerValue]]] = field(default_factory=dict)
+    scarcity: dict[str, float] = field(default_factory=dict)
+    starting_slots: dict[str, int] = field(default_factory=dict)
+    num_teams: int = 12
+
+    def by_position(self, position: str) -> list[PlayerValue]:
+        return [p for p in self.players if p.position == position]
+
+    def available(self, drafted: set[str]) -> list[PlayerValue]:
+        return [p for p in self.players if p.player_key not in drafted]
+
+    def get(self, player_key: str) -> PlayerValue | None:
+        for p in self.players:
+            if p.player_key == player_key:
+                return p
+        return None
+
+
+# --- roster demand -----------------------------------------------------------
+
+def split_slots(starting_slots: dict[str, int]) -> tuple[dict[str, int], dict[str, int]]:
+    """Separate dedicated position slots from flex slots."""
+    dedicated: dict[str, int] = {}
+    flex: dict[str, int] = {}
+    for slot, count in starting_slots.items():
+        if slot in BENCH_SLOTS or count <= 0:
+            continue
+        normalized = slot.upper()
+        if normalized in FLEX_ELIGIBILITY:
+            flex[normalized] = flex.get(normalized, 0) + count
+        elif normalized in DEFENSIVE_SLOTS:
+            dedicated["DEF"] = dedicated.get("DEF", 0) + count
+        else:
+            dedicated[normalized] = dedicated.get(normalized, 0) + count
+    return dedicated, flex
+
+
+def positions_from_slots(starting_slots: dict[str, int]) -> list[str]:
+    """The positions this league actually starts.
+
+    A league with no K slot should not have kickers on its board at all, and a
+    superflex league must include QBs in flex competition.
+    """
+    dedicated, flex = split_slots(starting_slots)
+    covered: set[str] = set(dedicated)
+    for slot in flex:
+        covered |= FLEX_ELIGIBILITY[slot]
+    return [p for p in REAL_POSITIONS if p in covered]
+
+
+def compute_replacement_levels(
+    players_by_position: dict[str, list[PlayerValue]],
+    starting_slots: dict[str, int],
+    num_teams: int,
+) -> dict[str, ReplacementLevel]:
+    """Find the replacement-level player at each position.
+
+    Dedicated slots are easy: 12 teams x 2 RB means RB24 is the last starter.
+    Flex slots are the interesting part - we do not guess how a flex splits
+    across positions, we *simulate* it: walk the best remaining players at every
+    flex-eligible position and see which ones actually claim the flex spots.
+    """
+    dedicated, flex = split_slots(starting_slots)
+
+    # Baseline: dedicated starters league-wide.
+    baseline = {pos: num_teams * count for pos, count in dedicated.items()}
+    for pos in players_by_position:
+        baseline.setdefault(pos, 0)
+
+    # Simulate the flex draft to learn each position's real share.
+    flex_share: dict[str, float] = {pos: 0.0 for pos in baseline}
+    cursor = dict(baseline)
+    for slot, count in flex.items():
+        eligible = FLEX_ELIGIBILITY[slot]
+        for _ in range(num_teams * count):
+            best_pos, best_points = None, float("-inf")
+            for pos in eligible:
+                pool = players_by_position.get(pos) or []
+                idx = cursor.get(pos, 0)
+                if idx >= len(pool):
+                    continue
+                if pool[idx].points > best_points:
+                    best_pos, best_points = pos, pool[idx].points
+            if best_pos is None:
+                break
+            cursor[best_pos] = cursor.get(best_pos, 0) + 1
+            flex_share[best_pos] = flex_share.get(best_pos, 0.0) + 1
+
+    levels: dict[str, ReplacementLevel] = {}
+    for pos, pool in players_by_position.items():
+        if not pool:
+            continue
+        rank = int(baseline.get(pos, 0) + flex_share.get(pos, 0.0))
+        # The replacement player is the *next* one after the last starter.
+        index = min(max(rank, 1), len(pool)) - 1
+        levels[pos] = ReplacementLevel(
+            position=pos,
+            rank=max(rank, 1),
+            points=pool[index].points,
+            dedicated_starters=dedicated.get(pos, 0),
+            flex_share=flex_share.get(pos, 0.0),
+        )
+    return levels
+
+
+# --- tiers -------------------------------------------------------------------
+
+def assign_tiers(
+    players: Sequence[PlayerValue], gap_pct: float = 0.08, min_gap_points: float = 3.0
+) -> list[list[PlayerValue]]:
+    """Group a position into tiers at projection drop-offs (spec 5.1).
+
+    A new tier starts when the gap to the next player is both a meaningful
+    fraction of his value and a meaningful absolute number of points, so that
+    the deep end of a position does not shatter into noise tiers.
+    """
+    ordered = sorted(players, key=lambda p: p.points, reverse=True)
+    if not ordered:
+        return []
+
+    tiers: list[list[PlayerValue]] = [[]]
+    tier_number = 1
+    for i, player in enumerate(ordered):
+        player.tier = tier_number
+        tiers[-1].append(player)
+        if i + 1 >= len(ordered):
+            break
+        gap = player.points - ordered[i + 1].points
+        reference = abs(player.points) or 1.0
+        if gap >= min_gap_points and (gap / reference) >= gap_pct:
+            tier_number += 1
+            tiers.append([])
+    return [t for t in tiers if t]
+
+
+# --- scarcity ----------------------------------------------------------------
+
+def scarcity_curve(
+    players: Sequence[PlayerValue], horizon: int, num_teams: int
+) -> float:
+    """How fast value decays at a position, in points lost per pick waited.
+
+    Measured over the next `horizon` players at the position - i.e. roughly the
+    window before your next pick comes around. A high number means waiting is
+    expensive and the position must be addressed now (spec 5.1).
+    """
+    ordered = sorted(players, key=lambda p: p.points, reverse=True)
+    if len(ordered) < 2:
+        return 0.0
+    window = ordered[: max(2, min(horizon, len(ordered)))]
+    drop = window[0].points - window[-1].points
+    return drop / max(1, len(window) - 1)
+
+
+# --- board assembly ----------------------------------------------------------
+
+def build_board(
+    conn: sqlite3.Connection,
+    season: int,
+    starting_slots: dict[str, int],
+    num_teams: int,
+    *,
+    week: int = 0,
+    source: str = "blended",
+    tier_gap_pct: float = 0.08,
+    positions: Iterable[str] | None = None,
+    limit_per_position: int | None = None,
+) -> Board:
+    """Assemble the valued board from stored projections."""
+    # Default to exactly the positions this league starts, so a no-kicker league
+    # never shows kickers.
+    if positions is None:
+        positions = positions_from_slots(starting_slots) or list(REAL_POSITIONS)
+    players_by_position: dict[str, list[PlayerValue]] = {}
+
+    for pos in positions:
+        rows = conn.execute(
+            _BOARD_QUERY,
+            {"season": season, "week": week, "source": source, "position": pos},
+        ).fetchall()
+        pool = [
+            PlayerValue(
+                player_key=r["player_key"],
+                name=r["full_name"],
+                position=pos,
+                team=r["team"] or "",
+                points=float(r["points"] or 0.0),
+                adp=r["adp"],
+                adp_stdev=r["adp_stdev"],
+                bye_week=r["bye_week"],
+                injury_status=r["injury_status"],
+                floor=r["floor"],
+                ceiling=r["ceiling"],
+            )
+            for r in rows
+        ]
+        if limit_per_position:
+            pool = pool[:limit_per_position]
+        for i, p in enumerate(pool, 1):
+            p.position_rank = i
+        if pool:
+            players_by_position[pos] = pool
+
+    replacement = compute_replacement_levels(
+        players_by_position, starting_slots, num_teams
+    )
+
+    all_players: list[PlayerValue] = []
+    tiers: dict[str, list[list[PlayerValue]]] = {}
+    scarcity: dict[str, float] = {}
+
+    for pos, pool in players_by_position.items():
+        level = replacement.get(pos)
+        base = level.points if level else 0.0
+        for p in pool:
+            p.vorp = round(p.points - base, 2)
+        tiers[pos] = assign_tiers(pool, tier_gap_pct)
+        scarcity[pos] = round(scarcity_curve(pool, num_teams, num_teams), 3)
+        all_players.extend(pool)
+
+    all_players.sort(key=lambda p: p.vorp, reverse=True)
+    for i, p in enumerate(all_players, 1):
+        p.overall_rank = i
+
+    return Board(
+        players=all_players,
+        replacement=replacement,
+        tiers=tiers,
+        scarcity=scarcity,
+        starting_slots=starting_slots,
+        num_teams=num_teams,
+    )
+
+
+_BOARD_QUERY = """
+SELECT
+    p.player_key,
+    p.full_name,
+    p.team,
+    p.bye_week,
+    COALESCE(b.points, j.points)  AS points,
+    b.floor                       AS floor,
+    b.ceiling                     AS ceiling,
+    a.adp                         AS adp,
+    a.stdev                       AS adp_stdev,
+    i.status                      AS injury_status
+FROM players p
+LEFT JOIN projections_blended b
+       ON b.player_key = p.player_key AND b.season = :season AND b.week = :week
+LEFT JOIN projections j
+       ON j.player_key = p.player_key AND j.season = :season AND j.week = :week
+      AND j.source = 'sleeper'
+-- ADP source preference is deliberate, not "whichever synced last":
+-- FantasyPros ECR is the true expert consensus and ships a real standard
+-- deviation, which is what the survival model wants. Sleeper ADP is the
+-- fallback, and its stdev is only a proxy derived from scoring variants.
+LEFT JOIN (
+    SELECT player_key, adp, stdev,
+           ROW_NUMBER() OVER (
+               PARTITION BY player_key
+               ORDER BY CASE source
+                            WHEN 'fantasypros' THEN 1
+                            WHEN 'sleeper'     THEN 2
+                            ELSE 3
+                        END,
+                        fetched_at DESC
+           ) AS rn
+    FROM adp
+) a ON a.player_key = p.player_key AND a.rn = 1
+LEFT JOIN (
+    SELECT player_key, status,
+           ROW_NUMBER() OVER (PARTITION BY player_key ORDER BY observed_at DESC) AS rn
+    FROM injuries
+) i ON i.player_key = p.player_key AND i.rn = 1
+WHERE p.position = :position
+  AND COALESCE(b.points, j.points) IS NOT NULL
+ORDER BY points DESC
+"""

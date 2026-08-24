@@ -1,0 +1,102 @@
+# Fantasy Command Center — single source of user configuration.
+# Secrets live in .env (gitignored), never here.
+
+league:
+  # Yahoo numeric league id, e.g. "123456" (from your league URL).
+  # Leave blank and run `fcc leagues` to have the tool list yours.
+  league_id: "796511"
+  game_code: "nfl"
+  # Season year. Leave blank to auto-resolve to the current NFL season.
+  season: 2026
+  # Your own team id within the league (integer, 1..N).
+  # Leave blank and run `fcc whoami` to auto-detect it.
+  my_team_id:
+
+paths:
+  db: "data/league.db"
+  # Directory containing the .env file holding Yahoo credentials + token.
+  env_dir: "."
+  manual_id_overrides: "data/id_overrides.yaml"
+
+# Projection blending (spec 4.3). Weights renormalize when a source is missing.
+projections:
+  # Weights apply to sources that supply PROJECTED STAT LINES. FantasyPros is
+  # not among them: it contributes expert consensus rank and ADP, not points.
+  weights:
+    sleeper: 0.50      # Rotowire lines via Sleeper; full positional coverage
+    espn: 0.50         # second opinion, top ~500 by ownership
+    yahoo: 0.25        # only if Yahoo projections become available
+  # Fall back to cached data up to this age before treating a source as down.
+  max_cache_age_hours: 36
+  # Width of the floor/ceiling band, in standard deviations (spec 4.4).
+  uncertainty_band_sd: 1.0
+
+sources:
+  sleeper:
+    enabled: true
+    trending_lookback_hours: 24
+    trending_limit: 50
+  fantasypros:
+    enabled: true
+    # FantasyPros has no free public API. Drop their CSV exports here; the
+    # adapter treats CSV import as a first-class path (spec 3.4).
+    csv_dir: "data/fantasypros"
+  espn:
+    enabled: true
+  nflverse:
+    enabled: true
+    lookback_seasons: 3
+
+draft:
+  # Your draft slot (1..N). Leave blank to read it from Yahoo draft settings.
+  draft_slot: 3
+  # Positions to suppress until the final rounds (spec 5.2 need_multiplier).
+  defer_positions: ["DEF"]
+  defer_until_round: 12
+  # A projection gap larger than this fraction starts a new tier (spec 5.1).
+  tier_gap_pct: 0.08
+  # Warn when a pick puts this many starters on one bye week (spec 5.2).
+  bye_stack_warn_threshold: 3
+  poll_interval_seconds: 10
+  # Weight of positional need in the adjusted score; 0 = pure VORP.
+  need_weight: 0.35
+  # How many flex spots a TE is assumed to claim. 0 means the flex is
+  # treated as going to a RB/WR, which is what actually happens most weeks;
+  # raise to 1 if you intend to start two tight ends.
+  te_flex_credit: 0
+
+season:
+  # Margin (in ROS points) an FA must beat your droppable player by (spec 6.1).
+  waiver_value_margin: 8.0
+  # Lineup change alerts only fire above this projected-points gap (spec 6.3).
+  lineup_swap_min_gap: 1.5
+  # Risk mode: tilt to ceiling when projected underdog, floor when favorite.
+  risk_mode: auto      # auto | floor | ceiling | neutral
+  playoff_weeks: [15, 16, 17]
+
+notifications:
+  # Any combination; each is skipped silently when unconfigured.
+  discord:
+    enabled: false
+    # Set DISCORD_WEBHOOK_URL in .env instead of pasting the URL here.
+  email:
+    enabled: false
+    smtp_host: ""
+    smtp_port: 587
+    from_addr: ""
+    to_addr: ""
+    # Set SMTP_USERNAME / SMTP_PASSWORD in .env.
+  desktop:
+    enabled: true
+  # Never re-send an identical unchanged fact (spec 6.6).
+  dedup_window_hours: 72
+
+# Local times for the scheduled jobs (spec 6). Used by jobs/install_schedule.
+schedule:
+  timezone: "America/Los_Angeles"
+  waivers:   { day: "TUE", time: "07:00" }
+  injuries:  { day: "DAILY", time: "08:00" }
+  lineup_thu: { day: "THU", time: "10:00" }
+  lineup_sun: { day: "SUN", time: "09:00" }
+  byes:      { day: "WED", time: "07:00" }
+  recap:     { day: "MON", time: "08:00" }

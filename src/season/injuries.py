@@ -1,0 +1,267 @@
+"""Daily injury & news monitor (spec 6.2).
+
+Diffs today's injury statuses against the last snapshot and alerts only on
+*changes* that touch something I care about:
+  (a) my roster, (b) my opponent's key players, (c) top free agents.
+
+Alerting on state rather than on change is what makes these tools unusable, so
+the snapshot diff is the whole point: an unchanged Questionable tag is silent.
+"""
+from __future__ import annotations
+
+import sqlite3
+from dataclasses import dataclass, field
+from typing import Any, Iterable
+
+from src import db
+from src.notify import Notification
+from src.sources.sleeper import is_escalation, severity_of
+
+SNAPSHOT_KIND = "injuries"
+
+
+@dataclass
+class StatusChange:
+    player_key: str
+    name: str
+    position: str
+    team: str
+    before: str | None
+    after: str | None
+    body_part: str | None
+    context: str          # roster | opponent | free_agent | watch
+    replacement: str | None = None
+
+    @property
+    def is_escalation(self) -> bool:
+        return is_escalation(self.before, self.after)
+
+    @property
+    def is_recovery(self) -> bool:
+        return severity_of(self.after) < severity_of(self.before)
+
+    def describe(self) -> str:
+        before = self.before or "Healthy"
+        after = self.after or "Healthy"
+        arrow = "->"
+        detail = f" ({self.body_part})" if self.body_part else ""
+        line = f"{self.name} {self.position} {self.team}: {before} {arrow} {after}{detail}"
+        if self.replacement:
+            line += f"\n    replacement: {self.replacement}"
+        return line
+
+
+@dataclass
+class InjuryReport:
+    changes: list[StatusChange] = field(default_factory=list)
+    checked: int = 0
+    first_run: bool = False
+
+    @property
+    def actionable(self) -> list[StatusChange]:
+        return [c for c in self.changes if c.context in ("roster", "opponent", "free_agent")]
+
+    @property
+    def escalations(self) -> list[StatusChange]:
+        return [c for c in self.changes if c.is_escalation]
+
+
+def current_statuses(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
+    """Latest known injury status for every player carrying one."""
+    rows = conn.execute(
+        """
+        SELECT i.player_key, i.status, i.body_part, p.full_name, p.position, p.team
+        FROM injuries i
+        JOIN players p USING(player_key)
+        JOIN (
+            SELECT player_key, MAX(observed_at) AS latest
+            FROM injuries GROUP BY player_key
+        ) m ON m.player_key = i.player_key AND m.latest = i.observed_at
+        """
+    ).fetchall()
+    return {
+        r["player_key"]: {
+            "status": r["status"], "body_part": r["body_part"],
+            "name": r["full_name"], "position": r["position"], "team": r["team"],
+        }
+        for r in rows
+    }
+
+
+def my_roster_keys(conn: sqlite3.Connection, league_key: str, team_key: str) -> set[str]:
+    rows = conn.execute(
+        "SELECT DISTINCT player_key FROM rosters WHERE league_key=? AND team_key=? "
+        "AND week=(SELECT MAX(week) FROM rosters WHERE league_key=?)",
+        (league_key, str(team_key), league_key),
+    ).fetchall()
+    return {r["player_key"] for r in rows}
+
+
+def opponent_roster_keys(
+    conn: sqlite3.Connection, league_key: str, opponent_team_key: str | None
+) -> set[str]:
+    if not opponent_team_key:
+        return set()
+    return my_roster_keys(conn, league_key, opponent_team_key)
+
+
+def top_free_agent_keys(
+    conn: sqlite3.Connection, league_key: str, limit: int = 60
+) -> set[str]:
+    rows = conn.execute(
+        """
+        SELECT f.player_key
+        FROM free_agents f
+        LEFT JOIN projections_blended b ON b.player_key = f.player_key
+        WHERE f.league_key = ?
+        ORDER BY COALESCE(b.points, f.pct_owned, 0) DESC
+        LIMIT ?
+        """,
+        (league_key, limit),
+    ).fetchall()
+    return {r["player_key"] for r in rows}
+
+
+def best_bench_replacement(
+    conn: sqlite3.Connection,
+    league_key: str,
+    team_key: str,
+    position: str,
+    season: int,
+    week: int,
+    exclude: str,
+) -> str | None:
+    """The best same-position player already on my bench."""
+    row = conn.execute(
+        """
+        SELECT p.full_name, COALESCE(b.points, 0) AS pts
+        FROM rosters r
+        JOIN players p USING(player_key)
+        LEFT JOIN projections_blended b
+               ON b.player_key = r.player_key AND b.season=? AND b.week=?
+        WHERE r.league_key=? AND r.team_key=? AND p.position=? AND r.player_key<>?
+        ORDER BY pts DESC LIMIT 1
+        """,
+        (season, week, league_key, str(team_key), position, exclude),
+    ).fetchone()
+    return f"{row['full_name']} ({row['pts']:.1f} proj)" if row else None
+
+
+def run(
+    conn: sqlite3.Connection,
+    league_key: str,
+    my_team_key: str | None,
+    season: int,
+    week: int,
+    opponent_team_key: str | None = None,
+    watch_keys: Iterable[str] = (),
+) -> InjuryReport:
+    """Snapshot, diff against yesterday, and classify every change."""
+    statuses = current_statuses(conn)
+    previous = db.snapshot_latest(conn, SNAPSHOT_KIND)
+    db.snapshot_put(
+        conn, SNAPSHOT_KIND, {k: v["status"] for k, v in statuses.items()}
+    )
+
+    report = InjuryReport(checked=len(statuses), first_run=previous is None)
+    if previous is None:
+        # Nothing to diff against yet; establish the baseline silently rather
+        # than firing an alert for every currently-injured player in the NFL.
+        return report
+
+    roster = my_roster_keys(conn, league_key, my_team_key) if my_team_key else set()
+    opponents = opponent_roster_keys(conn, league_key, opponent_team_key)
+    free_agents = top_free_agent_keys(conn, league_key)
+    watching = set(watch_keys)
+
+    considered = set(previous) | set(statuses)
+    for player_key in considered:
+        before = previous.get(player_key)
+        after = statuses.get(player_key, {}).get("status")
+        if before == after:
+            continue
+
+        if player_key in roster:
+            context = "roster"
+        elif player_key in opponents:
+            context = "opponent"
+        elif player_key in free_agents:
+            context = "free_agent"
+        elif player_key in watching:
+            context = "watch"
+        else:
+            continue  # not my problem
+
+        info = statuses.get(player_key, {})
+        name = info.get("name")
+        if not name:
+            row = conn.execute(
+                "SELECT full_name, position, team FROM players WHERE player_key=?",
+                (player_key,),
+            ).fetchone()
+            if not row:
+                continue
+            info = {"name": row["full_name"], "position": row["position"], "team": row["team"]}
+
+        change = StatusChange(
+            player_key=player_key,
+            name=info.get("name", player_key),
+            position=info.get("position", ""),
+            team=info.get("team", "") or "FA",
+            before=before,
+            after=after,
+            body_part=info.get("body_part"),
+            context=context,
+        )
+        if context == "roster" and change.is_escalation and my_team_key:
+            change.replacement = best_bench_replacement(
+                conn, league_key, my_team_key, change.position, season, week, player_key
+            )
+        report.changes.append(change)
+
+    report.changes.sort(
+        key=lambda c: (
+            {"roster": 0, "free_agent": 1, "opponent": 2, "watch": 3}[c.context],
+            -severity_of(c.after),
+        )
+    )
+    return report
+
+
+def to_notification(report: InjuryReport, week: int, season: int) -> Notification | None:
+    """Build the alert, or None when nothing worth saying happened."""
+    actionable = report.actionable
+    if not actionable:
+        return None
+
+    lines: list[str] = []
+    for context, label in (
+        ("roster", "YOUR ROSTER"),
+        ("free_agent", "FREE AGENTS"),
+        ("opponent", "OPPONENT"),
+    ):
+        group = [c for c in actionable if c.context == context]
+        if not group:
+            continue
+        lines.append(f"__{label}__")
+        lines.extend(f"  {c.describe()}" for c in group)
+        lines.append("")
+
+    roster_escalations = [
+        c for c in actionable if c.context == "roster" and c.is_escalation
+    ]
+    urgency = "high" if roster_escalations else "normal"
+    title = (
+        f"Injury alert: {len(roster_escalations)} on your roster"
+        if roster_escalations
+        else f"Injury update: {len(actionable)} changes"
+    )
+    return Notification(
+        title=title,
+        lines=[line for line in lines if line != "" or True],
+        job="injuries",
+        urgency=urgency,
+        season=season,
+        week=week,
+        payload={"changes": [c.__dict__ for c in actionable]},
+    )

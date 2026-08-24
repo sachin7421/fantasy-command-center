@@ -1,0 +1,16 @@
+# Core
+yfpy>=17.0.0
+pandas>=2.2
+numpy>=1.26
+requests>=2.31
+PyYAML>=6.0
+python-dateutil>=2.9
+
+# NFL historical data (nflverse successor to the deprecated nfl_data_py)
+nflreadpy>=0.1.5
+
+# Dashboard
+streamlit>=1.40
+
+# Dev
+pytest>=8.0
