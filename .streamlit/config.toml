@@ -1,0 +1,23 @@
+# Theme for the Fantasy Command Center dashboard.
+#
+# Designed for a live draft: a dark ground so the screen is easy on the eyes
+# during a night draft, high contrast for glanceable numbers, and a single warm
+# accent reserved for actions so the primary control is never ambiguous.
+
+[theme]
+base = "dark"
+
+# Warm amber accent - used only for primary actions and "you are on the clock".
+primaryColor = "#F5A524"
+
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#1A1F2B"
+textColor = "#E8EAED"
+
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

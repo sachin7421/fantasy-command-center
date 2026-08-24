@@ -18,6 +18,7 @@ on:
     - cron: "0 13 * * 0"   # Sun 09:00 ET - lineup
     - cron: "0 11 * * 3"   # Wed 07:00 ET - bye / horizon planner
     - cron: "0 12 * * 1"   # Mon 08:00 ET - recap + trade scout
+    - cron: "0 11 * * 4"   # Thu 07:00 ET - deadline reminders
   workflow_dispatch:
     inputs:
       job:
@@ -25,7 +26,7 @@ on:
         required: true
         default: "daily"
         type: choice
-        options: [daily, sync, waivers, injuries, lineup, byes, recap, trades, doctor]
+        options: [daily, sync, waivers, injuries, lineup, byes, recap, trades, reminders, doctor]
 
 concurrency:
   # Never let two runs write to the database at once.
@@ -43,6 +44,8 @@ jobs:
       YAHOO_CONSUMER_KEY: ${{ secrets.YAHOO_CONSUMER_KEY }}
       YAHOO_CONSUMER_SECRET: ${{ secrets.YAHOO_CONSUMER_SECRET }}
       YAHOO_ACCESS_TOKEN_JSON: ${{ secrets.YAHOO_ACCESS_TOKEN_JSON }}
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
       PYTHONIOENCODING: utf-8
 
     steps:
@@ -66,6 +69,7 @@ jobs:
             "0 13 * * 0") echo "job=lineup"   >> "$GITHUB_OUTPUT" ;;
             "0 11 * * 3") echo "job=byes"     >> "$GITHUB_OUTPUT" ;;
             "0 12 * * 1") echo "job=recap"    >> "$GITHUB_OUTPUT" ;;
+            "0 11 * * 4") echo "job=reminders" >> "$GITHUB_OUTPUT" ;;
             *)            echo "job=${{ github.event.inputs.job || 'daily' }}" >> "$GITHUB_OUTPUT" ;;
           esac
 
@@ -84,6 +88,12 @@ jobs:
         # Piggybacks on the Monday recap run rather than burning its own slot.
         if: steps.pick.outputs.job == 'recap'
         run: python fcc.py trades
+
+      - name: Reminders
+        # Deadlines matter most on the days a lineup or claim is due, so they
+        # ride along with those runs instead of getting their own schedule.
+        if: steps.pick.outputs.job == 'lineup' || steps.pick.outputs.job == 'waivers'
+        run: python fcc.py reminders
 
       - name: Upload logs on failure
         if: failure()

@@ -398,7 +398,7 @@ def _print_recommendations(tracker, recommender, board, slots, my_slot, position
 
 def cmd_job(ctx: Context, args) -> int:
     """Run one season job and notify (spec 6)."""
-    from src.season import byes, injuries, lineup, recap, trades, waivers
+    from src.season import byes, injuries, lineup, recap, reminders, trades, waivers
 
     season = ctx.season
     week = args.week if args.week is not None else ctx.current_week()
@@ -462,6 +462,32 @@ def cmd_job(ctx: Context, args) -> int:
               f"{report.points_left_on_bench:.1f} left on bench.")
         notification = recap.to_notification(report, season)
 
+    elif args.job == "reminders":
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo(str(ctx.cfg.get("schedule.timezone", "America/New_York")))
+        settings = ctx.settings()
+        gaps: list[str] = []
+        if team_key:
+            try:
+                bye_report = byes.run(
+                    ctx.conn, ctx.league_key, team_key, season, week, slots, horizon=1
+                )
+                gaps = [
+                    f"Week {w.week}: cannot fill {', '.join(w.empty_slots)}"
+                    for w in bye_report.problem_weeks
+                ]
+            except Exception as exc:
+                log.warning("Could not check roster gaps for reminders: %s", exc)
+
+        found = reminders.build(
+            settings, datetime.now(tz), week=week, roster_gaps=gaps,
+            faab_left=args.budget,
+        )
+        print(f"{len(found)} reminder(s) apply right now.")
+        notification = reminders.to_notification(found, season, week)
+
     elif args.job == "trades":
         if not team_key:
             print("league.my_team_id is not set; skipping.")
@@ -490,13 +516,13 @@ def cmd_daily(ctx: Context, args) -> int:
 
     weekday = dt.datetime.now().strftime("%a").upper()[:3]
     schedule = {
-        "TUE": ["waivers", "injuries"],
+        "TUE": ["waivers", "injuries", "reminders"],
         "WED": ["byes", "injuries"],
-        "THU": ["lineup", "injuries"],
-        "SUN": ["lineup", "injuries"],
+        "THU": ["lineup", "injuries", "reminders"],
+        "SUN": ["lineup", "injuries", "reminders"],
         "MON": ["recap", "trades", "injuries"],
     }
-    jobs = schedule.get(weekday, ["injuries"])
+    jobs = schedule.get(weekday, ["injuries", "reminders"])
 
     class _A:
         force = False
@@ -690,7 +716,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_mock.add_argument("--compare", action="store_true", help="run the acceptance benchmark")
     p_mock.add_argument("-n", type=int, default=100)
 
-    for job in ("injuries", "lineup", "waivers", "byes", "recap", "trades"):
+    for job in ("injuries", "lineup", "waivers", "byes", "recap", "trades", "reminders"):
         p_job = sub.add_parser(job, help=f"run the {job} job")
         p_job.add_argument("--week", type=int)
         p_job.add_argument("--dry-run", action="store_true")

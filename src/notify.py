@@ -38,6 +38,7 @@ class Notification:
     urgency: str = "normal"       # low | normal | high
     season: int | None = None
     week: int | None = None
+    subtitle: str = ""
     payload: dict[str, Any] = field(default_factory=dict)
 
     def body(self) -> str:
@@ -147,27 +148,58 @@ class Notifier:
         return True
 
     def _send_email(self, n: Notification) -> bool:
+        """Send a multipart message: styled HTML with a plain-text fallback.
+
+        Credentials come from the environment, never config, so nothing secret
+        is ever committed. Gmail requires an app password here rather than the
+        account password.
+        """
+        from src import email_render
+
         host = self.cfg.get("notifications.email.smtp_host")
         to_addr = self.cfg.get("notifications.email.to_addr")
         from_addr = self.cfg.get("notifications.email.from_addr") or to_addr
-        username = env("SMTP_USERNAME")
+        username = env("SMTP_USERNAME") or from_addr
         password = env("SMTP_PASSWORD")
+
         if not (host and to_addr and from_addr):
             log.info("Email enabled but SMTP settings are incomplete; skipping.")
             return False
+        if not password:
+            log.info("Email enabled but SMTP_PASSWORD is not set; skipping.")
+            return False
+
+        dashboard_url = self.cfg.get("notifications.dashboard_url")
+        subject_prefix = {"high": "[Fantasy] ACTION - ", "low": "[Fantasy] "}.get(
+            n.urgency, "[Fantasy] "
+        )
 
         message = EmailMessage()
-        message["Subject"] = f"[Fantasy] {n.title}"
+        message["Subject"] = f"{subject_prefix}{n.title}"
         message["From"] = from_addr
         message["To"] = to_addr
-        message.set_content(n.body() or n.title)
+        message.set_content(email_render.render_text(n.title, n.lines, dashboard_url))
+        message.add_alternative(
+            email_render.render(
+                n.title,
+                n.lines,
+                urgency=n.urgency,
+                dashboard_url=dashboard_url,
+                subtitle=n.subtitle or None,
+            ),
+            subtype="html",
+        )
 
         port = int(self.cfg.get("notifications.email.smtp_port", 587))
-        with smtplib.SMTP(host, port, timeout=20) as server:
-            server.starttls()
-            if username and password:
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=30) as server:
                 server.login(username, password)
-            server.send_message(message)
+                server.send_message(message)
+        else:
+            with smtplib.SMTP(host, port, timeout=30) as server:
+                server.starttls()
+                server.login(username, password)
+                server.send_message(message)
         return True
 
     def _send_desktop(self, n: Notification) -> bool:

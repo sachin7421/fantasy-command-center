@@ -79,13 +79,21 @@ notifications:
   discord:
     enabled: false
     # Set DISCORD_WEBHOOK_URL in .env instead of pasting the URL here.
+  # Linked from every email so a summary is one tap from the full board.
+  dashboard_url: "https://fantasy-command-center-fkixkm6fbqbtsmfhqkgmyu.streamlit.app"
+
   email:
     enabled: false
-    smtp_host: ""
+    # Gmail: smtp.gmail.com / 587. Requires an APP PASSWORD, not your account
+    # password - Google blocks the latter. Create one at
+    # https://myaccount.google.com/apppasswords (needs 2-step verification on),
+    # then put it in .env as SMTP_PASSWORD.
+    smtp_host: "smtp.gmail.com"
     smtp_port: 587
     from_addr: ""
     to_addr: ""
-    # Set SMTP_USERNAME / SMTP_PASSWORD in .env.
+    # SMTP_USERNAME defaults to from_addr. SMTP_PASSWORD must be set in .env
+    # (locally) and in GitHub Actions secrets (for the scheduled jobs).
   desktop:
     enabled: true
   # Never re-send an identical unchanged fact (spec 6.6).

@@ -116,9 +116,18 @@ diff the two — it should report an exact match.
 python fcc.py dashboard
 ```
 
-Three panes: recommendations, the full sortable board with tier colouring, and
-your roster with remaining needs. There is a search box, big tap targets, and an
-undo.
+Three panes: recommendations, the full sortable board, and your roster with
+remaining needs — plus a value curve showing where each position falls off. There
+is a search box, big tap targets, and an undo. **Phone layout** in the sidebar
+stacks the panes into tabs for a narrow screen.
+
+The palette is not decorative. Position colours are slots from a categorical
+theme validated for colour-blind separation and contrast, assigned in a fixed
+order; the obvious emerald-RB / sky-WR pairing was measured and rejected because
+those two sit below the normal-vision separation floor, and RB and WR are the two
+positions you scan most. Tier uses a single-hue ordinal ramp rather than a
+rainbow, because tiers are degrees of one thing. Amber means "action" and is used
+for nothing else, so the Draft control is never ambiguous.
 
 **Manual mode is the default and always works.** Toggle "Poll Yahoo for picks" in
 the sidebar to sync live; if that fails mid-draft the banner turns red and you
@@ -168,6 +177,7 @@ FantasyPros expert disagreement where available and a fitted curve otherwise
 | `byes` | Wed 07:00 | Next 4 weeks of bye/injury gaps, plus playoff-week schedules |
 | `recap` | Mon 08:00 | Score, optimal score, and points left on your bench |
 | `trades` | Mon 08:15 | Mutually beneficial trade ideas with the value maths shown |
+| `reminders` | with lineup/waiver runs | Deadlines about to close: draft countdown, Thursday lock, waivers processing, trade deadline, playoffs |
 
 Run any of them directly. `--dry-run` prints the notification instead of sending it:
 
@@ -193,10 +203,23 @@ was asleep happens at the next opportunity. Every job is idempotent, so
 
 ### Notifications
 
-Configure in `config.yaml`. Discord is the easiest path to your phone: create a
-webhook and put the URL in `.env` as `DISCORD_WEBHOOK_URL`, then set
-`notifications.discord.enabled: true`. Email (SMTP) and desktop toasts are also
-supported. Each channel is skipped silently when unconfigured.
+Configure in `config.yaml`. Each channel is skipped silently when unconfigured.
+
+**Email** sends a styled HTML summary with a plain-text alternative, and links
+back to the dashboard. For Gmail:
+
+1. Turn on 2-step verification, then create an **app password** at
+   <https://myaccount.google.com/apppasswords>. Google rejects your normal
+   account password over SMTP.
+2. In `config.yaml` set `notifications.email.enabled: true`, plus `from_addr`
+   and `to_addr`.
+3. Put the app password in `.env` as `SMTP_PASSWORD` (and the same value in
+   GitHub Actions secrets, so the scheduled jobs can send too).
+
+**Discord** is the quickest path to a phone push: create a webhook, put the URL
+in `.env` as `DISCORD_WEBHOOK_URL`, set `notifications.discord.enabled: true`.
+
+**Desktop** toasts work locally with no configuration.
 
 Notifications are deduplicated on the *fact*, not the delivery — an unchanged
 Questionable tag will not be re-sent every morning.
