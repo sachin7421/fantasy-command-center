@@ -255,3 +255,35 @@ def test_database_url_none_when_nothing_configured(monkeypatch):
     monkeypatch.setitem(sys.modules, "streamlit", fake)
 
     assert storage.database_url() is None
+
+
+def test_trailing_newline_in_a_pasted_secret_is_stripped(monkeypatch):
+    """Regression: a secret pasted into a textarea carries a newline.
+
+    Postgres then reads the database name as "postgres\n" and refuses the
+    connection - a failure that appears only in the deployment, never locally.
+    """
+    from src import storage
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/postgres\n")
+    assert storage.database_url() == "postgresql://u:p@h:5432/postgres"
+
+
+def test_surrounding_quotes_are_stripped(monkeypatch):
+    from src import storage
+
+    monkeypatch.setenv("DATABASE_URL", '"postgresql://u:p@h:5432/postgres"')
+    assert storage.database_url() == "postgresql://u:p@h:5432/postgres"
+
+
+def test_whitespace_only_value_is_treated_as_unset(monkeypatch):
+    import sys
+    import types
+
+    from src import storage
+
+    monkeypatch.setenv("DATABASE_URL", "   \n")
+    fake = types.ModuleType("streamlit")
+    fake.secrets = {}
+    monkeypatch.setitem(sys.modules, "streamlit", fake)
+    assert storage.database_url() is None

@@ -48,19 +48,30 @@ def database_url() -> str | None:
     """
     for key in DB_URL_KEYS:
         value = os.environ.get(key)
-        if value:
-            return value
+        if value and value.strip():
+            return _clean(value)
 
     try:
         import streamlit as st
 
         for key in DB_URL_KEYS:
             if key in st.secrets:
-                return str(st.secrets[key])
+                return _clean(str(st.secrets[key]))
     except Exception:
         # Not running under Streamlit, or no secrets file: fall through.
         pass
     return None
+
+
+def _clean(url: str) -> str:
+    """Strip whitespace and stray quotes from a pasted connection string.
+
+    Secret-management UIs are textareas, and a paste routinely carries a
+    trailing newline. Postgres then reads the database name as "postgres\\n"
+    and refuses the connection with `database "postgres\\n" does not exist` -
+    a failure that only appears in the deployment, never locally.
+    """
+    return url.strip().strip('"').strip("'").strip()
 
 
 # --- placeholder translation -------------------------------------------------
@@ -214,6 +225,8 @@ def connect_postgres(url: str) -> Database:
             "Run: pip install 'psycopg[binary]'"
         ) from exc
 
+    # Whitespace first: a pasted secret often carries a trailing newline.
+    url = _clean(url)
     # Supabase hands out postgres:// URLs; psycopg wants postgresql://.
     dsn = url.replace("postgresql+psycopg://", "postgresql://")
     if dsn.startswith("postgres://"):

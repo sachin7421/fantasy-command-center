@@ -43,3 +43,11 @@ def test_session_never_holds_the_plaintext(monkeypatch):
     digest = auth._digest("sekrit")
     assert digest != "sekrit"
     assert len(digest) == 64
+
+
+def test_password_with_trailing_newline_still_matches(monkeypatch):
+    """A password pasted into a secrets textarea often gains a newline."""
+    monkeypatch.setenv("APP_PASSWORD", "hunter2\n")
+    expected = auth.configured_password()
+    assert expected == "hunter2"
+    assert auth.check("hunter2", expected)

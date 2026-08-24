@@ -26,16 +26,21 @@ ENV_KEYS = ("APP_PASSWORD", "DASHBOARD_PASSWORD")
 
 def configured_password() -> str | None:
     """The expected password, from env or Streamlit secrets. None => gate open."""
+    # Whitespace is stripped for the same reason as the database URL: a value
+    # pasted into a secrets textarea often carries a trailing newline, which
+    # would otherwise make the correct password fail to match.
     for key in ENV_KEYS:
         value = os.environ.get(key)
-        if value:
-            return value
+        if value and value.strip():
+            return value.strip()
     try:
         import streamlit as st
 
         for key in ENV_KEYS:
             if key in st.secrets:
-                return str(st.secrets[key])
+                cleaned = str(st.secrets[key]).strip()
+                if cleaned:
+                    return cleaned
     except Exception:
         pass
     return None
