@@ -105,6 +105,41 @@ def positional_profile(
     return profile
 
 
+def _rationale(
+    give, get,
+    my_profile: dict[str, float],
+    their_profile: dict[str, float],
+    my_gain: float,
+    their_gain: float,
+) -> list[str]:
+    """Why this helps, said only where the rosters actually support it."""
+    reasons: list[str] = []
+    my_surplus = my_profile.get(give.position, 0.0)
+    their_surplus = their_profile.get(get.position, 0.0)
+
+    if my_surplus > 0 and their_surplus > 0:
+        reasons.append(
+            f"you have {my_surplus:.0f} pts of {give.position} sitting on your "
+            f"bench, they have {their_surplus:.0f} at {get.position}"
+        )
+    elif my_surplus > 0:
+        reasons.append(
+            f"you have {my_surplus:.0f} pts of {give.position} on the bench; "
+            f"{get.position} is where your lineup gains"
+        )
+    else:
+        # No surplus either way: the gain comes from the lineup shape, not from
+        # depth, and saying "you are deep at RB" here would be false.
+        reasons.append(
+            f"{get.position} slots into your lineup better than {give.position} "
+            f"does, without either side thinning out"
+        )
+    reasons.append(
+        f"lineup effect: you {my_gain:+.1f}, them {their_gain:+.1f} ROS pts"
+    )
+    return reasons
+
+
 def run(
     conn: sqlite3.Connection,
     league_key: str,
@@ -129,6 +164,14 @@ def run(
             continue
         their_baseline = best_lineup(theirs, starting_slots).total
 
+        # Surplus per position on both sides, so the sentence attached to an
+        # idea describes what is actually true of these two rosters. It used to
+        # assert "you are deep at X, they are deep at Y" without ever checking,
+        # which is a claim the app had not earned - and `positional_profile`
+        # was sitting here unused with exactly this job to do.
+        my_profile = positional_profile(mine, starting_slots)
+        their_profile = positional_profile(theirs, starting_slots)
+
         # Only consider players who are not my top asset and not their top asset:
         # nobody trades their best player, and proposing it wastes everyone's time.
         my_candidates = sorted(mine, key=lambda p: p.points, reverse=True)[1:8]
@@ -152,9 +195,10 @@ def run(
                         i_get=[get],
                         my_gain=round(my_gain, 1),
                         their_gain=round(their_gain, 1),
-                        rationale=[
-                            f"you are deep at {give.position}, they are deep at {get.position}"
-                        ],
+                        rationale=_rationale(
+                            give, get, my_profile, their_profile,
+                            my_gain, their_gain,
+                        ),
                     )
                 )
 

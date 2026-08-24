@@ -582,3 +582,71 @@ def test_no_command_raises_against_an_empty_database(tmp_path, capsys):
         assert code == 0, f"fcc {' '.join(argv)} exited {code}: {out}"
         assert "Traceback" not in out, f"fcc {' '.join(argv)}:\n{out}"
         assert out.strip(), f"fcc {' '.join(argv)} said nothing at all"
+
+
+# --- the trade scout --------------------------------------------------------
+
+@pytest.fixture
+def lopsided_league(tmp_path):
+    """Me RB-rich and WR-poor; one rival the exact mirror image."""
+    path = tmp_path / "trades.db"
+    conn = db.init_db(path)
+
+    def add(team, key, name, pos, pts):
+        if not conn.fetchone("SELECT 1 FROM players WHERE player_key=?", (key,)):
+            _player(conn, key, name, pos, pts)
+        conn.execute(
+            "INSERT INTO rosters(league_key, team_key, team_name, player_key, "
+            "selected_pos, week, fetched_at) VALUES (?,?,?,?,?,?,?)",
+            (LEAGUE, team, f"Team {team}", key, pos, WEEK, db.utcnow()),
+        )
+
+    for i, pts in enumerate([260, 250, 240, 230, 220]):
+        add(MY_TEAM, f"myrb{i}|RB", f"My RB{i}", "RB", pts)
+    for i, pts in enumerate([120, 110]):
+        add(MY_TEAM, f"mywr{i}|WR", f"My WR{i}", "WR", pts)
+    for i, pts in enumerate([230, 220, 210, 200, 190]):
+        add("9", f"thwr{i}|WR", f"Their WR{i}", "WR", pts)
+    for i, pts in enumerate([115, 105]):
+        add("9", f"thrb{i}|RB", f"Their RB{i}", "RB", pts)
+    for team in (MY_TEAM, "9"):
+        add(team, f"qb{team}|QB", f"QB {team}", "QB", 300.0)
+        add(team, f"te{team}|TE", f"TE {team}", "TE", 150.0)
+        add(team, f"def{team}|DEF", f"DEF {team}", "DEF", 110.0)
+    conn.commit()
+    return path
+
+
+def test_the_trade_scout_finds_an_obvious_swap(lopsided_league):
+    from src.season import trades
+
+    conn = db.init_db(lopsided_league)
+    ideas = trades.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS)
+    assert ideas, "an RB-rich team and a WR-rich team should have a trade"
+    idea = ideas[0]
+    assert idea.i_give[0].position == "RB"
+    assert idea.i_get[0].position == "WR"
+    assert idea.my_gain > 0 and idea.their_gain > 0
+
+
+def test_a_trade_rationale_is_checked_against_the_rosters(lopsided_league):
+    """It used to assert "you are deep at X" without ever looking.
+
+    Here it happens to be true, so the derived sentence must quote the actual
+    surplus rather than the position name alone.
+    """
+    from src.season import trades
+
+    conn = db.init_db(lopsided_league)
+    idea = trades.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS)[0]
+    text = " ".join(idea.rationale)
+    assert "pts of RB" in text, text
+    assert "lineup effect" in text
+
+
+def test_a_balanced_league_yields_no_trades(lineup_league):
+    """No idea is the right answer more often than not; it must not invent one."""
+    from src.season import trades
+
+    conn = db.init_db(lineup_league)
+    assert trades.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS) == []

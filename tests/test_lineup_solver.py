@@ -126,3 +126,50 @@ def test_multi_position_eligibility_is_respected():
     # Swiss must slide to WR so both RB and WR slots fill.
     assert lineup.is_complete
     assert lineup.total == pytest.approx(15 + 14 + 13)
+
+
+def test_the_solver_is_exactly_optimal_against_brute_force():
+    """A property test, because three commands now compute value through this.
+
+    Waiver claims, trade ideas and FAAB bids are all differences between two
+    calls to best_lineup, so an arrangement it gets wrong is a wrong number in
+    every one of them - and the error would be invisible, since a suboptimal
+    lineup still looks like a lineup.
+
+    The reference search may leave a slot empty, which is legal: a roster short
+    at a position fields fewer starters rather than none.
+    """
+    import random
+
+    from src.lineup_solver import FLEX_ELIGIBILITY, best_lineup, expand_slots
+
+    slots = {"QB": 1, "WR": 2, "RB": 2, "TE": 1, "W/R/T": 2, "DEF": 1}
+    expanded = expand_slots(slots)
+
+    def brute(players):
+        def search(i, used):
+            if i == len(expanded):
+                return 0.0
+            best = search(i + 1, used)
+            eligible = FLEX_ELIGIBILITY.get(expanded[i], {expanded[i]})
+            for j, player in enumerate(players):
+                if used & (1 << j) or player.position not in eligible:
+                    continue
+                best = max(best, player.points + search(i + 1, used | (1 << j)))
+            return best
+
+        return search(0, 0)
+
+    rng = random.Random(11)
+    positions = ["QB", "RB", "WR", "TE", "DEF"]
+    for trial in range(120):
+        roster = [
+            P(f"p{i}", rng.choice(positions), round(rng.uniform(0, 30), 1))
+            for i in range(rng.randint(4, 10))
+        ]
+        got = round(best_lineup(roster, slots).total, 2)
+        want = round(brute(roster), 2)
+        assert got == pytest.approx(want, abs=0.01), (
+            f"trial {trial}: solver {got}, optimum {want}, "
+            f"roster {[(p.position, p.points) for p in roster]}"
+        )
