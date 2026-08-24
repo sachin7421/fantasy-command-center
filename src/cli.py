@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -657,6 +658,56 @@ def cmd_migrate(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+def cmd_test_notify(ctx: Context, args) -> int:
+    """Send a test notification through every configured channel.
+
+    Exists because the real jobs only speak when they have something to say, so
+    a quiet run is ambiguous: it could mean "nothing to report" or "delivery is
+    broken". This makes the delivery path itself testable, from wherever it is
+    run - which matters most in CI, where a misnamed secret otherwise fails
+    silently until the first Tuesday of the season.
+    """
+    from src.storage import database_url
+
+    notifier = ctx.notifier()
+    channels = [
+        name for name in ("discord", "email", "desktop")
+        if ctx.cfg.get(f"notifications.{name}.enabled", False)
+    ]
+    if not channels:
+        print("No notification channels are enabled in config.yaml.")
+        return EXIT_OK
+
+    where = "GitHub Actions" if os.environ.get("GITHUB_ACTIONS") else "this machine"
+    print(f"Enabled channels: {', '.join(channels)}")
+
+    notification = Notification(
+        title="Delivery check",
+        subtitle=f"Sent from {where}",
+        job="test",
+        season=ctx.season,
+        lines=[
+            f"  Sent from: {where}",
+            f"  Database:  {db.describe_backend()}",
+            f"  Channels:  {', '.join(channels)}",
+            "",
+            "  If this arrived, scheduled summaries will reach you the same way.",
+        ],
+    )
+    # force=True: a delivery check must not be swallowed by the dedup window.
+    result = notifier.send(notification, force=True)
+    print(f"Result: {result}")
+
+    if result.get("errors"):
+        for channel, error in result["errors"].items():
+            print(f"  {channel} FAILED: {error}")
+        return EXIT_FAIL
+    if not result.get("sent"):
+        print("Nothing was delivered - check credentials for the enabled channels.")
+        return EXIT_FAIL
+    return EXIT_OK
+
+
 def cmd_dashboard(ctx: Context, args) -> int:
     import subprocess
 
@@ -732,6 +783,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_mig.add_argument("--source", help="source sqlite file (default: config paths.db)")
     p_mig.add_argument("--dry-run", action="store_true")
 
+    sub.add_parser("test-notify", help="send a test notification on every channel")
     sub.add_parser("dashboard", help="launch the Streamlit dashboard")
     return parser
 
@@ -761,6 +813,7 @@ def main(argv: list[str] | None = None) -> int:
         "draft": cmd_draft,
         "mockdraft": cmd_mockdraft,
         "daily": cmd_daily,
+        "test-notify": cmd_test_notify,
         "migrate": cmd_migrate,
         "dashboard": cmd_dashboard,
     }

@@ -26,7 +26,7 @@ on:
         required: true
         default: "daily"
         type: choice
-        options: [daily, sync, waivers, injuries, lineup, byes, recap, trades, reminders, doctor]
+        options: [daily, sync, waivers, injuries, lineup, byes, recap, trades, reminders, test-notify, doctor]
 
 concurrency:
   # Never let two runs write to the database at once.
@@ -78,7 +78,8 @@ jobs:
 
       - name: Refresh data
         # Projections, injuries and trending must be current before any job
-        # reasons about them.
+        # reasons about them. A delivery check needs none of that.
+        if: steps.pick.outputs.job != 'test-notify' && steps.pick.outputs.job != 'doctor'
         run: python fcc.py sync
 
       - name: Run ${{ steps.pick.outputs.job }}
