@@ -1,0 +1,138 @@
+"""Copy a local SQLite database into Postgres.
+
+Used once when moving to the hosted deployment, and safe to re-run: every table
+is written with ON CONFLICT DO NOTHING, so re-running tops up rather than
+duplicating. The append-only history tables therefore accumulate correctly
+across repeated runs.
+
+Order matters only loosely here (there are no foreign keys), but players are
+copied first so anything inspecting the database mid-migration sees a sensible
+partial state.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any, Iterable, Sequence
+
+from src.storage import Database
+
+log = logging.getLogger(__name__)
+
+#: Copied in this order. Primary keys are needed for the ON CONFLICT targets.
+TABLES: list[tuple[str, tuple[str, ...]]] = [
+    ("players", ("player_key",)),
+    ("player_id_map", ("source", "source_id")),
+    ("league_settings", ("league_key",)),
+    ("projections", ("player_key", "source", "season", "week")),
+    ("projections_blended", ("player_key", "season", "week")),
+    ("projection_history", ("player_key", "source", "season", "week", "observed_at")),
+    ("player_week_actuals", ("player_key", "season", "week", "source")),
+    ("adp", ("player_key", "source", "fetched_at")),
+    ("injuries", ("player_key", "source", "observed_at")),
+    ("trending", ("player_key", "kind", "fetched_at")),
+    ("rosters", ("league_key", "team_key", "player_key", "week")),
+    ("free_agents", ("league_key", "player_key", "week")),
+    ("transactions", ("league_key", "txn_id")),
+    ("draft_picks", ("league_key", "pick")),
+    ("matchups", ("league_key", "season", "week", "team_key")),
+    ("standings_history", ("league_key", "season", "week", "team_key")),
+    ("snapshots", ("kind", "taken_at")),
+    ("source_cache", ("cache_key",)),
+    # `recommendations` has a generated id; copied without it so the target
+    # assigns its own and no sequence collision is possible.
+    ("recommendations", ()),
+]
+
+BATCH = 500
+
+
+def _columns(conn: Database, table: str) -> list[str]:
+    if conn.dialect == "sqlite":
+        rows = conn.fetchall(f"PRAGMA table_info({table})")
+        return [r["name"] for r in rows]
+    rows = conn.fetchall(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema='public' AND table_name=%s ORDER BY ordinal_position",
+        (table,),
+    )
+    return [r["column_name"] for r in rows]
+
+
+def _row_values(row: Any, columns: Sequence[str]) -> tuple:
+    if isinstance(row, dict):
+        return tuple(row.get(c) for c in columns)
+    return tuple(row[c] for c in columns)
+
+
+def copy_table(
+    source: Database,
+    target: Database,
+    table: str,
+    conflict_keys: tuple[str, ...],
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Copy one table. Returns {read, written}."""
+    if not source.table_exists(table):
+        return {"read": 0, "written": 0}
+
+    source_cols = _columns(source, table)
+    target_cols = set(_columns(target, table))
+    # Only carry columns the target actually has, so a schema that has moved on
+    # does not abort the whole migration.
+    columns = [c for c in source_cols if c in target_cols]
+    if table == "recommendations":
+        columns = [c for c in columns if c != "id"]
+    if not columns:
+        return {"read": 0, "written": 0}
+
+    placeholders = ", ".join("?" for _ in columns)
+    column_list = ", ".join(columns)
+    conflict = (
+        f" ON CONFLICT ({', '.join(conflict_keys)}) DO NOTHING" if conflict_keys else ""
+    )
+    insert = f"INSERT INTO {table} ({column_list}) VALUES ({placeholders}){conflict}"
+
+    read = written = 0
+    cursor = source.execute(f"SELECT {column_list} FROM {table}")
+    batch: list[tuple] = []
+
+    def flush() -> int:
+        nonlocal batch
+        if not batch or dry_run:
+            count = len(batch)
+            batch = []
+            return 0 if dry_run else count
+        for values in batch:
+            target.execute(insert, values)
+        target.commit()
+        count = len(batch)
+        batch = []
+        return count
+
+    for row in cursor:
+        read += 1
+        batch.append(_row_values(row, columns))
+        if len(batch) >= BATCH:
+            written += flush()
+    written += flush()
+    return {"read": read, "written": written}
+
+
+def migrate(
+    source: Database,
+    target: Database,
+    tables: Iterable[tuple[str, tuple[str, ...]]] = TABLES,
+    dry_run: bool = False,
+    progress=None,
+) -> dict[str, dict[str, int]]:
+    """Copy every table from `source` into `target`."""
+    if source.dialect == target.dialect and source.url == target.url:
+        raise ValueError("Source and target are the same database.")
+
+    results: dict[str, dict[str, int]] = {}
+    for table, keys in tables:
+        stats = copy_table(source, target, table, keys, dry_run)
+        results[table] = stats
+        if progress:
+            progress(table, stats)
+    return results

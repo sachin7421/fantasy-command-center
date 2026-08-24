@@ -9,6 +9,9 @@ python-dateutil>=2.9
 # NFL historical data (nflverse successor to the deprecated nfl_data_py)
 nflreadpy>=0.1.5
 
+# Postgres backend (hosted deployments; SQLite needs no driver)
+psycopg[binary]>=3.2
+
 # Dashboard
 streamlit>=1.40
 

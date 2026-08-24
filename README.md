@@ -241,6 +241,92 @@ matters here, because this league overrides two Yahoo defaults (INT −1 instead
 
 ---
 
+## Running it anywhere (hosted)
+
+The app runs in two places from the same codebase. Which one is decided by a
+single environment variable:
+
+| | Local | Hosted |
+| --- | --- | --- |
+| Database | `data/league.db` (SQLite) | Supabase Postgres |
+| Chosen by | no `DATABASE_URL` set | `DATABASE_URL` set |
+| Scheduler | Task Scheduler / cron | GitHub Actions |
+| Needs your PC awake | yes | no |
+
+### 1. Database
+
+The Supabase project `fantasy-command-center` already has the schema applied,
+with row-level security enabled and no policies - so the publishable anon key
+can read nothing, and only a direct connection as the owner reaches the data.
+
+Get the connection string from **Supabase -> Project Settings -> Database ->
+Connection string -> URI**, choosing the **Session pooler** (port 6543). Put it
+in `.env` locally:
+
+```
+DATABASE_URL=postgresql://postgres.<ref>:<password>@aws-0-us-east-1.pooler.supabase.com:6543/postgres
+```
+
+Then move the local data across (safe to re-run; it tops up rather than
+duplicating):
+
+```bash
+python fcc.py migrate --dry-run    # see what would move
+python fcc.py migrate
+python fcc.py doctor               # confirms which backend it is talking to
+```
+
+### 2. Dashboard on Streamlit Community Cloud
+
+1. Go to <https://share.streamlit.io> and sign in with GitHub.
+2. **New app** -> repo `sachin7421/fantasy-command-center`, branch `main`,
+   main file `dashboard.py`.
+3. Under **Advanced settings -> Secrets**, paste the contents of
+   `.streamlit/secrets.toml.example` with your real values - at minimum
+   `DATABASE_URL` and `APP_PASSWORD`.
+4. Deploy. The URL works from any device, and the password gate protects it.
+
+`APP_PASSWORD` is what keeps a public URL private. With no password configured
+the gate stays open, which is what you want locally but not on the internet.
+
+### 3. Scheduled jobs on GitHub Actions
+
+`.github/workflows/jobs.yml` runs the season jobs on schedule. Add the same
+secrets under **repo Settings -> Secrets and variables -> Actions**:
+
+- `DATABASE_URL` (required)
+- `DISCORD_WEBHOOK_URL` (optional, for phone alerts)
+- `YAHOO_CONSUMER_KEY`, `YAHOO_CONSUMER_SECRET`, `YAHOO_ACCESS_TOKEN_JSON`
+  (optional, once Yahoo API access is approved)
+
+Run one by hand from the **Actions** tab -> *Scheduled jobs* -> *Run workflow*.
+
+Cron in GitHub Actions is UTC-only, so the schedules are written for Eastern
+daylight time. After DST ends each job lands an hour later in local time, which
+is harmless: every job is idempotent and the Tuesday waiver run still finishes
+long before waivers process.
+
+### Data retention
+
+The hosted database is also the long-term record. Alongside the current-state
+tables, these are append-only and never overwritten:
+
+| Table | What accumulates |
+| --- | --- |
+| `projection_history` | every projection ever observed, per source and week |
+| `player_week_actuals` | what players actually scored under this league's rules |
+| `adp` | ADP / expert-consensus movement over time |
+| `injuries` | the full injury timeline, not just the current status |
+| `trending` | waiver-wire heat, sampled continuously |
+| `recommendations` | every recommendation the system made |
+| `matchups`, `standings_history` | weekly results and standings |
+
+Together those answer questions that need a season of data: which projection
+source was actually most accurate for this league's scoring, whether trending
+adds predicted anything, and whether the tool's own advice was any good.
+
+---
+
 ## Project layout
 
 ```

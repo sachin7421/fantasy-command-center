@@ -216,6 +216,11 @@ class SleeperProjections(Source):
                     _json(stat_line), points, fetched_at,
                 ),
             )
+            # Append-only copy, so projection drift across the season survives.
+            db.record_projection_history(
+                self.conn, match.player_key, "sleeper", season, week_key,
+                points, _json(stat_line), fetched_at,
+            )
             stats["stored"] += 1
         self.conn.commit()
         return stats
@@ -319,8 +324,10 @@ class SleeperProjections(Source):
             stdev = _stdev(variants) if len(variants) > 1 else None
 
             self.conn.execute(
-                "INSERT OR REPLACE INTO adp(player_key, source, adp, stdev, best, worst, "
-                "fetched_at) VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO adp(player_key, source, adp, stdev, best, worst, fetched_at) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(player_key, source, fetched_at) "
+                "DO UPDATE SET adp=excluded.adp, stdev=excluded.stdev, "
+                "best=excluded.best, worst=excluded.worst",
                 (
                     match.player_key, "sleeper", float(adp), stdev,
                     min(variants) if variants else None,

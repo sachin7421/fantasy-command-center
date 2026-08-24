@@ -93,7 +93,7 @@ notifications:
 
 # Local times for the scheduled jobs (spec 6). Used by jobs/install_schedule.
 schedule:
-  timezone: "America/Los_Angeles"
+  timezone: "America/New_York"
   waivers:   { day: "TUE", time: "07:00" }
   injuries:  { day: "DAILY", time: "08:00" }
   lineup_thu: { day: "THU", time: "10:00" }

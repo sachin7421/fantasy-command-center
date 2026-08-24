@@ -120,7 +120,7 @@ def cmd_doctor(ctx: Context, args) -> int:
 
     print("Fantasy Command Center - health check\n")
     print(f"  config      : {ctx.cfg.path}")
-    print(f"  database    : {ctx.cfg.db_path}")
+    print(f"  database    : {db.describe_backend()}")
     print(f"  league key  : {ctx.league_key}")
     print(f"  season      : {ctx.season}")
     print(f"  roster slots: {ctx.starting_slots()}")
@@ -597,6 +597,40 @@ def cmd_verify_settings(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+def cmd_migrate(ctx: Context, args) -> int:
+    """Copy the local SQLite database into the configured Postgres."""
+    from src import migrate as migrate_mod
+    from src.storage import connect_postgres, connect_sqlite, database_url
+
+    target_url = args.to or database_url()
+    if not target_url:
+        print("No target set. Put DATABASE_URL in .env, or pass --to <postgres url>.")
+        return EXIT_FAIL
+
+    source = connect_sqlite(args.source or ctx.cfg.db_path)
+    target = connect_postgres(target_url)
+    target.executescript(db.schema_for("postgres"))
+
+    print(f"Copying {source.url} -> postgres")
+    if args.dry_run:
+        print("(dry run: reading only, nothing written)")
+
+    def show(table, stats):
+        if stats["read"]:
+            print(f"  {table:24s} read {stats['read']:>7,}  written {stats['written']:>7,}")
+
+    try:
+        results = migrate_mod.migrate(source, target, dry_run=args.dry_run, progress=show)
+    finally:
+        source.close()
+        target.close()
+
+    total_read = sum(s["read"] for s in results.values())
+    total_written = sum(s["written"] for s in results.values())
+    print(f"\n  total: read {total_read:,}, written {total_written:,}")
+    return EXIT_OK
+
+
 def cmd_dashboard(ctx: Context, args) -> int:
     import subprocess
 
@@ -667,6 +701,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_daily.add_argument("--week", type=int)
     p_daily.add_argument("--dry-run", action="store_true")
 
+    p_mig = sub.add_parser("migrate", help="copy local SQLite into Postgres")
+    p_mig.add_argument("--to", help="target postgres URL (default: DATABASE_URL)")
+    p_mig.add_argument("--source", help="source sqlite file (default: config paths.db)")
+    p_mig.add_argument("--dry-run", action="store_true")
+
     sub.add_parser("dashboard", help="launch the Streamlit dashboard")
     return parser
 
@@ -696,6 +735,7 @@ def main(argv: list[str] | None = None) -> int:
         "draft": cmd_draft,
         "mockdraft": cmd_mockdraft,
         "daily": cmd_daily,
+        "migrate": cmd_migrate,
         "dashboard": cmd_dashboard,
     }
     handler = handlers.get(args.command, cmd_job)

@@ -81,7 +81,7 @@ class Notifier:
     def record(self, notification: Notification, notified: bool) -> int:
         cursor = self.conn.execute(
             "INSERT INTO recommendations(job, season, week, payload_json, dedup_key, "
-            "created_at, notified_at) VALUES (?,?,?,?,?,?,?)",
+            "created_at, notified_at) VALUES (?,?,?,?,?,?,?) RETURNING id",
             (
                 notification.job,
                 notification.season,
@@ -98,8 +98,11 @@ class Notifier:
                 db.utcnow() if notified else None,
             ),
         )
+        row = cursor.fetchone()
         self.conn.commit()
-        return cursor.lastrowid
+        if row is None:
+            return 0
+        return row["id"] if not isinstance(row, tuple) else row[0]
 
     # -- delivery ------------------------------------------------------------
 

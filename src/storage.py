@@ -1,0 +1,223 @@
+"""Database backend abstraction: SQLite locally, Postgres when hosted.
+
+The app runs in two places and must behave identically in both:
+
+  - on a laptop against `data/league.db` (no setup, works offline)
+  - on Streamlit Cloud against Supabase Postgres (always on, shared across
+    every device, and the long-term store for season-over-season analysis)
+
+Rather than adopt an ORM and rewrite every query, this wraps the two drivers
+behind one small interface. The SQL in the rest of the codebase is already
+standard enough to run on both; the differences that remain are handled here:
+
+  - placeholders: sqlite3 wants `?`, psycopg wants `%s`
+  - row access: sqlite3.Row vs psycopg dict rows (both support row["col"])
+  - DDL: AUTOINCREMENT/PRAGMA vs IDENTITY (see src/db.py schema variants)
+
+Which backend is used is decided by DATABASE_URL. If it is unset, SQLite.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import re
+import sqlite3
+from pathlib import Path
+from typing import Any, Iterable, Sequence
+
+log = logging.getLogger(__name__)
+
+POSTGRES_SCHEMES = ("postgres://", "postgresql://", "postgresql+psycopg://")
+
+
+def is_postgres_url(url: str | None) -> bool:
+    return bool(url) and str(url).startswith(POSTGRES_SCHEMES)
+
+
+def database_url() -> str | None:
+    """Connection string from the environment, if configured.
+
+    Streamlit Cloud injects secrets as env vars; locally this comes from .env.
+    """
+    for key in ("DATABASE_URL", "SUPABASE_DB_URL", "POSTGRES_URL"):
+        value = os.environ.get(key)
+        if value:
+            return value
+    return None
+
+
+# --- placeholder translation -------------------------------------------------
+
+# Matches a bare `?` placeholder, skipping any inside quoted strings.
+_PLACEHOLDER = re.compile(r"\?(?=(?:[^']*'[^']*')*[^']*$)")
+
+
+def to_postgres_sql(sql: str) -> str:
+    """Rewrite `?` placeholders to `%s` for psycopg.
+
+    Named `:param` placeholders are left alone: psycopg accepts `%(name)s`, so
+    those queries are converted separately by `_named_to_pyformat`.
+    """
+    return _PLACEHOLDER.sub("%s", sql)
+
+
+_NAMED = re.compile(r"(?<![:\w]):([a-zA-Z_]\w*)")
+
+
+def _named_to_pyformat(sql: str) -> str:
+    """`:season` -> `%(season)s`, leaving `::cast` syntax untouched."""
+    return _NAMED.sub(r"%(\1)s", sql)
+
+
+# --- cursor / connection wrappers -------------------------------------------
+
+class Cursor:
+    """Thin cursor wrapper so both drivers present the same surface."""
+
+    def __init__(self, cursor: Any, dialect: str):
+        self._cursor = cursor
+        self._dialect = dialect
+
+    def fetchone(self) -> Any:
+        return self._cursor.fetchone()
+
+    def fetchall(self) -> list[Any]:
+        return self._cursor.fetchall()
+
+    def __iter__(self):
+        return iter(self._cursor)
+
+    @property
+    def rowcount(self) -> int:
+        return self._cursor.rowcount
+
+    @property
+    def lastrowid(self) -> int | None:
+        if self._dialect == "sqlite":
+            return self._cursor.lastrowid
+        # Postgres callers use RETURNING; nothing sensible to give here.
+        return None
+
+
+class Database:
+    """One connection, either SQLite or Postgres."""
+
+    def __init__(self, connection: Any, dialect: str, url: str | None = None):
+        self._conn = connection
+        self.dialect = dialect
+        self.url = url
+
+    @property
+    def is_postgres(self) -> bool:
+        return self.dialect == "postgres"
+
+    # -- statement execution -------------------------------------------------
+
+    def execute(self, sql: str, params: Sequence | dict | None = None) -> Cursor:
+        if self.dialect == "sqlite":
+            cursor = self._conn.execute(sql, params or ())
+            return Cursor(cursor, self.dialect)
+
+        translated = (
+            _named_to_pyformat(sql) if isinstance(params, dict) else to_postgres_sql(sql)
+        )
+        cursor = self._conn.cursor()
+        cursor.execute(translated, params or ())
+        return Cursor(cursor, self.dialect)
+
+    def executescript(self, script: str) -> None:
+        """Run a multi-statement DDL script."""
+        if self.dialect == "sqlite":
+            self._conn.executescript(script)
+            self._conn.commit()
+            return
+        with self._conn.cursor() as cursor:
+            cursor.execute(script)
+        self._conn.commit()
+
+    def commit(self) -> None:
+        self._conn.commit()
+
+    def rollback(self) -> None:
+        self._conn.rollback()
+
+    def close(self) -> None:
+        try:
+            self._conn.close()
+        except Exception:  # pragma: no cover - closing twice is not an error
+            pass
+
+    # -- convenience ---------------------------------------------------------
+
+    def fetchone(self, sql: str, params: Sequence | dict | None = None) -> Any:
+        return self.execute(sql, params).fetchone()
+
+    def fetchall(self, sql: str, params: Sequence | dict | None = None) -> list[Any]:
+        return self.execute(sql, params).fetchall()
+
+    def scalar(self, sql: str, params: Sequence | dict | None = None) -> Any:
+        row = self.fetchone(sql, params)
+        if row is None:
+            return None
+        return list(row.values())[0] if isinstance(row, dict) else row[0]
+
+    def table_exists(self, name: str) -> bool:
+        if self.dialect == "sqlite":
+            return bool(
+                self.fetchone(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+                )
+            )
+        return bool(
+            self.fetchone(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema='public' AND table_name=%s",
+                (name,),
+            )
+        )
+
+
+# --- connecting --------------------------------------------------------------
+
+def connect_sqlite(path: str | Path, same_thread: bool = True) -> Database:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(p, timeout=30, check_same_thread=same_thread)
+    conn.row_factory = sqlite3.Row
+    return Database(conn, "sqlite", str(p))
+
+
+def connect_postgres(url: str) -> Database:
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+    except ImportError as exc:  # pragma: no cover - dependency guard
+        raise RuntimeError(
+            "DATABASE_URL points at Postgres but psycopg is not installed. "
+            "Run: pip install 'psycopg[binary]'"
+        ) from exc
+
+    # Supabase hands out postgres:// URLs; psycopg wants postgresql://.
+    dsn = url.replace("postgresql+psycopg://", "postgresql://")
+    if dsn.startswith("postgres://"):
+        dsn = "postgresql://" + dsn[len("postgres://"):]
+
+    conn = psycopg.connect(dsn, row_factory=dict_row, autocommit=False, connect_timeout=20)
+    return Database(conn, "postgres", url)
+
+
+def connect(
+    db_path: str | Path | None = None,
+    url: str | None = None,
+    same_thread: bool = True,
+) -> Database:
+    """Open the configured database.
+
+    Precedence: an explicit `url`, then DATABASE_URL from the environment, then
+    the local SQLite file. This means the same code path serves a laptop with no
+    configuration and a cloud deployment with one secret set.
+    """
+    target = url or database_url()
+    if is_postgres_url(target):
+        return connect_postgres(target)
+    return connect_sqlite(db_path or "data/league.db", same_thread=same_thread)

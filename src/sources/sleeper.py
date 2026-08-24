@@ -205,8 +205,10 @@ class SleeperSource(Source):
             if not result.player_key:
                 continue
             self.conn.execute(
-                "INSERT OR REPLACE INTO injuries(player_key, status, practice, body_part, "
-                "note, source, observed_at) VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO injuries(player_key, status, practice, body_part, note, source, "
+                "observed_at) VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(player_key, source, observed_at) DO UPDATE SET "
+                "status=excluded.status, body_part=excluded.body_part, note=excluded.note",
                 (
                     result.player_key, p.injury_status, None, p.injury_body_part,
                     p.injury_notes, self.name, observed_at,
@@ -253,8 +255,9 @@ class SleeperSource(Source):
                 if not result.player_key:
                     continue
                 self.conn.execute(
-                    "INSERT OR REPLACE INTO trending(player_key, kind, count, "
-                    "lookback_hours, fetched_at) VALUES (?,?,?,?,?)",
+                    "INSERT INTO trending(player_key, kind, count, lookback_hours, fetched_at) "
+                    "VALUES (?,?,?,?,?) ON CONFLICT(player_key, kind, fetched_at) "
+                    "DO UPDATE SET count=excluded.count",
                     (result.player_key, kind, _int_or_none(entry.get("count")),
                      lookback_hours, fetched_at),
                 )

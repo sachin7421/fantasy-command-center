@@ -15,7 +15,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from src import db, league_bootstrap, vorp
+from src import auth, db, league_bootstrap, vorp
 from src.config import Config
 from src.draft.live import DraftTracker, resolve_player
 from src.draft.recommender import DraftRecommender, RosterState
@@ -38,8 +38,9 @@ def get_context():
     cfg = Config.load("config.yaml")
     # Streamlit reruns the script on a new thread each time while reusing this
     # cached connection, so it must not be pinned to its creating thread.
-    conn = db.connect(cfg.db_path, same_thread=False)
-    conn.executescript(db.SCHEMA)
+    # init_db picks SQLite or Postgres from DATABASE_URL and applies the
+    # matching schema, so the same code serves local and hosted runs.
+    conn = db.init_db(cfg.db_path, same_thread=False)
     league_key = f"nfl.l.{cfg.get('league.league_id', league_bootstrap.LEAGUE_ID)}"
     league_bootstrap.install(conn, league_key)
     return cfg, conn, league_key
@@ -94,12 +95,17 @@ def draft_view(cfg, conn, league_key):
             "Your draft slot", 1, teams, int(cfg.get("draft.draft_slot") or 1)
         )
         auto_sync = st.toggle("Poll Yahoo for picks", value=False)
+        phone_layout = st.toggle(
+            "Phone layout", value=False,
+            help="Stack the three panes into tabs for a narrow screen.",
+        )
         st.caption(
             "Leave off to run fully manually. Manual mode is the fallback if "
             "Yahoo polling fails mid-draft."
         )
         st.divider()
         st.caption(f"League {league_key}  |  {teams} teams  |  {rounds} rounds")
+        st.caption(f"Data: {db.describe_backend()}")
         st.caption(f"Slots: {slots}")
 
     board = load_board(conn, season, slots, teams, float(cfg.get("draft.tier_gap_pct", 0.08)))
@@ -178,124 +184,162 @@ def draft_view(cfg, conn, league_key):
                         st.cache_data.clear()
                         st.rerun()
 
-    left, middle, right = st.columns([3, 4, 2])
+    # Three panes side by side on a desktop. On a phone a 3-column layout is
+    # unusable, so the same panes become tabs.
+    if phone_layout:
+        tab_rec, tab_board, tab_roster = st.tabs(["Recommended", "Board", "My roster"])
+        with tab_rec:
+            _pane_recommendations(recommender, drafted, roster, current_pick,
+                                  tracker, my_slot, phone_layout)
+        with tab_board:
+            _pane_board(board, drafted, phone_layout)
+        with tab_roster:
+            _pane_roster(roster, my_players, slots, tracker, board)
+    else:
+        left, middle, right = st.columns([3, 4, 2])
+        with left:
+            _pane_recommendations(recommender, drafted, roster, current_pick,
+                                  tracker, my_slot, phone_layout)
+        with middle:
+            _pane_board(board, drafted, phone_layout)
+        with right:
+            _pane_roster(roster, my_players, slots, tracker, board)
 
-    # -- pane 1: recommendations ---------------------------------------------
-    with left:
-        st.subheader("Recommended")
-        recs = recommender.recommend(drafted, roster, current_pick, top_n=10)
-        if not recs:
-            st.info("No recommendations - the board may be exhausted.")
-        for i, rec in enumerate(recs, 1):
-            p = rec.player
-            with st.container(border=True):
+
+# --- panes -------------------------------------------------------------------
+
+def _pane_recommendations(recommender, drafted, roster, current_pick, tracker,
+                          my_slot, phone_layout):
+    st.subheader("Recommended")
+    recs = recommender.recommend(drafted, roster, current_pick, top_n=10)
+    if not recs:
+        st.info("No recommendations - the board may be exhausted.")
+    for i, rec in enumerate(recs, 1):
+        p = rec.player
+        with st.container(border=True):
+            bits = [f"VORP {p.vorp:.1f}", f"proj {p.points:.0f}"]
+            if p.adp:
+                bits.append(f"ADP {p.adp:.0f}")
+            if p.bye_week:
+                bits.append(f"bye {p.bye_week}")
+            if rec.survival is not None:
+                bits.append(f"survives {rec.survival:.0%}")
+
+            def _body():
+                st.markdown(
+                    f"**{i}. {p.name}** "
+                    f"<span style='color:{tier_color(p.tier)}'>&#9632;</span> "
+                    f"{p.position}{p.position_rank} &middot; T{p.tier} &middot; {p.team}",
+                    unsafe_allow_html=True,
+                )
+                st.caption(" &middot; ".join(bits))
+                for reason in rec.reasons[:2]:
+                    st.caption(f":green[+ {reason}]")
+                for warning in rec.warnings[:2]:
+                    st.caption(f":orange[! {warning}]")
+
+            def _button():
+                if st.button("Draft", key=f"take_{p.player_key}",
+                             width="stretch", type="primary"):
+                    tracker.record_pick(p.player_key, team_key=str(my_slot))
+                    st.cache_data.clear()
+                    st.rerun()
+
+            if phone_layout:
+                # Full-width button under the text: a bigger tap target.
+                _body()
+                _button()
+            else:
                 head, take = st.columns([3, 1])
                 with head:
-                    st.markdown(
-                        f"**{i}. {p.name}** "
-                        f"<span style='color:{tier_color(p.tier)}'>&#9632;</span> "
-                        f"{p.position}{p.position_rank} &middot; T{p.tier} &middot; {p.team}",
-                        unsafe_allow_html=True,
-                    )
-                    bits = [f"VORP {p.vorp:.1f}", f"proj {p.points:.0f}"]
-                    if p.adp:
-                        bits.append(f"ADP {p.adp:.0f}")
-                    if p.bye_week:
-                        bits.append(f"bye {p.bye_week}")
-                    if rec.survival is not None:
-                        bits.append(f"survives {rec.survival:.0%}")
-                    st.caption(" &middot; ".join(bits))
-                    for reason in rec.reasons[:2]:
-                        st.caption(f":green[+ {reason}]")
-                    for warning in rec.warnings[:2]:
-                        st.caption(f":orange[! {warning}]")
+                    _body()
                 with take:
-                    if st.button("Draft", key=f"take_{p.player_key}",
-                                 width="stretch", type="primary"):
-                        tracker.record_pick(p.player_key, team_key=str(my_slot))
-                        st.cache_data.clear()
-                        st.rerun()
+                    _button()
 
-    # -- pane 2: best available ----------------------------------------------
-    with middle:
-        st.subheader("Best available")
-        positions = ["ALL"] + sorted({p.position for p in board.players})
-        chosen = st.radio("Position", positions, horizontal=True, label_visibility="collapsed")
-        pool = [p for p in board.available(drafted)
-                if chosen == "ALL" or p.position == chosen][:60]
 
-        rows = []
-        for p in pool:
-            rows.append(
-                {
-                    "Tier": p.tier,
-                    "Player": p.name,
-                    "Pos": f"{p.position}{p.position_rank}",
-                    "Tm": p.team,
-                    "Proj": round(p.points, 1),
-                    "VORP": round(p.vorp, 1),
-                    "ADP": round(p.adp, 1) if p.adp else None,
-                    "Bye": p.bye_week,
-                    "Inj": p.injury_status or "",
-                }
-            )
-        st.dataframe(
-            rows,
-            width="stretch",
-            hide_index=True,
-            height=560,
-            column_config={
-                "Tier": st.column_config.NumberColumn(width="small"),
-                "VORP": st.column_config.ProgressColumn(
-                    format="%.1f",
-                    min_value=float(min([r["VORP"] for r in rows], default=0)),
-                    max_value=float(max([r["VORP"] for r in rows], default=1)),
-                ),
-            },
+def _pane_board(board, drafted, phone_layout):
+    st.subheader("Best available")
+    positions = ["ALL"] + sorted({p.position for p in board.players})
+    chosen = st.radio("Position", positions, horizontal=True, label_visibility="collapsed")
+    pool = [p for p in board.available(drafted)
+            if chosen == "ALL" or p.position == chosen][:60]
+
+    rows = []
+    for p in pool:
+        row = {
+            "Tier": p.tier,
+            "Player": p.name,
+            "Pos": f"{p.position}{p.position_rank}",
+            "Proj": round(p.points, 1),
+            "VORP": round(p.vorp, 1),
+        }
+        if not phone_layout:
+            # Columns that do not earn their width on a narrow screen.
+            row.update({
+                "Tm": p.team,
+                "ADP": round(p.adp, 1) if p.adp else None,
+                "Bye": p.bye_week,
+                "Inj": p.injury_status or "",
+            })
+        rows.append(row)
+
+    st.dataframe(
+        rows,
+        width="stretch",
+        hide_index=True,
+        height=420 if phone_layout else 560,
+        column_config={
+            "Tier": st.column_config.NumberColumn(width="small"),
+            "VORP": st.column_config.ProgressColumn(
+                format="%.1f",
+                min_value=float(min([r["VORP"] for r in rows], default=0)),
+                max_value=float(max([r["VORP"] for r in rows], default=1)),
+            ),
+        },
+    )
+
+
+def _pane_roster(roster, my_players, slots, tracker, board):
+    st.subheader("My roster")
+    unfilled = roster.unfilled()
+    open_slots = {k: v for k, v in unfilled.items() if v > 0}
+    if open_slots:
+        st.caption("Still needed: " + ", ".join(
+            f"{k} {v:.1f}" for k, v in sorted(open_slots.items())
+        ))
+    else:
+        st.caption("All starting slots filled.")
+
+    counts = roster.counts()
+    tracked = [p for p in ("QB", "RB", "WR", "TE", "K", "DEF")
+               if p in counts or p in slots]
+    if tracked:
+        st.markdown(
+            " &nbsp;|&nbsp; ".join(f"**{p}** {counts.get(p, 0)}" for p in tracked),
+            unsafe_allow_html=True,
         )
 
-    # -- pane 3: my roster ----------------------------------------------------
-    with right:
-        st.subheader("My roster")
-        unfilled = roster.unfilled()
-        open_slots = {k: v for k, v in unfilled.items() if v > 0}
-        if open_slots:
-            st.caption("Still needed: " + ", ".join(
-                f"{k} {v:.1f}" for k, v in sorted(open_slots.items())
-            ))
-        else:
-            st.caption("All starting slots filled.")
+    for p in my_players:
+        st.markdown(
+            f"<span style='color:{tier_color(p.tier)}'>&#9632;</span> "
+            f"**{p.name}** {p.position}{p.position_rank} &middot; "
+            f"{p.points:.0f} pts &middot; bye {p.bye_week or '-'}",
+            unsafe_allow_html=True,
+        )
 
-        counts = roster.counts()
-        tracked = [p for p in ("QB", "RB", "WR", "TE", "K", "DEF")
-                   if p in counts or p in slots]
-        if tracked:
-            st.markdown(
-                " &nbsp;|&nbsp; ".join(f"**{p}** {counts.get(p, 0)}" for p in tracked),
-                unsafe_allow_html=True,
-            )
+    byes = roster.bye_weeks()
+    stacked = {w: len(v) for w, v in byes.items() if len(v) >= 2}
+    if stacked:
+        st.warning("Bye stacking: " + ", ".join(
+            f"week {w}: {n}" for w, n in sorted(stacked.items())
+        ))
 
-        for p in my_players:
-            st.markdown(
-                f"<span style='color:{tier_color(p.tier)}'>&#9632;</span> "
-                f"**{p.name}** {p.position}{p.position_rank} &middot; "
-                f"{p.points:.0f} pts &middot; bye {p.bye_week or '-'}",
-                unsafe_allow_html=True,
-            )
-
-        byes = roster.bye_weeks()
-        stacked = {w: len(v) for w, v in byes.items() if len(v) >= 2}
-        if stacked:
-            st.warning("Bye stacking: " + ", ".join(
-                f"week {w}: {n}" for w, n in sorted(stacked.items())
-            ))
-
-        st.divider()
-        st.caption("Recent picks")
-        for pick in sorted(tracker.state.picks.values(), key=lambda x: -x.pick)[:10]:
-            player = board.get(pick.player_key) if pick.player_key else None
-            name = player.name if player else (pick.player_key or "?")
-            st.caption(f"{pick.pick}. slot {pick.team_key} - {name}")
+    st.divider()
+    st.caption("Recent picks")
+    for pick in sorted(tracker.state.picks.values(), key=lambda x: -x.pick)[:10]:
+        player = board.get(pick.player_key) if pick.player_key else None
+        name = player.name if player else (pick.player_key or "?")
+        st.caption(f"{pick.pick}. slot {pick.team_key} - {name}")
 
 
 # --- season view -------------------------------------------------------------
@@ -364,6 +408,10 @@ def season_view(cfg, conn, league_key):
 
 
 def main():
+    # Gate first: nothing touches the database or renders league data until the
+    # password is accepted. Open automatically when no password is configured.
+    auth.require_password()
+
     cfg, conn, league_key = get_context()
     st.title("Fantasy Command Center")
     mode = st.sidebar.radio("Mode", ["Draft", "Season"])

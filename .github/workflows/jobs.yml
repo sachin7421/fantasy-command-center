@@ -1,0 +1,95 @@
+name: Scheduled jobs
+
+# Runs the season jobs in GitHub's infrastructure so nothing depends on a
+# machine at home being awake. Each cron below maps to one command; the step
+# picks the command from which schedule fired.
+#
+# Times are UTC (GitHub Actions offers no timezone setting) and are written for
+# US Eastern during daylight saving, i.e. UTC-4. After DST ends in early
+# November every job lands an hour later in local time. That is harmless here:
+# the Tuesday waiver run still completes well before Yahoo processes waivers at
+# game time, and every job is idempotent.
+
+on:
+  schedule:
+    - cron: "0 11 * * 2"   # Tue 07:00 ET - waiver analyzer
+    - cron: "0 12 * * *"   # daily 08:00 ET - injury monitor
+    - cron: "0 14 * * 4"   # Thu 10:00 ET - lineup (TNF lock)
+    - cron: "0 13 * * 0"   # Sun 09:00 ET - lineup
+    - cron: "0 11 * * 3"   # Wed 07:00 ET - bye / horizon planner
+    - cron: "0 12 * * 1"   # Mon 08:00 ET - recap + trade scout
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Job to run"
+        required: true
+        default: "daily"
+        type: choice
+        options: [daily, sync, waivers, injuries, lineup, byes, recap, trades, doctor]
+
+concurrency:
+  # Never let two runs write to the database at once.
+  group: fantasy-jobs
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      YAHOO_CONSUMER_KEY: ${{ secrets.YAHOO_CONSUMER_KEY }}
+      YAHOO_CONSUMER_SECRET: ${{ secrets.YAHOO_CONSUMER_SECRET }}
+      YAHOO_ACCESS_TOKEN_JSON: ${{ secrets.YAHOO_ACCESS_TOKEN_JSON }}
+      PYTHONIOENCODING: utf-8
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Decide which job to run
+        id: pick
+        run: |
+          case "${{ github.event.schedule }}" in
+            "0 11 * * 2") echo "job=waivers"  >> "$GITHUB_OUTPUT" ;;
+            "0 12 * * *") echo "job=injuries" >> "$GITHUB_OUTPUT" ;;
+            "0 14 * * 4") echo "job=lineup"   >> "$GITHUB_OUTPUT" ;;
+            "0 13 * * 0") echo "job=lineup"   >> "$GITHUB_OUTPUT" ;;
+            "0 11 * * 3") echo "job=byes"     >> "$GITHUB_OUTPUT" ;;
+            "0 12 * * 1") echo "job=recap"    >> "$GITHUB_OUTPUT" ;;
+            *)            echo "job=${{ github.event.inputs.job || 'daily' }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Verify database is reachable
+        run: python fcc.py doctor
+
+      - name: Refresh data
+        # Projections, injuries and trending must be current before any job
+        # reasons about them.
+        run: python fcc.py sync
+
+      - name: Run ${{ steps.pick.outputs.job }}
+        run: python fcc.py ${{ steps.pick.outputs.job }}
+
+      - name: Trade scout
+        # Piggybacks on the Monday recap run rather than burning its own slot.
+        if: steps.pick.outputs.job == 'recap'
+        run: python fcc.py trades
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fcc-logs-${{ github.run_id }}
+          path: logs/
+          if-no-files-found: ignore
+          retention-days: 7

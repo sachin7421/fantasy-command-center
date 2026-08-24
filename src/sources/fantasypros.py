@@ -187,8 +187,10 @@ class FantasyProsSource(Source):
                 continue
 
             self.conn.execute(
-                "INSERT OR REPLACE INTO adp(player_key, source, adp, stdev, best, worst, "
-                "fetched_at) VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO adp(player_key, source, adp, stdev, best, worst, fetched_at) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(player_key, source, fetched_at) "
+                "DO UPDATE SET adp=excluded.adp, stdev=excluded.stdev, "
+                "best=excluded.best, worst=excluded.worst",
                 (
                     match.player_key, self.name, ranking.ecr, ranking.sd,
                     ranking.best, ranking.worst, fetched_at,

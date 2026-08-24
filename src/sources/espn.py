@@ -176,6 +176,7 @@ class EspnSource(Source):
                 stats["unmatched"] += 1
                 continue
 
+            points = scoring.score(stat_line)
             self.conn.execute(
                 "INSERT INTO projections(player_key, source, season, week, stats_json, "
                 "points, fetched_at) VALUES (?,?,?,?,?,?,?) "
@@ -184,8 +185,12 @@ class EspnSource(Source):
                 "fetched_at=excluded.fetched_at",
                 (
                     match.player_key, self.name, season, week_key,
-                    json.dumps(stat_line), scoring.score(stat_line), fetched_at,
+                    json.dumps(stat_line), points, fetched_at,
                 ),
+            )
+            db.record_projection_history(
+                self.conn, match.player_key, self.name, season, week_key,
+                points, json.dumps(stat_line), fetched_at,
             )
             stats["stored"] += 1
         self.conn.commit()
