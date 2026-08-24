@@ -1,18 +1,21 @@
-# Theme for the Fantasy Command Center dashboard.
+# Theme for the Fantasy Command Center dashboard - New York Jets.
 #
-# Designed for a live draft: a dark ground so the screen is easy on the eyes
-# during a night draft, high contrast for glanceable numbers, and a single warm
-# accent reserved for actions so the primary control is never ambiguous.
+# Gotham Green (#125740) is the club colour but only reaches 2.2:1 against a
+# dark background, well under the 3:1 an interface accent needs. So the official
+# green is used for brand surfaces (sidebar, rules, headers) where it sits
+# behind text, and a brightened step of the same hue (#2E9E6B, 5.6:1) carries
+# actions, where contrast actually matters.
 
 [theme]
 base = "dark"
 
-# Warm amber accent - used only for primary actions and "you are on the clock".
-primaryColor = "#F5A524"
+# Brightened Gotham Green. Reserved for actions and nothing else.
+primaryColor = "#2E9E6B"
 
-backgroundColor = "#0E1117"
-secondaryBackgroundColor = "#1A1F2B"
-textColor = "#E8EAED"
+# Near-black with a faint green cast rather than a neutral grey.
+backgroundColor = "#0B0F0D"
+secondaryBackgroundColor = "#15201B"
+textColor = "#E9EDEA"
 
 font = "sans serif"
 

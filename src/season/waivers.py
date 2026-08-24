@@ -263,6 +263,29 @@ def run(
     worst = droppables[0] if droppables else None
     report = WaiverReport(uses_faab=uses_faab, budget_left=budget_left, week=week)
 
+    # Learn how this league bids, so recommendations reflect the actual rivals
+    # rather than a generic rule of thumb.
+    profiles: dict[str, Any] = {}
+    if uses_faab:
+        try:
+            from src.analytics import faab as faab_model
+
+            records = faab_model.parse_bids(conn, league_key)
+            if records:
+                faab_model.attach_values(conn, records, season)
+            names = {
+                str(r["team_key"]): (r["team_name"] or str(r["team_key"]))
+                for r in conn.fetchall(
+                    "SELECT DISTINCT team_key, team_name FROM rosters "
+                    "WHERE league_key=?",
+                    (league_key,),
+                )
+            }
+            if records or names:
+                profiles = faab_model.learn_profiles(records, names)
+        except Exception as exc:  # pragma: no cover - optional enrichment
+            log.info("FAAB profiles unavailable: %s", exc)
+
     healthy = [c for c in free_agents if not c.is_stash]
     gains = [
         c.ros_points - (worst.ros_points if worst else 0.0) for c in healthy
@@ -295,9 +318,32 @@ def run(
             reasons=reasons,
         )
         if uses_faab:
-            claim.bid_min, claim.bid_rec, claim.bid_max = suggest_bid(
-                gain, candidate.trending_add, budget_left, weeks_left, max_gain
-            )
+            # Prefer a bid derived from how this league ACTUALLY bids, and fall
+            # back to the heuristic until enough auctions have been observed.
+            advice = None
+            if profiles:
+                from src.analytics import faab as faab_model
+
+                rivals = [
+                    p for key, p in profiles.items() if key != str(team_key)
+                ]
+                advice = faab_model.recommend(
+                    value=gain * 0.12, my_budget=budget_left,
+                    rivals=rivals, weeks_left=weeks_left,
+                )
+            if advice and advice.recommended:
+                claim.bid_min = advice.min_competitive
+                claim.bid_rec = advice.recommended
+                claim.bid_max = advice.max_sane
+                if advice.win_probability:
+                    claim.reasons.append(
+                        f"{advice.win_probability:.0%} to win at ${advice.recommended} "
+                        f"given how this league bids"
+                    )
+            else:
+                claim.bid_min, claim.bid_rec, claim.bid_max = suggest_bid(
+                    gain, candidate.trending_add, budget_left, weeks_left, max_gain
+                )
         report.claims.append(claim)
 
     report.claims.sort(key=lambda c: c.value_gain, reverse=True)

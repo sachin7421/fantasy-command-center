@@ -398,3 +398,159 @@ def test_a_negligible_change_reads_as_negligible():
         new_mean=teams[0].mean + 0.2, label="marginal", trials=1200,
     )
     assert abs(impact.delta) < 0.03
+
+
+# --- FAAB bidding ------------------------------------------------------------
+
+def _profile(name, beta, budget=100, n=10, **kw):
+    from src.analytics.faab import ManagerProfile
+
+    return ManagerProfile(
+        team_key=name, name=name, observations=n, beta=beta, raw_beta=beta,
+        mean_bid=kw.get("mean_bid", 10.0), max_bid=kw.get("max_bid", 30),
+        budget_left=budget,
+    )
+
+
+def test_a_manager_who_cannot_afford_it_never_wins():
+    """Budget is a hard ceiling, not a tendency."""
+    broke = _profile("Broke", beta=5.0, budget=3)
+    assert broke.probability_bids_below(10, value=20) == 1.0
+
+
+def test_a_richer_more_aggressive_manager_is_likelier_to_outbid_you():
+    from src.analytics.faab import win_probability
+
+    tight = [_profile("Tight", beta=0.5)]
+    loose = [_profile("Loose", beta=3.0)]
+    assert win_probability(15, tight, value=12) > win_probability(15, loose, value=12)
+
+
+def test_raising_your_bid_raises_your_chance_of_winning():
+    from src.analytics.faab import win_probability
+
+    rivals = [_profile("A", 1.2), _profile("B", 1.6)]
+    probs = [win_probability(b, rivals, value=12) for b in (2, 6, 12, 25)]
+    assert probs == sorted(probs)
+
+
+def test_more_rivals_makes_a_given_bid_less_likely_to_win():
+    from src.analytics.faab import win_probability
+
+    one = [_profile("A", 1.2)]
+    many = [_profile(str(i), 1.2) for i in range(6)]
+    assert win_probability(12, many, value=12) < win_probability(12, one, value=12)
+
+
+def test_recommendation_never_exceeds_the_budget():
+    from src.analytics.faab import recommend
+
+    advice = recommend(value=40, my_budget=8, rivals=[_profile("A", 1.2)])
+    assert advice.recommended <= 8
+
+
+def test_a_more_valuable_player_earns_a_higher_bid():
+    from src.analytics.faab import recommend
+
+    rivals = [_profile("A", 0.6), _profile("B", 0.5)]
+    cheap = recommend(value=6, my_budget=100, rivals=rivals)
+    dear = recommend(value=45, my_budget=100, rivals=rivals)
+    assert dear.recommended > cheap.recommended
+
+
+def test_worth_is_anchored_on_budget_not_on_the_market():
+    """Anchoring worth to the market average means never winning anything.
+
+    Winning an auction means paying more than the average bidder, so a
+    valuation set to the market average recommends never bidding - technically
+    true and practically useless. Worth therefore comes from your own budget
+    allocation instead.
+    """
+    from src.analytics.faab import worth_to_you
+
+    assert worth_to_you(55, 100, weeks_left=10) > worth_to_you(10, 100, weeks_left=10)
+    # Concave: the second-best add of a season is worth much less than the best.
+    assert worth_to_you(55, 100) < 2 * worth_to_you(27, 100)
+    assert worth_to_you(35, 20) < worth_to_you(35, 100)
+
+
+def test_late_season_bids_go_up():
+    """Budget kept until the end is budget wasted."""
+    from src.analytics.faab import recommend
+
+    rivals = [_profile("A", 0.6)]
+    early = recommend(value=30, my_budget=100, rivals=rivals, weeks_left=13)
+    late = recommend(value=30, my_budget=100, rivals=rivals, weeks_left=2)
+    assert late.recommended >= early.recommended
+
+
+def test_bid_is_capped_by_what_the_player_is_worth():
+    """Never pay past value, however much the field is willing to pay."""
+    from src.analytics.faab import recommend
+
+    # A field that will pay far more than a modest player justifies.
+    rivals = [_profile(str(i), 3.0, budget=100) for i in range(5)]
+    advice = recommend(value=10, my_budget=100, rivals=rivals)
+    assert advice.recommended <= advice.worth_to_you
+    assert advice.price_to_win > advice.recommended
+    assert advice.walk_away
+
+
+def test_an_unwinnable_bid_is_reported_honestly_rather_than_inflated():
+    from src.analytics.faab import recommend
+
+    rivals = [_profile(str(i), 2.5, budget=100) for i in range(4)]
+    advice = recommend(value=12, my_budget=100, rivals=rivals)
+    assert advice.recommended >= 1
+    assert any("not win" in n or "well past" in n for n in advice.notes)
+
+
+def test_broke_rivals_collapse_the_price():
+    """The clearest edge the model finds: rivals who cannot pay are not rivals."""
+    from src.analytics.faab import recommend
+
+    broke = [_profile(str(i), 1.5, budget=1) for i in range(5)]
+    rich = [_profile(str(i), 1.5, budget=95) for i in range(5)]
+    cheap = recommend(value=35, my_budget=80, rivals=broke)
+    dear = recommend(value=35, my_budget=80, rivals=rich)
+    assert cheap.price_to_win < dear.price_to_win
+    assert cheap.win_probability > 0.9
+
+
+def test_no_value_or_no_budget_produces_no_bid():
+    from src.analytics.faab import recommend
+
+    assert recommend(0, 100, [_profile("A", 1.2)]).recommended == 0
+    assert recommend(20, 0, [_profile("A", 1.2)]).recommended == 0
+
+
+def test_profiles_shrink_toward_the_league_while_history_is_thin():
+    from src.analytics.faab import BidRecord, learn_profiles
+
+    records = [
+        # One wild bid from a newcomer, plenty of ordinary ones from others.
+        BidRecord(1, "new", "p1", "P1", bid=60, value=10.0),
+        *[BidRecord(w, "reg", f"p{w}", "P", bid=10, value=10.0) for w in range(1, 9)],
+    ]
+    profiles = learn_profiles(records, {"new": "Newcomer", "reg": "Regular"})
+    newcomer = profiles["new"]
+    assert newcomer.raw_beta == pytest.approx(6.0)
+    # One observation should not brand him a maniac.
+    assert newcomer.beta < 4.0
+    assert newcomer.confidence < 0.3
+
+
+def test_a_manager_with_no_history_gets_the_league_profile():
+    from src.analytics.faab import BidRecord, learn_profiles
+
+    records = [BidRecord(1, "a", "p", "P", bid=12, value=10.0)]
+    profiles = learn_profiles(records, {"a": "A", "silent": "Silent"})
+    assert "silent" in profiles
+    assert profiles["silent"].observations == 0
+    assert profiles["silent"].beta > 0
+
+
+def test_league_report_is_honest_with_no_history():
+    from src.analytics.faab import league_report
+
+    assert any("no faab history" in line.lower() for line in league_report({}))

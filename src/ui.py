@@ -31,12 +31,17 @@ from __future__ import annotations
 #
 # Order is the colour-blindness safety mechanism, so do not reshuffle it.
 POSITION_HUES: dict[str, str] = {
-    "RB":  "#3987e5",   # slot 1 blue
-    "WR":  "#d95926",   # slot 2 orange
-    "QB":  "#199e70",   # slot 3 aqua
-    "TE":  "#c98500",   # slot 4 yellow
-    "DEF": "#d55181",   # slot 5 magenta
-    "K":   "#008300",   # slot 6 green
+    "RB":  "#3987e5",   # blue
+    "WR":  "#d95926",   # orange
+    # QB moved off the theme's aqua slot when the interface went green: an
+    # aqua-green position chip beside a green action button is exactly the
+    # ambiguity the single-accent rule exists to prevent. Violet is a different
+    # slot of the same validated theme, and the swap IMPROVED colour-blind
+    # separation (worst adjacent dE 13.2, up from 8.4).
+    "QB":  "#9085e9",   # violet
+    "TE":  "#c98500",   # yellow
+    "DEF": "#d55181",   # magenta
+    "K":   "#008300",   # green (unused in this league)
 }
 POSITION_FALLBACK_HUE = "#94A3B8"
 
@@ -68,6 +73,14 @@ POSITIVE = "#4ADE80"
 WARNING = "#FBBF24"
 DANGER = "#F87171"
 MUTED = "#94A3B8"
+
+# Club colours. GOTHAM_GREEN is the official one and is used only behind text -
+# at 2.2:1 on this background it cannot carry an interface element on its own.
+# ACCENT is the brightened step that does (5.6:1), and it means "action", used
+# for nothing else.
+GOTHAM_GREEN = "#125740"
+ACCENT = "#2E9E6B"
+ACCENT_BRIGHT = "#3FBF85"
 
 #: Injury status -> colour. Anything unlisted is treated as healthy.
 STATUS_COLORS = {
@@ -166,32 +179,40 @@ def survival_bar(probability: float) -> str:
 
 CSS = """
 <style>
-  /* Tighten the default Streamlit chrome; the draft board needs the vertical space. */
-  .block-container { padding-top: 2.2rem; padding-bottom: 3rem; max-width: 1500px; }
+  /* The default top padding clipped the first row of metrics, so the header
+     had its labels cut off at the viewport edge. */
+  .block-container {
+    padding-top: 4.2rem;
+    padding-bottom: 3rem;
+    max-width: 1500px;
+  }
   #MainMenu, footer { visibility: hidden; }
+  header[data-testid="stHeader"] { background: transparent; height: 0; }
 
   /* Numbers should line up vertically for comparison. */
   [data-testid="stMetricValue"], .stDataFrame { font-variant-numeric: tabular-nums; }
 
-  [data-testid="stMetricValue"] { font-size: 1.9rem; font-weight: 700; }
+  [data-testid="stMetricValue"] { font-size: 1.85rem; font-weight: 700; }
   [data-testid="stMetricLabel"] {
     text-transform: uppercase; letter-spacing: 0.07em;
     font-size: 0.68rem; color: #94A3B8;
   }
 
-  /* Recommendation cards: the tier stripe is set per-card inline. */
+  /* A thin club-green rule under the sidebar brand. */
+  [data-testid="stSidebar"] { border-right: 1px solid rgba(46,158,107,0.22); }
+
   .fcc-card {
     border: 1px solid rgba(148,163,184,0.16);
     border-left-width: 3px;
     border-radius: 10px;
     padding: 12px 14px;
     margin-bottom: 10px;
-    background: rgba(26,31,43,0.6);
+    background: rgba(21,32,27,0.6);
     transition: border-color 120ms ease, background 120ms ease;
   }
   .fcc-card:hover {
-    background: rgba(26,31,43,0.95);
-    border-color: rgba(148,163,184,0.34);
+    background: rgba(21,32,27,0.95);
+    border-color: rgba(46,158,107,0.4);
   }
   .fcc-name { font-size: 1.02rem; font-weight: 700; letter-spacing: -0.01em; }
   .fcc-rank {
@@ -207,27 +228,36 @@ CSS = """
     margin: 4px 0 10px 0;
   }
 
-  /* On the clock: the one moment the page should shout. */
+  /* On the clock: the one moment the page should shout, in club green. */
   .fcc-clock {
-    background: linear-gradient(90deg, rgba(245,165,36,0.18), rgba(245,165,36,0.02));
-    border-left: 3px solid #F5A524;
+    background: linear-gradient(90deg, rgba(46,158,107,0.22), rgba(18,87,64,0.04));
+    border-left: 3px solid #2E9E6B;
     padding: 10px 14px; border-radius: 8px; margin-bottom: 14px;
     font-weight: 650;
   }
 
-  /* Roster slot chips. */
   .fcc-slot {
     display:inline-block; padding:3px 9px; border-radius:6px; margin:2px 4px 2px 0;
     font-size:0.76rem; font-weight:650; font-variant-numeric: tabular-nums;
   }
-  .fcc-slot-filled { background: rgba(74,222,128,0.14); color:#4ADE80; }
+  .fcc-slot-filled { background: rgba(46,158,107,0.18); color:#6EE7B7; }
   .fcc-slot-open   { background: rgba(251,191,36,0.14); color:#FBBF24; }
 
-  /* Buttons: amber means action, and nothing else uses amber. */
+  /* Green means action, and nothing else uses it. */
   .stButton button[kind="primary"] {
-    background: #F5A524; color: #10131A; border: none; font-weight: 700;
+    background: #2E9E6B; color: #06120C; border: none; font-weight: 700;
   }
-  .stButton button[kind="primary"]:hover { background: #FFB93D; color: #10131A; }
+  .stButton button[kind="primary"]:hover { background: #3FBF85; color: #06120C; }
+
+  .fcc-brand {
+    font-weight: 800; letter-spacing: -0.02em; font-size: 1.05rem;
+    color: #E9EDEA; border-left: 4px solid #2E9E6B; padding-left: 9px;
+    margin-bottom: 2px;
+  }
+  .fcc-brand-sub {
+    color: #6B8578; font-size: 0.68rem; letter-spacing: 0.12em;
+    text-transform: uppercase; padding-left: 13px;
+  }
 </style>
 """
 

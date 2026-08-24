@@ -605,7 +605,11 @@ def main():
 
     cfg, conn, league_key = get_context()
 
-    st.sidebar.markdown("### 🏈 Command Center")
+    st.sidebar.markdown(
+        "<div class='fcc-brand'>Command Center</div>"
+        "<div class='fcc-brand-sub'>Butt Fumblers</div>",
+        unsafe_allow_html=True,
+    )
     mode = st.sidebar.radio("Mode", ["Draft", "Season"], label_visibility="collapsed")
     if mode == "Draft":
         draft_view(cfg, conn, league_key)

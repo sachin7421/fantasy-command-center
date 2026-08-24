@@ -874,6 +874,113 @@ def cmd_playoffs(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+def cmd_faab(ctx: Context, args) -> int:
+    """What to bid, and what it will take, based on how this league bids."""
+    from src.analytics import faab
+
+    season = ctx.season
+    week = args.week if args.week is not None else ctx.current_week()
+    settings = ctx.settings()
+    budget_total = int(settings.get("faab_budget") or 100)
+
+    # Team names and remaining budgets, when Yahoo has been synced.
+    teams = {
+        str(r["team_key"]): (r["team_name"] or f"Team {r['team_key']}")
+        for r in ctx.conn.fetchall(
+            "SELECT DISTINCT team_key, team_name FROM rosters WHERE league_key=?",
+            (ctx.league_key,),
+        )
+    }
+    budgets: dict[str, int] = {}
+    if args.budgets:
+        for pair in args.budgets.split(","):
+            if ":" in pair:
+                key, amount = pair.split(":", 1)
+                budgets[key.strip()] = int(amount)
+
+    records = faab.parse_bids(ctx.conn, ctx.league_key)
+    if records:
+        faab.attach_values(ctx.conn, records, season)
+    profiles = faab.learn_profiles(records, teams, budgets)
+
+    for line in faab.league_report(profiles):
+        print(line)
+    print("")
+
+    if not args.player:
+        if not records:
+            print("No bids observed yet. Yahoo publishes the winning bid on each")
+            print("claim, so profiles sharpen after a few weeks of waivers.")
+            print("")
+            print("Pass a player name to get a bid recommendation:")
+            print("  python fcc.py faab \"Jaylen Warren\" --budget 73")
+        return EXIT_OK
+
+    # Value the target the same way the waiver job does: what he adds over the
+    # worst player you would otherwise roster.
+    row = ctx.conn.fetchone(
+        "SELECT p.player_key, p.full_name, p.position, "
+        "       COALESCE(b.points, j.points, 0) AS points "
+        "FROM players p "
+        "LEFT JOIN projections_blended b "
+        "       ON b.player_key=p.player_key AND b.season=? AND b.week=0 "
+        "LEFT JOIN projections j "
+        "       ON j.player_key=p.player_key AND j.season=? AND j.week=0 "
+        "      AND j.source='sleeper' "
+        "WHERE LOWER(p.full_name)=LOWER(?) LIMIT 1",
+        (season, season, args.player),
+    )
+    if not row:
+        print(f"No player called {args.player!r} in the database.")
+        return EXIT_FAIL
+
+    baseline = args.replacement
+    if baseline is None:
+        worst = ctx.conn.fetchone(
+            "SELECT MIN(COALESCE(b.points, 0)) AS pts FROM rosters r "
+            "LEFT JOIN projections_blended b "
+            "       ON b.player_key=r.player_key AND b.season=? AND b.week=0 "
+            "WHERE r.league_key=? AND r.team_key=? AND r.week=?",
+            (season, ctx.league_key, ctx.team_key() or "", week),
+        )
+        baseline = float(worst["pts"] or 0) if worst else 0.0
+
+    # Season points above replacement, converted to a weekly-ish scale so the
+    # dollars-per-point figures stay in a range a human recognises.
+    value = max(0.0, (float(row["points"] or 0) - baseline)) * 0.12
+    weeks_left = max(1, 15 - week)
+    rivals = [pr for key, pr in profiles.items() if key != str(ctx.team_key() or "")]
+
+    advice = faab.recommend(
+        value=value, my_budget=args.budget, rivals=rivals, weeks_left=weeks_left
+    )
+
+    print(f"__{row['full_name']} ({row['position']})__")
+    print(f"  value over your worst roster spot : {advice.value:.1f}")
+    print(f"  your budget                       : ${args.budget} "
+          f"({weeks_left} weeks left)")
+    print("")
+    print(f"  RECOMMENDED BID  ${advice.recommended}   "
+          f"({advice.win_probability:.0%} to win)")
+    print(f"  competitive from ${advice.min_competitive}, "
+          f"near-certain at ${advice.max_sane}")
+    print(f"  expected surplus at the recommended bid: {advice.expected_surplus:+.1f}")
+    if advice.contenders:
+        print(f"  likely rivals: {', '.join(advice.contenders)}")
+    for note in advice.notes:
+        print(f"  note: {note}")
+
+    if args.curve:
+        print("")
+        print("  win probability by bid:")
+        for bid, probability in advice.curve:
+            if bid % max(1, len(advice.curve) // 12) == 0 or bid == advice.recommended:
+                marker = "  <- recommended" if bid == advice.recommended else ""
+                bar = "#" * int(probability * 30)
+                print(f"    ${bid:>3}  {probability:5.0%} {bar}{marker}")
+    return EXIT_OK
+
+
 def cmd_test_notify(ctx: Context, args) -> int:
     """Send a test notification through every configured channel.
 
@@ -1025,6 +1132,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_po.add_argument("--week", type=int)
     p_po.add_argument("--trials", type=int, default=5000)
 
+    p_faab = sub.add_parser("faab", help="what to bid, and what it will take")
+    p_faab.add_argument("player", nargs="?", help="player to bid on")
+    p_faab.add_argument("--budget", type=int, default=100, help="your FAAB left")
+    p_faab.add_argument("--week", type=int)
+    p_faab.add_argument("--replacement", type=float,
+                        help="season points of the player he would replace")
+    p_faab.add_argument("--budgets", help="rival budgets, e.g. 1:40,2:12,3:0")
+    p_faab.add_argument("--curve", action="store_true",
+                        help="show win probability at every bid")
+
     sub.add_parser("test-notify", help="send a test notification on every channel")
     sub.add_parser("dashboard", help="launch the Streamlit dashboard")
     return parser
@@ -1060,6 +1177,7 @@ def main(argv: list[str] | None = None) -> int:
         "accuracy": cmd_accuracy,
         "startsit": cmd_startsit,
         "playoffs": cmd_playoffs,
+        "faab": cmd_faab,
         "test-notify": cmd_test_notify,
         "migrate": cmd_migrate,
         "dashboard": cmd_dashboard,
