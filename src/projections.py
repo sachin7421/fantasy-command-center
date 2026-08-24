@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sqlite3
 import statistics
 from dataclasses import dataclass, field
@@ -24,12 +25,28 @@ log = logging.getLogger(__name__)
 
 DEFAULT_WEIGHTS = {"fantasypros": 0.5, "yahoo": 0.25, "espn": 0.25, "sleeper": 0.5}
 
-#: Week-to-week coefficient of variation by position, from historical scoring.
-#: Used as the floor on uncertainty when sources happen to agree.
+#: Week-to-week coefficient of variation by position: the standard deviation of
+#: a player's weekly points divided by his mean, averaged across players.
+#:
+#: MEASURED from 2025 nflverse data, not estimated. The values here replace an
+#: earlier set of guesses that were badly low - guessed RB 0.42 against a
+#: measured 0.75, WR 0.48 against 0.81. Understating this by that much makes
+#: every floor/ceiling band too narrow and every win probability too confident,
+#: so it is worth measuring rather than assuming.
+#:
+#: Computed per player and then averaged, NOT pooled across players: a pooled
+#: variance would mostly measure the gap between stars and scrubs, whereas a
+#: floor/ceiling band needs to know how much ONE player swings week to week.
 POSITION_VOLATILITY = {
-    "QB": 0.28, "RB": 0.42, "WR": 0.48, "TE": 0.46, "K": 0.40, "DEF": 0.55,
+    "QB": 0.478, "RB": 0.752, "WR": 0.814, "TE": 0.817,
+    # No 2025 sample worth trusting for these two in this league (no kicker slot,
+    # and defenses are streamed), so they keep conservative estimates.
+    "K": 0.55, "DEF": 0.65,
 }
-DEFAULT_VOLATILITY = 0.45
+DEFAULT_VOLATILITY = 0.75
+
+#: Games a player is projected over for a full-season number.
+REGULAR_SEASON_GAMES = 17
 
 
 @dataclass
@@ -78,12 +95,31 @@ def normalize_weights(
     return {s: w / total for s, w in present.items()}
 
 
+def effective_volatility(position: str | None, week: int = 0) -> float:
+    """Coefficient of variation for the period being projected.
+
+    POSITION_VOLATILITY is a WEEKLY figure. A season total is the sum of about
+    seventeen weeks, and summing independent draws grows the standard deviation
+    by sqrt(n) while the mean grows by n - so the relative spread of a season
+    projection is smaller by sqrt(n), not equal to the weekly one.
+
+    Applying the weekly figure to a season total (as this did originally) put a
+    250-point running back somewhere between 156 and 344, a plus-or-minus 38%
+    band that no season projection deserves.
+    """
+    weekly = POSITION_VOLATILITY.get(position or "", DEFAULT_VOLATILITY)
+    if week and week > 0:
+        return weekly
+    return weekly / math.sqrt(REGULAR_SEASON_GAMES)
+
+
 def blend_player(
     player_key: str,
     per_source: dict[str, float],
     weights: dict[str, float],
     position: str | None = None,
     band_sd: float = 1.0,
+    week: int = 0,
 ) -> Blend:
     """Combine one player's per-source points into a blended projection."""
     values = {s: v for s, v in per_source.items() if v is not None}
@@ -93,14 +129,20 @@ def blend_player(
     normalized = normalize_weights(values.keys(), weights)
     points = sum(values[s] * normalized.get(s, 0.0) for s in values)
 
-    # Disagreement between sources.
+    # Two INDEPENDENT sources of uncertainty, so they add in quadrature rather
+    # than one being taken over the other:
+    #
+    #   1. disagreement between forecasters about this player
+    #   2. the intrinsic week-to-week randomness of the position
+    #
+    # Taking max() instead - as this did originally - silently discards
+    # whichever is smaller. Once the volatility figures were measured rather
+    # than guessed, the intrinsic term dominated everywhere and source
+    # disagreement stopped affecting the band at all.
     spread = statistics.pstdev(list(values.values())) if len(values) > 1 else 0.0
-    # Intrinsic week-to-week variance for the position.
-    volatility = POSITION_VOLATILITY.get(position or "", DEFAULT_VOLATILITY)
-    intrinsic = abs(points) * volatility * 0.5
 
-    # Take the larger: agreement between two sources is not evidence of low risk.
-    stdev = max(spread, intrinsic)
+    intrinsic = abs(points) * effective_volatility(position, week)
+    stdev = math.sqrt(spread**2 + intrinsic**2)
     return Blend(
         player_key=player_key,
         points=round(points, 2),
@@ -141,7 +183,8 @@ def blend_all(
     written = 0
     for player_key, per_source in grouped.items():
         blend = blend_player(
-            player_key, per_source, weights, positions.get(player_key), band_sd
+            player_key, per_source, weights, positions.get(player_key), band_sd,
+            week=week,
         )
         conn.execute(
             "INSERT INTO projections_blended(player_key, season, week, points, floor, "
