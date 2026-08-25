@@ -239,8 +239,11 @@ def cmd_doctor(ctx: Context, args) -> int:
         print("  !! FATAL: hosted run, but the database is SQLite.")
         print("     Everything written here dies with the runner.")
         print("     DATABASE_URL is missing, or its value is not recognised as")
-        print("     a postgres:// or postgresql:// URL. Check the secret for a")
-        print("     pasted key name, surrounding quotes, or a truncated value.")
+        print("     a postgres:// or postgresql:// URL.")
+        print("")
+        from src.storage import describe_url_problem
+
+        print(f"     {describe_url_problem()}")
 
     health = db.job_health(ctx.conn, days=10)
     print("")

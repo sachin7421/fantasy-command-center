@@ -31,6 +31,39 @@ log = logging.getLogger(__name__)
 POSTGRES_SCHEMES = ("postgres://", "postgresql://", "postgresql+psycopg://")
 
 
+def describe_url_problem() -> str:
+    """Why the configured DATABASE_URL was not usable, without revealing it.
+
+    Deliberately reports SHAPE only: whether the variable is set, how long it
+    is, and the leading scheme characters - which are never secret, and which
+    identify the two mistakes that actually happen. A secret pasted together
+    with its own key name starts "DATABASE_URL", and a truncated one is short.
+    Nothing after the scheme is ever printed.
+    """
+    for key in DB_URL_KEYS:
+        raw = os.environ.get(key)
+        if raw is None:
+            continue
+        cleaned = _clean(raw)
+        if not cleaned:
+            return f"{key} is set but empty after trimming."
+        if is_postgres_url(cleaned):
+            return f"{key} looks valid; the failure is elsewhere."
+        head = cleaned[:13]
+        safe = "".join(c if c.isprintable() else "?" for c in head)
+        hint = ""
+        if cleaned.upper().startswith(tuple(k + "=" for k in DB_URL_KEYS)):
+            hint = (" - the KEY NAME was pasted into the value. Paste only the "
+                    "part after the '='.")
+        elif "://" not in cleaned:
+            hint = " - no scheme separator '://' found; the value looks truncated."
+        return (
+            f"{key} is set ({len(cleaned)} chars) but does not start with "
+            f"postgres:// or postgresql://. It begins: {safe!r}{hint}"
+        )
+    return "No DATABASE_URL is set in the environment or in Streamlit secrets."
+
+
 def is_postgres_url(url: str | None) -> bool:
     return bool(url) and str(url).startswith(POSTGRES_SCHEMES)
 
