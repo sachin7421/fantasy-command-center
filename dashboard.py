@@ -230,7 +230,8 @@ def draft_view(cfg, conn, league_key):
             _pane_recommendations(recommender, drafted, roster, current_pick,
                                   tracker, my_slot, is_mine, on_the_clock)
         with tab_board:
-            _pane_board(board, drafted, True)
+            _pane_board(board, drafted, True, tracker, my_slot, is_mine,
+                        on_the_clock, current_pick)
         with tab_roster:
             _pane_roster(roster, my_players, slots, tracker, board)
         with tab_shape:
@@ -241,7 +242,8 @@ def draft_view(cfg, conn, league_key):
             _pane_recommendations(recommender, drafted, roster, current_pick,
                                   tracker, my_slot, is_mine, on_the_clock)
         with middle:
-            _pane_board(board, drafted, False)
+            _pane_board(board, drafted, False, tracker, my_slot, is_mine,
+                        on_the_clock, current_pick)
             _pane_shape(board, drafted)
         with right:
             _pane_roster(roster, my_players, slots, tracker, board)
@@ -291,21 +293,38 @@ def _pane_recommendations(recommender, drafted, roster, current_pick, tracker,
             + "</div>",
             unsafe_allow_html=True,
         )
-        # The label says whose pick this is, and the pick is recorded to the
-        # team the snake order says is on the clock. Hardcoding it to my_slot
-        # meant pressing Draft out of turn silently added another team's pick
-        # to my roster, and every pick number after it referred to the wrong
-        # team. Out of turn this list doubles as the fastest way to mark an
-        # opponent's pick, because opponents mostly take from the top too.
-        label = "Draft" if is_mine else f"Taken by slot {on_the_clock}"
-        if st.button(label, key=f"take_{p.player_key}", width="stretch",
-                     type="primary" if i == 1 and is_mine else "secondary"):
-            tracker.record_pick(p.player_key)
-            st.cache_data.clear()
-            st.rerun()
+        # Two named actions rather than one button whose meaning changes with
+        # whose turn it is. Both consume the current pick - the snake order
+        # decides which team owns it - so the two differ only in whether the
+        # player lands on my roster. A single button labelled by the team on
+        # the clock read as if it were about that player, not about the pick.
+        draft_col, taken_col = st.columns(2)
+        with draft_col:
+            if st.button(
+                "Draft to me", key=f"take_{p.player_key}", width="stretch",
+                type="primary" if i == 1 and is_mine else "secondary",
+                disabled=not is_mine,
+                help=None if is_mine else (
+                    f"Pick {current_pick} belongs to slot {on_the_clock}. Record "
+                    "the picks before yours first, then this becomes available."
+                ),
+            ):
+                tracker.record_pick(p.player_key, team_key=str(my_slot))
+                st.cache_data.clear()
+                st.rerun()
+        with taken_col:
+            if st.button(
+                "Taken", key=f"gone_{p.player_key}", width="stretch",
+                help=f"Someone else took him with pick {current_pick} "
+                     f"(slot {on_the_clock}).",
+            ):
+                tracker.record_pick(p.player_key)
+                st.cache_data.clear()
+                st.rerun()
 
 
-def _pane_board(board, drafted, phone_layout):
+def _pane_board(board, drafted, phone_layout, tracker, my_slot, is_mine,
+                on_the_clock, current_pick):
     st.markdown("<div class='fcc-section'>Best available</div>", unsafe_allow_html=True)
     positions = ["ALL"] + sorted({p.position for p in board.players})
     chosen = st.radio("Position", positions, horizontal=True, label_visibility="collapsed")
@@ -333,11 +352,18 @@ def _pane_board(board, drafted, phone_layout):
             })
         rows.append(row)
 
-    st.dataframe(
+    # Selectable, so any of the sixty is one tap from being recorded. The
+    # recommendation list only carries ten, and a draft regularly goes off
+    # board - somebody reaches, and without a way to mark him every number
+    # after that is computed from a board that is wrong.
+    selection = st.dataframe(
         rows,
         width="stretch",
         hide_index=True,
         height=380 if phone_layout else 440,
+        on_select="rerun",
+        selection_mode="single-row",
+        key=f"board_{'phone' if phone_layout else 'wide'}",
         column_config={
             "Tier": st.column_config.NumberColumn(width="small"),
             "VORP": st.column_config.ProgressColumn(
@@ -347,6 +373,34 @@ def _pane_board(board, drafted, phone_layout):
             ),
         },
     )
+
+    chosen_rows = selection.selection.rows if selection and selection.selection else []
+    if not chosen_rows:
+        st.caption("Select a row to draft him or mark him taken.")
+        return
+
+    chosen = pool[chosen_rows[0]]
+    st.markdown(
+        f"**{chosen.name}** · {chosen.position}{chosen.position_rank} · "
+        f"{chosen.points:.0f} proj"
+    )
+    draft_col, taken_col = st.columns(2)
+    with draft_col:
+        if st.button(
+            "Draft to me", key=f"board_take_{chosen.player_key}", width="stretch",
+            type="primary" if is_mine else "secondary", disabled=not is_mine,
+            help=None if is_mine else
+                 f"Pick {current_pick} belongs to slot {on_the_clock}.",
+        ):
+            tracker.record_pick(chosen.player_key, team_key=str(my_slot))
+            st.cache_data.clear()
+            st.rerun()
+    with taken_col:
+        if st.button("Taken", key=f"board_gone_{chosen.player_key}",
+                     width="stretch"):
+            tracker.record_pick(chosen.player_key)
+            st.cache_data.clear()
+            st.rerun()
 
 
 def _pane_shape(board, drafted):
