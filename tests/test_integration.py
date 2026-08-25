@@ -988,3 +988,72 @@ def test_the_draft_controls_are_never_disabled(tmp_path, monkeypatch):
 
     # And the pick number is settable rather than purely derived.
     assert any(n.label == "Pick" for n in app.number_input)
+
+
+# --- a job that does nothing must still leave evidence ----------------------
+
+def test_every_run_records_a_row(tmp_path, capsys):
+    """The failure mode here is not a crash, it is silence.
+
+    A job that runs, decides nothing, sends nothing and exits 0 looks exactly
+    like a healthy quiet week - and exactly like one that has been broken for a
+    month, which is what six of the seven scheduled jobs actually were. So a
+    row is written whatever the outcome.
+    """
+    from src import db as dbm
+
+    database = tmp_path / "runs.db"
+    config = tmp_path / "c.yaml"
+    config.write_text(
+        "league:\n"
+        '  league_id: "796511"\n'
+        "  season: 2026\n"
+        "  my_team_id: 3\n"
+        "paths:\n"
+        f'  env_dir: "{tmp_path.as_posix()}"\n',
+        encoding="utf-8",
+    )
+
+    cli.main(["--config", str(config), "--db", str(database), "rank"])
+    capsys.readouterr()
+    cli.main(["--config", str(config), "--db", str(database),
+              "waivers", "--week", "3", "--dry-run"])
+    capsys.readouterr()
+
+    conn = dbm.init_db(database)
+    rows = conn.fetchall("SELECT job, status, exit_code FROM job_runs ORDER BY id")
+    jobs = [r["job"] for r in rows]
+    assert "rank" in jobs and "waivers" in jobs, jobs
+    for row in rows:
+        assert row["status"] in ("ok", "failed")
+        assert row["exit_code"] is not None
+
+    health = dbm.job_health(conn, days=10)
+    assert {h["job"] for h in health} >= {"rank", "waivers"}
+    assert all(h["runs"] >= 1 for h in health)
+
+
+def test_a_failing_job_is_recorded_as_failed(tmp_path, capsys):
+    """`fcc doctor` has to be able to say which jobs are not working."""
+    from src import db as dbm
+
+    database = tmp_path / "fail.db"
+    config = tmp_path / "noteam.yaml"
+    config.write_text(
+        "league:\n"
+        '  league_id: "796511"\n'
+        "  season: 2026\n"
+        "paths:\n"
+        f'  env_dir: "{tmp_path.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    code = cli.main(["--config", str(config), "--db", str(database),
+                     "lineup", "--week", "3", "--dry-run"])
+    capsys.readouterr()
+    assert code != 0
+
+    conn = dbm.init_db(database)
+    row = conn.fetchone(
+        "SELECT status, exit_code FROM job_runs WHERE job='lineup' ORDER BY id DESC"
+    )
+    assert row is not None and row["status"] == "failed"

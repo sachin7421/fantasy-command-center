@@ -167,6 +167,24 @@ CREATE TABLE IF NOT EXISTS draft_picks (
     PRIMARY KEY (league_key, pick)
 );
 
+-- Every scheduled run leaves a row, whether or not it had anything to say.
+-- The recurring failure in this project is not a crash: it is a job that runs,
+-- decides nothing, sends nothing and exits 0. `recommendations` records only
+-- findings, so it cannot tell "ran and found nothing" from "did not run".
+CREATE TABLE IF NOT EXISTS job_runs (
+    id          {SERIAL_PK},
+    job         TEXT NOT NULL,
+    season      INTEGER,
+    week        INTEGER,
+    status      TEXT NOT NULL,       -- ok | nothing_to_do | skipped | failed
+    detail      TEXT,
+    exit_code   INTEGER,
+    duration_ms INTEGER,
+    started_at  TEXT NOT NULL,
+    finished_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_job_runs_recent ON job_runs(job, finished_at);
+
 CREATE TABLE IF NOT EXISTS source_cache (
     cache_key    TEXT PRIMARY KEY,
     source       TEXT,
@@ -453,6 +471,50 @@ def describe_backend() -> str:
         host = url.split("@")[-1].split("/")[0] if "@" in url else "postgres"
         return f"postgres ({host})"
     return f"sqlite ({DEFAULT_DB_PATH})"
+
+
+def record_job_run(
+    conn: Database,
+    job: str,
+    status: str,
+    *,
+    season: int | None = None,
+    week: int | None = None,
+    detail: str | None = None,
+    exit_code: int | None = None,
+    duration_ms: int | None = None,
+    started_at: str | None = None,
+) -> None:
+    """Leave evidence that a job ran, whatever it decided.
+
+    A job that runs, finds nothing, sends nothing and exits 0 is
+    indistinguishable from a healthy quiet week - and from a job that has been
+    silently broken for a month. That is this project's recurring failure mode,
+    not crashes, so every run records one row regardless of outcome.
+    """
+    now = utcnow()
+    conn.execute(
+        "INSERT INTO job_runs(job, season, week, status, detail, exit_code, "
+        "duration_ms, started_at, finished_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (job, season, week, status, detail, exit_code, duration_ms,
+         started_at or now, now),
+    )
+    conn.commit()
+
+
+def job_health(conn: Database, days: int = 10) -> list[dict]:
+    """Recent run counts per job, most recently seen first."""
+    from datetime import timedelta
+
+    since = (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds")
+    rows = conn.fetchall(
+        "SELECT job, COUNT(*) AS runs, MAX(finished_at) AS last_run, "
+        "       SUM(CASE WHEN status='ok' THEN 1 ELSE 0 END) AS produced, "
+        "       SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed "
+        "FROM job_runs WHERE finished_at >= ? GROUP BY job ORDER BY MAX(finished_at) DESC",
+        (since,),
+    )
+    return [dict(r) for r in rows]
 
 
 # --- cache helpers -----------------------------------------------------------

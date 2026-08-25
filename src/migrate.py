@@ -46,9 +46,10 @@ TABLES: list[tuple[str, tuple[str, ...]]] = [
     ("game_context", ("season", "week", "team")),
     ("source_accuracy", ("source", "season", "week", "position")),
     ("recommendation_outcomes", ("recommendation_id", "subject_key")),
-    # `recommendations` has a generated id; copied without it so the target
-    # assigns its own and no sequence collision is possible.
+    # These two have generated ids; copied without them so the target assigns
+    # its own and no sequence collision is possible.
     ("recommendations", ()),
+    ("job_runs", ()),
 ]
 
 #: Tables deliberately NOT copied, with the reason. `schema_version` belongs to

@@ -87,7 +87,12 @@ class YahooClient:
                 game_code=self.cfg.get("league.game_code", "nfl"),
                 game_id=self.cfg.get("league.game_id"),
                 env_file_location=env_dir,
-                save_token_data_to_env_file=True,
+                # Only where a human will reuse the token. yfpy writes the
+                # access token, the REFRESH token and the GUID into
+                # <env_dir>/.env, and on a CI runner that is inside the checked
+                # out workspace - one `path:` line away from being uploaded as
+                # an artifact, and destroyed with the runner anyway.
+                save_token_data_to_env_file=sys.stdin.isatty(),
                 # Defaults to whether anyone is actually there to click it. A
                 # scheduled run with no TTY would otherwise block on an OAuth
                 # browser prompt until the job timed out.

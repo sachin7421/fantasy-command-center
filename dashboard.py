@@ -110,9 +110,14 @@ def draft_view(cfg, conn, league_key):
             "Your draft slot", 1, teams, int(cfg.get("draft.draft_slot") or 1)
         )
         auto_sync = st.toggle("Poll Yahoo for picks", value=False)
+        # Defaults ON. It lived in the sidebar, which on a phone is a hamburger
+        # overlay - so a phone user got the desktop layout and had to know a
+        # hidden setting existed to fix it. The tabbed layout loses nothing on
+        # a desktop, so defaulting to it is the safer error.
         phone_layout = st.toggle(
-            "Phone layout", value=False,
-            help="Stack the panes into tabs for a narrow screen.",
+            "Stacked layout", value=True,
+            help="Tabs instead of columns. Leave on for a phone or a narrow "
+                 "window; turn off for three panes side by side.",
         )
         st.caption(
             "Manual mode is the default and always works. Yahoo polling only "
@@ -478,10 +483,17 @@ def _pane_board(board, drafted, phone_layout, tracker, my_slot, is_mine,
         key=f"board_{'phone' if phone_layout else 'wide'}",
         column_config={
             "Tier": st.column_config.NumberColumn(width="small"),
+            # Scaled to the WHOLE board, not to the filtered rows. Scaled to
+            # the filter, the top quarterback got a full bar despite a VORP far
+            # below the top back's - so the same bar length meant different
+            # things depending on a radio button, which is worse than no bar.
             "VORP": st.column_config.ProgressColumn(
                 format="%.1f",
-                min_value=float(min(r["VORP"] for r in rows)),
-                max_value=float(max(r["VORP"] for r in rows)),
+                min_value=0.0,
+                max_value=float(max(
+                    [p.vorp for p in board.players if p.vorp > 0] or [1.0]
+                )),
+                help="Points above a freely available starter at the position.",
             ),
         },
     )

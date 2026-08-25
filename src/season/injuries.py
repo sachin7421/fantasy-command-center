@@ -98,10 +98,15 @@ def current_statuses(conn: Database) -> dict[str, dict[str, Any]]:
 
 
 def my_roster_keys(conn: Database, league_key: str, team_key: str) -> set[str]:
+    # The latest week THIS TEAM has a roster for, not the latest any team has.
+    # Scoped league-wide, a partial sync - another team's fetch succeeding while
+    # yours failed - moved MAX(week) forward and returned an EMPTY set for you,
+    # which every job then rendered as "no roster stored" rather than falling
+    # back to the week that did sync.
     rows = conn.execute(
         "SELECT DISTINCT player_key FROM rosters WHERE league_key=? AND team_key=? "
-        "AND week=(SELECT MAX(week) FROM rosters WHERE league_key=?)",
-        (league_key, str(team_key), league_key),
+        "AND week=(SELECT MAX(week) FROM rosters WHERE league_key=? AND team_key=?)",
+        (league_key, str(team_key), league_key, str(team_key)),
     ).fetchall()
     return {r["player_key"] for r in rows}
 

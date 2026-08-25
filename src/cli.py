@@ -212,6 +212,20 @@ def cmd_doctor(ctx: Context, args) -> int:
         print(f"    [{'ok  ' if present else 'warn'}] {label:<20}"
               + ("" if present else f" {hint}"))
 
+    # What has actually been RUNNING. Row counts say what exists; this says
+    # whether the schedule is alive, which is the thing that was invisible.
+    health = db.job_health(ctx.conn, days=10)
+    print("")
+    print("  job runs (last 10 days):")
+    if not health:
+        print("    none recorded - either nothing has run, or this database")
+        print("    predates run tracking. `fcc daily` will start filling it.")
+    else:
+        for row in health:
+            failed = f", {row['failed']} failed" if row.get("failed") else ""
+            print(f"    {row['job']:<16} {row['runs']:>3} run(s), "
+                  f"last {row['last_run'][:16]}{failed}")
+
     counts = {
         table: ctx.conn.execute(f"SELECT COUNT(*) c FROM {table}").fetchone()["c"]
         for table in ("players", "projections", "projections_blended", "adp",
@@ -1591,14 +1605,40 @@ def main(argv: list[str] | None = None) -> int:
 
     handlers = HANDLERS
     handler = handlers.get(args.command, cmd_job)
+
+    # Every run leaves evidence, whatever it decided. A job that runs, finds
+    # nothing, sends nothing and exits 0 is indistinguishable from a healthy
+    # quiet week - and from one that has been silently broken for a month,
+    # which is what six of the seven scheduled jobs actually were.
+    import time
+
+    started = db.utcnow()
+    began = time.monotonic()
+    code = EXIT_FAIL
     try:
-        return handler(ctx, args)
+        code = handler(ctx, args)
+        return code
     except KeyboardInterrupt:
-        return EXIT_OK
+        code = EXIT_OK
+        return code
     except Exception:
         traceback.print_exc()
-        return EXIT_FAIL
+        code = EXIT_FAIL
+        return code
     finally:
+        try:
+            db.record_job_run(
+                ctx.conn,
+                job=args.command,
+                status="ok" if code == EXIT_OK else "failed",
+                season=ctx.cfg.get("league.season"),
+                week=getattr(args, "week", None),
+                exit_code=code,
+                duration_ms=int((time.monotonic() - began) * 1000),
+                started_at=started,
+            )
+        except Exception as exc:  # never let bookkeeping break a job
+            log.debug("Could not record the job run: %s", exc)
         ctx.conn.close()
 
 
