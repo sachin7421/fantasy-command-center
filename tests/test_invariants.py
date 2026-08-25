@@ -250,6 +250,63 @@ def test_an_empty_roster_needs_every_starting_slot():
 
 # --- FAAB --------------------------------------------------------------------
 
+def test_the_waiver_replacement_levels_are_never_all_zero(league):
+    """The original bug, guarded at its own front door.
+
+    `faab.replacement_levels()` is a SECOND replacement-level implementation,
+    separate from the board's, because in season the replacement is whoever is
+    actually on the wire rather than a theoretical rank. It returned 0.0 for
+    every offensive position for weeks - the query had no join to `rosters`, so
+    it took the median over every player with a stored line, most of whom
+    project nothing.
+
+    The first version of this suite tested the board's replacement levels and
+    would have missed a reintroduction of exactly this bug, because the two
+    implementations share no code. Both front doors now have a guard.
+    """
+    conn, _ = league
+    levels = faab.replacement_levels(
+        conn, SEASON, starting_slots=SLOTS, num_teams=NUM_TEAMS
+    )
+    assert levels, "no replacement levels returned at all"
+
+    started = [pos for pos in SLOTS if pos not in ("W/R/T", "BN", "IR")]
+    zeroed = [pos for pos in started if not levels.get(pos)]
+    assert not zeroed, (
+        f"waiver replacement level is zero for {zeroed}. A zero says the wire "
+        "is worth nothing, which makes every waiver value equal a gross "
+        "projection and a backup out-value a starter."
+    )
+    for position, points in levels.items():
+        assert _finite(points), f"{position} replacement level is {points}"
+        assert points >= 0, f"{position} replacement level is negative: {points}"
+
+
+def test_the_two_replacement_models_broadly_agree(league, board):
+    """They are computed differently and must still land in the same world.
+
+    The board ranks by projected season points; the waiver model reads the
+    actual wire. They will not match, and should not - but an order-of-magnitude
+    gap means one of them is measuring something other than what it claims.
+    """
+    conn, _ = league
+    waiver = faab.replacement_levels(
+        conn, SEASON, starting_slots=SLOTS, num_teams=NUM_TEAMS
+    )
+    for position in ("QB", "RB", "WR", "TE"):
+        level = board.replacement.get(position)
+        other = waiver.get(position)
+        if not level or not other:
+            continue
+        ratio = other / level.points
+        assert 0.2 <= ratio <= 5.0, (
+            f"{position}: the board says replacement is {level.points:.1f} and "
+            f"the waiver model says {other:.1f} - a {ratio:.1f}x gap. One of "
+            "them is not measuring replacement level."
+        )
+
+
+
 def _rivals(n: int = 11) -> list:
     return [
         faab.ManagerProfile(

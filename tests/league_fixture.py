@@ -78,14 +78,27 @@ def build_league(path: Path) -> tuple[Database, object]:
     for position, count in COUNTS.items():
         for rank in range(1, count + 1):
             name = f"{position}{rank}"
+            points = _projection(position, rank)
             team = TEAMS[(rank - 1) % len(TEAMS)] if position == "DEF" else "AAA"
             key = idmap.upsert_player(full_name=name, position=position, team=team)
             conn.execute(
                 "INSERT INTO projections(player_key, source, season, week, "
                 "stats_json, points, fetched_at) VALUES (?,?,?,?,?,?,?)",
-                (key, "sleeper", SEASON, 0, "{}",
-                 round(_projection(position, rank), 4), now),
+                (key, "sleeper", SEASON, 0, "{}", round(points, 4), now),
             )
+            # The blended table too, with the same points, because that is the
+            # one the real pipeline writes and most readers prefer. A fixture
+            # that only fills `projections` silently skips the primary path -
+            # which is how the waiver replacement model went untested through
+            # the very bug it is now guarded against.
+            conn.execute(
+                "INSERT INTO projections_blended(player_key, season, week, "
+                "points, floor, ceiling, stdev, n_sources, computed_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (key, SEASON, 0, round(points, 4), round(points * 0.72, 4),
+                 round(points * 1.28, 4), round(points * 0.18, 4), 3, now),
+            )
+
             ecr = _adp(position, rank)
             conn.execute(
                 "INSERT INTO adp(player_key, source, adp, stdev, best, worst, "
