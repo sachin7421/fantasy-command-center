@@ -254,23 +254,35 @@ def suggest_bid(
     heat = min(1.0, trending_add / 50_000) if trending_add else 0.0
 
     # Budget urgency: money unspent in week 15 is wasted money.
-    urgency = 1.0 + max(0.0, (18 - weeks_left)) / 18 * 0.6
+    urgency = 1.0 + max(0.0, (FINAL_WEEK - weeks_left)) / FINAL_WEEK * 0.6
 
     core = share * (0.35 + 0.45 * heat) * urgency
     recommended = int(round(budget_left * core))
+    # With no budget there is no bid. The old floor forced 1 regardless, and
+    # the ceiling then clamped to 0, so a spent manager was told
+    # "bid: $1-$0, recommend $1".
+    if budget_left <= 0:
+        return 0, 0, 0
     recommended = max(1 if value_gain > 0 else 0, min(recommended, budget_left))
 
-    low = max(0, int(round(recommended * 0.55)))
-    high = min(budget_left, max(recommended + 1, int(round(recommended * 1.8))))
+    low = max(0, min(recommended, int(round(recommended * 0.55))))
+    high = min(budget_left, max(recommended, int(round(recommended * 1.8))))
     return low, recommended, high
 
 
 def find_handcuffs(
-    conn: Database, league_key: str, team_key: str, week: int
+    conn: Database, league_key: str, team_key: str, week: int, season: int | None = None
 ) -> list[dict[str, Any]]:
-    """For each RB I roster, is his backup available? (spec 6.1)
+    """For each RB I roster, is the man behind him on the depth chart free?
 
-    Uses Sleeper depth-chart order: the same team, same position, next man up.
+    Genuinely uses depth-chart order now. The docstring said so before, and the
+    query ordered by projected points instead - which for a committee backfield
+    returns the STARTER, so the tool would tell you the handcuff for your
+    backup was the lead back you did not own. `depth_charts` is populated by
+    `fcc sync-usage` and was being written and read by nothing.
+
+    Falls back to the old projection ordering only when no depth chart has been
+    synced, and says which one it used.
     """
     my_rbs = conn.execute(
         """
@@ -281,31 +293,63 @@ def find_handcuffs(
         (league_key, str(team_key), week),
     ).fetchall()
 
+    # Most recent depth chart available, whatever season it came from.
+    latest = conn.fetchone("SELECT MAX(season) AS s FROM depth_charts")         if conn.table_exists("depth_charts") else None
+    depth_season = latest["s"] if latest and latest["s"] is not None else None
+    if season is not None and depth_season is not None:
+        depth_season = min(depth_season, season)
+
     out = []
     for rb in my_rbs:
         if not rb["team"]:
             continue
-        backup = conn.execute(
-            """
-            SELECT p.player_key, p.full_name,
-                   EXISTS(SELECT 1 FROM rosters r2
-                          WHERE r2.player_key=p.player_key AND r2.league_key=?
-                            AND r2.week=?) AS rostered
-            FROM players p
-            WHERE p.team=? AND p.position='RB' AND p.player_key<>?
-            ORDER BY (SELECT COALESCE(points,0) FROM projections
-                      WHERE player_key=p.player_key AND source='sleeper'
-                      ORDER BY season DESC LIMIT 1) DESC
-            LIMIT 1
-            """,
-            (league_key, week, rb["team"], rb["player_key"]),
-        ).fetchone()
+        backup = None
+        source = "depth chart"
+        if depth_season is not None:
+            backup = conn.fetchone(
+                """
+                SELECT d.player_key, d.player_name AS full_name,
+                       EXISTS(SELECT 1 FROM rosters r2
+                              WHERE r2.player_key=d.player_key
+                                AND r2.league_key=? AND r2.week=?) AS rostered
+                FROM depth_charts d
+                WHERE d.season=? AND d.team=? AND d.position='RB'
+                  AND d.player_key IS NOT NULL
+                  AND d.depth_rank > (
+                      SELECT MIN(depth_rank) FROM depth_charts
+                      WHERE season=? AND team=? AND position='RB'
+                        AND player_key=?
+                  )
+                ORDER BY d.depth_rank ASC
+                LIMIT 1
+                """,
+                (league_key, week, depth_season, rb["team"],
+                 depth_season, rb["team"], rb["player_key"]),
+            )
+        if backup is None:
+            source = "projection order (no depth chart synced)"
+            backup = conn.fetchone(
+                """
+                SELECT p.player_key, p.full_name,
+                       EXISTS(SELECT 1 FROM rosters r2
+                              WHERE r2.player_key=p.player_key AND r2.league_key=?
+                                AND r2.week=?) AS rostered
+                FROM players p
+                WHERE p.team=? AND p.position='RB' AND p.player_key<>?
+                ORDER BY (SELECT COALESCE(points,0) FROM projections
+                          WHERE player_key=p.player_key AND source='sleeper'
+                          ORDER BY season DESC LIMIT 1) DESC
+                LIMIT 1
+                """,
+                (league_key, week, rb["team"], rb["player_key"]),
+            )
         if backup:
             out.append(
                 {
                     "starter": rb["full_name"],
                     "team": rb["team"],
                     "handcuff": backup["full_name"],
+                    "source": source,
                     "handcuff_key": backup["player_key"],
                     "rostered": bool(backup["rostered"]),
                 }
@@ -517,7 +561,8 @@ def run(
             )
     report.stashes = report.stashes[:5]
     report.handcuffs = [
-        h for h in find_handcuffs(conn, league_key, team_key, week) if not h["rostered"]
+        h for h in find_handcuffs(conn, league_key, team_key, week, season)
+        if not h["rostered"]
     ]
 
     # Expected-points regression. The waiver wire is exactly where this pays:

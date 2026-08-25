@@ -59,6 +59,9 @@ class _Scored:
     position: str
     points: float
     started: bool
+    #: Whether a real score was recorded. Distinguishes a genuine zero from a
+    #: week that has not been played or synced.
+    scored: bool = False
 
 
 def _actual_week_scores(
@@ -69,15 +72,23 @@ def _actual_week_scores(
     Uses stored weekly projections as a stand-in when real results have not been
     synced, which keeps the recap useful mid-build; the numbers are labelled.
     """
+    # Real scores come from `player_week_actuals`, which `fcc sync-usage` writes.
+    #
+    # This used to look for `projections` rows with source='actual'. Nothing in
+    # the codebase has ever written such a row, so the COALESCE always fell
+    # through to the blended PROJECTION and the Monday recap reported what a
+    # player was expected to score as what he actually scored - including the
+    # "points left on your bench" figure, which was therefore a comparison of
+    # two projections.
     rows = conn.execute(
         """
         SELECT r.player_key, r.selected_pos, p.full_name, p.position,
-               COALESCE(j.points, b.points, 0) AS pts
+               a.points AS actual_pts,
+               b.points AS projected_pts
         FROM rosters r
         JOIN players p USING(player_key)
-        LEFT JOIN projections j
-               ON j.player_key=r.player_key AND j.season=? AND j.week=?
-              AND j.source='actual'
+        LEFT JOIN player_week_actuals a
+               ON a.player_key=r.player_key AND a.season=? AND a.week=?
         LEFT JOIN projections_blended b
                ON b.player_key=r.player_key AND b.season=? AND b.week=?
         WHERE r.league_key=? AND r.team_key=? AND r.week=?
@@ -89,7 +100,11 @@ def _actual_week_scores(
             player_key=r["player_key"],
             name=r["full_name"],
             position=r["position"],
-            points=float(r["pts"] or 0),
+            # Only a real recorded score counts. A missing one is missing, not
+            # zero and not a projection - `has_data` decides whether there is a
+            # recap to give at all.
+            points=float(r["actual_pts"]) if r["actual_pts"] is not None else 0.0,
+            scored=r["actual_pts"] is not None,
             started=bool(
                 r["selected_pos"] and r["selected_pos"].upper() not in ("BN", "IR", "IR+", "NA")
             ),
@@ -110,7 +125,7 @@ def run(
     report = RecapReport(
         week=week,
         roster_size=len(roster),
-        scored=sum(1 for p in roster if p.points),
+        scored=sum(1 for p in roster if p.scored),
     )
     if not report.has_data:
         return report

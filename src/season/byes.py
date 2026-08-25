@@ -106,7 +106,9 @@ def run(
     if not report.has_data:
         return report
 
-    for offset in range(horizon):
+    # The horizon starts at NEXT week. "the next four weeks are covered"
+    # previously included the current one, so it reported on three.
+    for offset in range(1, horizon + 1):
         target = week + offset
         on_bye, injured, roster = [], [], []
         for r in rows:
@@ -161,10 +163,12 @@ def _best_available_for_slot(
         LEFT JOIN projections j
                ON j.player_key=f.player_key AND j.season=? AND j.week=0
               AND j.source='sleeper'
-        WHERE f.league_key=?
+        WHERE f.league_key=? AND f.week=(
+                  SELECT MAX(week) FROM free_agents WHERE league_key=?
+              )
         ORDER BY pts DESC LIMIT 100
         """,
-        (season, season, league_key),
+        (season, season, league_key, league_key),
     ).fetchall()
     for r in rows:
         if r["bye_week"] and int(r["bye_week"]) == week:
