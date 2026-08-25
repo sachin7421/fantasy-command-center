@@ -352,6 +352,24 @@ def connect_postgres(url: str) -> Database:
             # only under load. Disabling the promotion makes the app safe on the
             # direct connection and on either pooler.
             prepare_threshold=None,
+            # Keep the socket alive through idle periods.
+            #
+            # A dashboard sits untouched for hours and then someone opens it.
+            # In between, three separate things want to hang up: the operating
+            # system, any NAT or load balancer on the path, and Supabase's own
+            # pooler. TCP keepalives stop the first two - the kernel sends a
+            # probe every 30 seconds of idleness, which keeps the mapping alive
+            # and detects a genuinely dead peer in about 80 seconds instead of
+            # on the next query.
+            #
+            # It cannot stop the third: if the pooler decides to close an idle
+            # connection, it closes. That is what `reopen` below is for. The two
+            # together mean the drop usually does not happen, and is invisible
+            # when it does.
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5,
         )
         return conn
 
