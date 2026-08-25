@@ -188,7 +188,7 @@ class Database:
         row = self.fetchone(sql, params)
         if row is None:
             return None
-        return list(row.values())[0] if isinstance(row, dict) else row[0]
+        return next(iter(row.values())) if isinstance(row, dict) else row[0]
 
     def table_exists(self, name: str) -> bool:
         if self.dialect == "sqlite":

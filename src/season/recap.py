@@ -129,8 +129,12 @@ def run(
         [p for p in started if p.player_key not in optimal_keys],
         key=lambda p: p.points,
     )
+    # Deliberately NOT strict: there is no reason the number of players who
+    # should have started equals the number who wrongly did, and the shorter
+    # list is the number of real mistakes.
     for benched, actual_starter in zip(
-        sorted(should_have_started, key=lambda p: p.points, reverse=True), wrongly_started
+        sorted(should_have_started, key=lambda p: p.points, reverse=True),
+        wrongly_started, strict=False,
     ):
         report.mistakes.append(
             BenchMistake(

@@ -100,7 +100,7 @@ def rank_correlation(a: list[float], b: list[float]) -> float:
     ra, rb = ranks(a), ranks(b)
     n = len(ra)
     mean_a, mean_b = sum(ra) / n, sum(rb) / n
-    num = sum((x - mean_a) * (y - mean_b) for x, y in zip(ra, rb))
+    num = sum((x - mean_a) * (y - mean_b) for x, y in zip(ra, rb, strict=True))
     den = (
         sum((x - mean_a) ** 2 for x in ra) * sum((y - mean_b) ** 2 for y in rb)
     ) ** 0.5

@@ -135,7 +135,7 @@ def recency_weighted_mean(
     weights = [0.5 ** ((len(observations) - 1 - i) / half_life)
                for i in range(len(observations))]
     total = sum(weights)
-    return sum(o * w for o, w in zip(observations, weights)) / total if total else None
+    return sum(o * w for o, w in zip(observations, weights, strict=True)) / total if total else None
 
 
 def population_prior(values: Iterable[float]) -> tuple[float, float]:

@@ -771,8 +771,11 @@ def cmd_daily(ctx: Context, args) -> int:
     return EXIT_FAIL if failures else EXIT_OK
 
 
-def cmd_setup(ctx_or_none, args) -> int:
-    """Interactive one-time Yahoo credential setup (spec 11)."""
+def cmd_setup(_ctx, args) -> int:
+    """Interactive one-time Yahoo credential setup (spec 11).
+
+    Takes no context: it runs BEFORE there are credentials to build one with.
+    """
     print(
         "\nYahoo API setup\n"
         "---------------\n"

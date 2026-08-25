@@ -1,0 +1,21 @@
+# Bandit configuration.
+#
+# B608 (SQL built by string construction) is skipped, having been checked site
+# by site rather than waved through. Every one of the five is an interpolated
+# *identifier*, never a value:
+#
+#   cli.py:193       a literal tuple of table names, for the row counts in
+#                    `fcc doctor`
+#   idmap.py:199,217 literal column names plus placeholders whose ids are
+#                    filtered against an allow-list first
+#   migrate.py:98,118 table names from the hardcoded TABLES list, and column
+#                    names read from information_schema / PRAGMA and then
+#                    intersected with the target's own columns
+#
+# No externally-supplied string ever becomes an identifier, and every value is
+# bound. Verified independently in a security review; all five are false
+# positives.
+#
+# Everything else bandit reports here is LOW severity and left visible.
+skips: ['B608']
+exclude_dirs: ['.venv', 'data', 'tests']

@@ -38,8 +38,7 @@ def _norm(name: str) -> str:
     s = name.lower().strip()
     s = s.replace("&", " and ")
     s = re.sub(r"[^a-z0-9+\- ]+", " ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+    return re.sub(r"\s+", " ", s).strip()
 
 
 # Passing

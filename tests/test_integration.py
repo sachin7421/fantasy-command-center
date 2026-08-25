@@ -968,7 +968,6 @@ def test_an_unknown_pick_advances_the_count_without_claiming_a_player(tmp_path):
 
 def test_the_draft_controls_are_never_disabled(tmp_path, monkeypatch):
     """A control that disappears mid-draft is worse than one that is wrong."""
-    import os
 
     from streamlit.testing.v1 import AppTest
 

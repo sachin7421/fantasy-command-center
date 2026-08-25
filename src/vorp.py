@@ -365,7 +365,7 @@ def build_board(
     # pools are re-sorted and re-ranked afterwards, because it also changes the
     # ORDER, which every index into these lists assumes.
     if _apply_prior_season(conn, season, players_by_position, prior_strength):
-        for pos, pool in players_by_position.items():
+        for pool in players_by_position.values():
             pool.sort(key=lambda p: p.points, reverse=True)
             for i, player in enumerate(pool, 1):
                 player.position_rank = i

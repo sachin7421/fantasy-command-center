@@ -189,7 +189,6 @@ def run(
     week: int,
     opponent_team_key: str | None = None,
     watch_keys: Iterable[str] = (),
-    commit_snapshot: bool = True,
 ) -> InjuryReport:
     """Snapshot, diff against yesterday, and classify every change.
 

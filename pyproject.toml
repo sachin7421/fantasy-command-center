@@ -52,6 +52,24 @@ ignore = [
     "PLC0415",   # imports inside functions are deliberate: they keep `fcc doctor`
                  # fast and stop a broken optional source from breaking startup
     "N818",      # exception naming
+
+    # --- deliberate, with reasons -------------------------------------------
+    "RUF001",    # an EN DASH inside the regex that parses Yahoo's own
+                 # "Pts Allow 1-6" labels, where Yahoo really does send one
+    "RUF005",    # list concatenation reads better than unpacking in the few
+                 # places it appears here
+    "RUF046",    # int() around an already-int value is documenting intent at
+                 # boundaries where the type has recently been a float
+    "PLW2901",   # rebinding a loop variable while stripping a line is idiomatic
+    "PLR1714",   # `a == x or a == y` is clearer than a set for two literals
+    "RET504",    # a named result before `return` is often the explanation
+    "SIM105",    # contextlib.suppress hides which exception was expected
+    "UP046",     # Generic[] rather than PEP 695 syntax: the runtime floor for
+    "UP047",     # this project is 3.12, and PEP 695 generics need 3.12+ AND
+                 # confuse the version of mypy pinned here
+    "N806",      # a module-level-style constant inside a function is fine
+    "PTH100",    # tools/ scripts use os.path for the sys.path bootstrap, which
+    "PTH120",    # has to run BEFORE src is importable
 ]
 
 [tool.ruff.lint.per-file-ignores]

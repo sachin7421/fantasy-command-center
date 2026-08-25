@@ -60,4 +60,4 @@ jobs:
         run: python -m vulture src dashboard.py fcc.py --min-confidence 80
 
       - name: Security
-        run: python -m bandit -r src -q -ll
+        run: python -m bandit -r src -q -ll -c .bandit

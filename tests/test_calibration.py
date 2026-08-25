@@ -24,11 +24,11 @@ def test_correlation_constants_match_the_measurement():
     The asserted values were 0.55 / 0.35 / -0.20; the measured ones are
     0.362 / ~0.00 / +0.026, and the same-position figure had the wrong sign.
     """
-    assert distributions.QB_PASSCATCHER_CORRELATION == pytest.approx(0.362, abs=0.03)
-    assert distributions.TEAM_CORRELATION == pytest.approx(0.0, abs=0.05)
+    assert pytest.approx(0.362, abs=0.03) == distributions.QB_PASSCATCHER_CORRELATION
+    assert pytest.approx(0.0, abs=0.05) == distributions.TEAM_CORRELATION
     # Positive, not negative: two backs do not hedge each other.
     assert distributions.SAME_POSITION_CORRELATION >= 0.0
-    assert distributions.SAME_POSITION_CORRELATION == pytest.approx(0.03, abs=0.05)
+    assert pytest.approx(0.03, abs=0.05) == distributions.SAME_POSITION_CORRELATION
 
 
 def test_season_volatility_is_not_the_weekly_figure_over_root_seventeen():

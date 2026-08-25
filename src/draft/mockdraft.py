@@ -242,7 +242,7 @@ def compare_strategies(
         recommender_mean=round(statistics.mean(rec_scores), 2),
         baseline_mean=round(statistics.mean(base_scores), 2),
         win_rate=round(wins / n, 3),
-        mean_edge=round(statistics.mean(r - b for r, b in zip(rec_scores, base_scores)), 2),
+        mean_edge=round(statistics.mean(r - b for r, b in zip(rec_scores, base_scores, strict=True)), 2),
         recommender_rank=round(statistics.mean(rec_ranks), 2),
         baseline_rank=round(statistics.mean(base_ranks), 2),
     )
