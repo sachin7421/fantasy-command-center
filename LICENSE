@@ -1,0 +1,42 @@
+Copyright (c) 2026 Sachin Shah. All rights reserved.
+
+This software is proprietary. No permission is granted to use, copy, modify,
+merge, publish, distribute, sublicense, or sell copies of it, in whole or in
+part, except by written permission of the copyright holder.
+
+Viewing and forking permitted by the GitHub Terms of Service, for as long as
+this repository is public, are not a grant of any further right.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+
+THIRD-PARTY DATA
+----------------
+
+This project reads data from several external services. That data is NOT
+covered by this licence and is not redistributed with it. Anyone running this
+software is responsible for their own compliance with each provider's terms.
+As used here:
+
+  nflverse / nflreadpy   Open data under a permissive licence. Attribution to
+                         the nflverse project is required.
+
+  Yahoo Fantasy Sports   Accessed through the documented API under Yahoo's
+                         developer terms. Requires the user's own credentials
+                         and their own approved application.
+
+  Sleeper                Public API. Sleeper's terms contemplate
+                         non-commercial use, and its projections are licensed
+                         to Sleeper by a third party.
+
+  ESPN                   An unauthenticated endpoint with no public developer
+                         programme covering it.
+
+  FantasyPros (ECR)      Obtained via a community mirror. ECR is FantasyPros'
+                         own commercial product and they sell API access to it.
+
+Personal, non-commercial use of this software against those sources is the
+only use it is written for. Redistributing their data, or offering this as a
+paid service, would require licences this project does not hold.
