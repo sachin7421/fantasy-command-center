@@ -39,10 +39,22 @@ TABLES: list[tuple[str, tuple[str, ...]]] = [
     ("standings_history", ("league_key", "season", "week", "team_key")),
     ("snapshots", ("kind", "taken_at")),
     ("source_cache", ("cache_key",)),
+    ("team_budgets", ("league_key", "season", "team_key")),
+    ("player_week_usage", ("player_key", "season", "week")),
+    ("practice_reports", ("player_key", "season", "week")),
+    ("depth_charts", ("season", "week", "team", "position", "depth_rank")),
+    ("game_context", ("season", "week", "team")),
+    ("source_accuracy", ("source", "season", "week", "position")),
+    ("recommendation_outcomes", ("recommendation_id", "subject_key")),
     # `recommendations` has a generated id; copied without it so the target
     # assigns its own and no sequence collision is possible.
     ("recommendations", ()),
 ]
+
+#: Tables deliberately NOT copied, with the reason. `schema_version` belongs to
+#: the target database, not the source - copying it would claim the target has
+#: run migrations it has not.
+NOT_MIGRATED = {"schema_version"}
 
 # Postgres allows at most 65535 bind parameters per statement, so the batch is
 # sized so that (BATCH x widest table) stays comfortably under that ceiling.
@@ -82,7 +94,19 @@ def copy_table(
     target_cols = set(_columns(target, table))
     # Only carry columns the target actually has, so a schema that has moved on
     # does not abort the whole migration.
-    columns = [c for c in source_cols if c in target_cols]
+    missing = [c for c in source_cols if c not in target_cols]
+    if missing:
+        # Silently dropping data was the old behaviour, on the theory that a
+        # target "whose schema has moved on" should not abort the run. Now that
+        # the schema is versioned, a column the target lacks means the target
+        # has not been migrated - which is an error, not something to work
+        # around by discarding the column.
+        raise RuntimeError(
+            f"{table}: target is missing column(s) {', '.join(missing)}. "
+            "Run the migrations against it first (any `fcc` command does this "
+            "on connect)."
+        )
+    columns = list(source_cols)
     if table == "recommendations":
         columns = [c for c in columns if c != "id"]
     if not columns:

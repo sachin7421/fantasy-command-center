@@ -393,13 +393,10 @@ CREATE TABLE IF NOT EXISTS snapshots (
 """
 
 
-def schema_for(dialect: str) -> str:
+def schema_for(dialect: str, template: str | None = None) -> str:
+    """Substitute the dialect tokens into a schema or migration template."""
     tokens = _DIALECT_TOKENS[dialect]
-    return _SCHEMA_TEMPLATE.format(**tokens)
-
-
-#: Kept for callers that still reference the SQLite schema directly.
-SCHEMA = schema_for("sqlite")
+    return (template if template is not None else _SCHEMA_TEMPLATE).format(**tokens)
 
 
 def utcnow() -> str:
@@ -429,7 +426,13 @@ def init_db(
     force_sqlite: bool = False,
 ) -> Database:
     conn = connect(db_path, same_thread=same_thread, url=url, force_sqlite=force_sqlite)
-    conn.executescript(schema_for(conn.dialect))
+    # Versioned rather than a bare re-run of the template: `CREATE TABLE IF NOT
+    # EXISTS` will never add a COLUMN to a table that already exists, so
+    # changing the schema of a deployed database was previously a silent no-op
+    # that surfaced as a runtime error in a scheduled job.
+    from src import schema
+
+    schema.apply(conn, schema_for(conn.dialect))
     return conn
 
 
