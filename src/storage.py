@@ -88,13 +88,70 @@ def database_url() -> str | None:
     try:
         import streamlit as st
 
-        for key in DB_URL_KEYS:
-            if key in st.secrets:
-                return _clean(str(st.secrets[key]))
-    except Exception:
-        # Not running under Streamlit, or no secrets file: fall through.
-        pass
+        found = _search_secrets(st.secrets)
+        if found:
+            return found
+    except Exception as exc:
+        # NOT silent. "No secrets file" is normal off Streamlit, but a MALFORMED
+        # one - unquoted value, bad TOML - raises here too, and swallowing that
+        # turns a typo into a silent fall back to an empty local database.
+        log.info("Could not read Streamlit secrets: %s", exc)
     return None
+
+
+def _search_secrets(secrets: Any, depth: int = 0) -> str | None:
+    """Find a connection string anywhere in the secrets, not just at the top.
+
+    Streamlit's secrets are TOML, and a section header puts everything after it
+    inside that section - so
+
+        [connections]
+        DATABASE_URL = "postgresql://..."
+
+    is NOT reachable as `st.secrets["DATABASE_URL"]`. The app then falls back to
+    a local SQLite file and reports itself as having no data, with a perfectly
+    correct connection string sitting in the secrets the whole time. Nesting is
+    an easy thing to do by accident and an impossible thing to see, so the
+    lookup descends one level rather than insisting on the top.
+    """
+    if depth > 2:
+        return None
+    try:
+        keys = list(secrets.keys())
+    except Exception:
+        return None
+    present = set(keys)
+
+    for key in DB_URL_KEYS:
+        if key in present:
+            candidate = _clean(str(secrets[key]))
+            if candidate:
+                return candidate
+
+    for key in keys:
+        try:
+            value = secrets[key]
+        except Exception:
+            continue
+        if hasattr(value, "keys"):
+            nested = _search_secrets(value, depth + 1)
+            if nested:
+                return nested
+    return None
+
+
+def secret_key_names() -> list[str]:
+    """Top-level names present in Streamlit secrets. NEVER their values.
+
+    For telling a human "the app can see APP_PASSWORD and DB_URL" when it is
+    looking for DATABASE_URL - which is the whole diagnosis in one line.
+    """
+    try:
+        import streamlit as st
+
+        return sorted(str(k) for k in st.secrets)
+    except Exception:
+        return []
 
 
 def _clean(url: str) -> str:

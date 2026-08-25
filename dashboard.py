@@ -179,9 +179,23 @@ def draft_view(cfg, conn, league_key):
                 "connection string - it starts `postgresql://` and ends "
                 "`/postgres`. A common mistake is pasting only the password."
             )
-            from src.storage import describe_url_problem
+            from src.storage import describe_url_problem, secret_key_names
 
             st.caption(describe_url_problem())
+            names = secret_key_names()
+            if names:
+                st.caption(
+                    'Secrets this app can see (names only): '
+                    + ', '.join(f'`{n}`' for n in names)
+                    + '. DATABASE_URL must be one of them, at the TOP level - '
+                    'anything under a [section] header is not reachable by that '
+                    'name.'
+                )
+            else:
+                st.caption(
+                    'This app cannot read ANY secrets. That usually means the '
+                    'secrets file is not valid TOML - every value needs quotes.'
+                )
         else:
             st.warning("No projections stored for this season.")
             # Say what the app can actually SEE. "Run fcc sync" is a guess, and

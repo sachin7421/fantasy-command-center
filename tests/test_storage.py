@@ -362,3 +362,36 @@ def test_a_genuine_query_error_is_not_retried():
 
     assert not opened, "a bad query must not trigger a reconnect"
     assert conn.rolled_back, "a failed statement must roll back the transaction"
+
+
+# --- secrets that are present but not where we looked -----------------------
+
+def test_a_nested_connection_string_is_found():
+    """Streamlit secrets are TOML, and a section header nests everything after it.
+
+        [connections]
+        DATABASE_URL = "postgresql://..."
+
+    is NOT reachable as st.secrets["DATABASE_URL"], so the app fell back to an
+    empty local SQLite file while a perfectly correct connection string sat in
+    the secrets the whole time - and reported itself as having no data. Nesting
+    is easy to do by accident and impossible to see from the outside.
+    """
+    from src.storage import _search_secrets
+
+    dsn = "postgresql://u:p@h:5432/postgres"
+    assert _search_secrets({"DATABASE_URL": dsn}) == dsn
+    assert _search_secrets({"APP_PASSWORD": "x", "connections": {"DATABASE_URL": dsn}}) == dsn
+    assert _search_secrets({"a": {"b": {"POSTGRES_URL": dsn}}}) == dsn
+    assert _search_secrets({"APP_PASSWORD": "x"}) is None
+
+
+def test_secret_key_names_never_returns_values():
+    """It exists to tell a human WHICH names the app can see. Never the values."""
+    import inspect
+
+    from src import storage
+
+    source = inspect.getsource(storage.secret_key_names)
+    assert "st.secrets[" not in source, "must not index into the secrets"
+    assert "keys" in source or "for k in st.secrets" in source
