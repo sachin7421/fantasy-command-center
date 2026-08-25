@@ -200,18 +200,14 @@ def draft_view(cfg, conn, league_key):
                         "ORDER BY season"
                     )
                 ]
-                st.markdown(
-                    f"- database: `{db.describe_backend()}`
-"
-                    f"- looking for season: **{season}**
-"
-                    f"- players stored: **{players:,}**
-"
-                    f"- blended projections for {season}: **{blended:,}**
-"
-                    f"- seasons that DO have projections: "
-                    f"**{', '.join(seasons) if seasons else 'none'}**"
-                )
+                have = ", ".join(seasons) if seasons else "none"
+                st.markdown("\n".join([
+                    f"- database: `{db.describe_backend()}`",
+                    f"- looking for season: **{season}**",
+                    f"- players stored: **{players:,}**",
+                    f"- blended projections for {season}: **{blended:,}**",
+                    f"- seasons that DO have projections: **{have}**",
+                ]))
                 if players and not blended and seasons:
                     st.info(
                         f"There are projections, but not for {season}. Either "
