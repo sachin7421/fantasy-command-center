@@ -74,6 +74,17 @@ def get_context():
     and the whole context is rebuilt.
     """
     cfg, conn, league_key = _build_context()
+
+    # A hosted app on SQLite is ALWAYS wrong, and the cache will happily keep it
+    # that way forever: the liveness check below only rebuilds when the ping
+    # FAILS, and a SQLite connection pings perfectly well. So once this app
+    # cached a SQLite context - which it did, every time the secret was
+    # unreadable - fixing the secret changed nothing, because the cache was
+    # never invalidated. It looked exactly like the fix had not worked.
+    if conn.dialect == "sqlite" and _hosted():
+        _build_context.clear()
+        cfg, conn, league_key = _build_context()
+
     try:
         conn.scalar("SELECT 1")
         return cfg, conn, league_key
