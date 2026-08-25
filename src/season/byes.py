@@ -8,12 +8,11 @@ Two questions:
 """
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, field
-from typing import Any
 
 from src.lineup_solver import best_lineup
 from src.notify import Notification
+from src.storage import Database
 
 
 @dataclass
@@ -67,7 +66,7 @@ class _P:
 
 
 def _roster_rows(
-    conn: sqlite3.Connection, league_key: str, team_key: str, season: int, week: int
+    conn: Database, league_key: str, team_key: str, season: int, week: int
 ):
     return conn.execute(
         """
@@ -93,7 +92,7 @@ def _roster_rows(
 
 
 def run(
-    conn: sqlite3.Connection,
+    conn: Database,
     league_key: str,
     team_key: str,
     season: int,
@@ -146,7 +145,7 @@ def run(
 
 
 def _best_available_for_slot(
-    conn: sqlite3.Connection, league_key: str, season: int, slot: str, week: int
+    conn: Database, league_key: str, season: int, slot: str, week: int
 ) -> str | None:
     """The best free agent who can fill an empty slot that week."""
     from src.lineup_solver import slot_accepts
@@ -176,7 +175,7 @@ def _best_available_for_slot(
 
 
 def _playoff_outlook(
-    conn: sqlite3.Connection, rows, season: int, playoff_weeks: tuple[int, ...]
+    conn: Database, rows, season: int, playoff_weeks: tuple[int, ...]
 ) -> tuple[list[PlayoffOutlook], bool]:
     """Playoff-week opponents per starter, when schedule data is available.
 
@@ -206,7 +205,7 @@ def _playoff_outlook(
 
 
 def _load_schedule(
-    conn: sqlite3.Connection, season: int, weeks: tuple[int, ...]
+    conn: Database, season: int, weeks: tuple[int, ...]
 ) -> dict[tuple[int, str], str]:
     """(week, team) -> opponent, from the cached nflverse schedule if present."""
     cached = None

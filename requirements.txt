@@ -17,3 +17,9 @@ streamlit>=1.40
 
 # Dev
 pytest>=8.0
+
+# Static analysis (fcc check). Not needed to run the app.
+ruff>=0.16
+mypy>=1.11
+vulture>=2.14
+bandit>=1.8

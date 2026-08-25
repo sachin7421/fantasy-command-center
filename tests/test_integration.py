@@ -650,3 +650,57 @@ def test_a_balanced_league_yields_no_trades(lineup_league):
 
     conn = db.init_db(lineup_league)
     assert trades.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS) == []
+
+
+# --- the draft has to know whose pick each one was --------------------------
+
+def test_picks_are_attributed_by_snake_order_not_by_who_pressed(tmp_path):
+    """The dashboard's Draft button used to record every pick to my team.
+
+    Pressed out of turn it added another team's player to my roster, and since
+    the pick counter still advanced, every pick after it was attributed to the
+    wrong team too. Recording without a team key lets the snake order decide,
+    which is the only thing that can be right.
+    """
+    from src.draft.live import DraftTracker
+
+    conn = db.init_db(tmp_path / "draft.db")
+    for i in range(30):
+        _player(conn, f"d{i}|RB", f"Player {i}", "RB", 200.0 - i)
+    conn.commit()
+
+    tracker = DraftTracker(conn, LEAGUE, 12, 14, None)
+    for i in range(14):
+        tracker.record_pick(f"d{i}|RB")
+
+    picks = tracker.state.picks
+    # Round 1 runs 1..12 in order; round 2 snakes back, so pick 13 is slot 12.
+    assert str(picks[1].team_key) == "1"
+    assert str(picks[3].team_key) == "3"
+    assert str(picks[12].team_key) == "12"
+    assert str(picks[13].team_key) == "12"
+    assert str(picks[14].team_key) == "11"
+
+    # And my roster contains only the picks the order says are mine.
+    mine = set(tracker.state.roster_of("3"))
+    assert mine == {"d2|RB"}, mine
+
+
+def test_undo_puts_a_player_back_on_the_board(tmp_path):
+    """Mis-taps happen at ninety seconds a pick."""
+    from src.draft.live import DraftTracker
+
+    conn = db.init_db(tmp_path / "undo.db")
+    for i in range(5):
+        _player(conn, f"u{i}|RB", f"Player {i}", "RB", 200.0 - i)
+    conn.commit()
+
+    tracker = DraftTracker(conn, LEAGUE, 12, 14, None)
+    tracker.record_pick("u0|RB")
+    tracker.record_pick("u1|RB")
+    assert tracker.state.next_pick == 3
+
+    removed = tracker.undo_last()
+    assert removed is not None and removed.player_key == "u1|RB"
+    assert "u1|RB" not in tracker.state.drafted_keys
+    assert tracker.state.next_pick == 2

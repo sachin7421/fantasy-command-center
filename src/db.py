@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
+from collections.abc import Iterator
 
 from src.storage import Database, connect as _connect, database_url, is_postgres_url
 
@@ -403,7 +404,7 @@ SCHEMA = schema_for("sqlite")
 
 def utcnow() -> str:
     """ISO-8601 UTC timestamp; the single time format used throughout."""
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 # --- connection --------------------------------------------------------------

@@ -14,12 +14,12 @@ from __future__ import annotations
 import json
 import logging
 import math
-import sqlite3
 import statistics
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from collections.abc import Iterable
 
 from src import db
+from src.storage import Database
 
 log = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ def normalize_weights(
     total = sum(present.values())
     if not total:
         n = len(available)
-        return {s: 1.0 / n for s in available} if n else {}
+        return dict.fromkeys(available, 1.0 / n) if n else {}
     return {s: w / total for s, w in present.items()}
 
 
@@ -155,7 +155,7 @@ def blend_player(
 
 
 def blend_all(
-    conn: sqlite3.Connection,
+    conn: Database,
     season: int,
     week: int = 0,
     weights: dict[str, float] | None = None,

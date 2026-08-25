@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from statistics import fmean, pstdev
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 #: Games at which the observed rate and the prior are weighted equally.
 #: Larger = slower to believe. These are *rates*, not counts.

@@ -11,7 +11,8 @@ slots - exact, and instant at roster scale.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Iterable, Sequence
+from typing import Generic, TypeVar
+from collections.abc import Callable, Iterable, Sequence
 
 from src.vorp import BENCH_SLOTS, DEFENSIVE_SLOTS, FLEX_ELIGIBILITY
 
@@ -38,18 +39,22 @@ def expand_slots(starting_slots: dict[str, int]) -> list[str]:
     return out
 
 
+#: The caller's player type, preserved through the solver.
+P = TypeVar("P")
+
+
 @dataclass
-class LineupSlot:
+class LineupSlot(Generic[P]):
     slot: str
-    player: object | None
+    player: P | None
     points: float
 
 
 @dataclass
-class Lineup:
-    slots: list[LineupSlot]
+class Lineup(Generic[P]):
+    slots: list[LineupSlot[P]]
     total: float
-    bench: list[object]
+    bench: list[P]
 
     @property
     def is_complete(self) -> bool:
@@ -61,13 +66,13 @@ class Lineup:
 
 
 def best_lineup(
-    players: Sequence[object],
+    players: Sequence[P],
     starting_slots: dict[str, int],
     *,
-    points_of: Callable[[object], float] = lambda p: getattr(p, "points", 0.0) or 0.0,
-    position_of: Callable[[object], str] = lambda p: getattr(p, "position", "") or "",
-    eligible_of: Callable[[object], Iterable[str]] | None = None,
-) -> Lineup:
+    points_of: Callable[[P], float] = lambda p: getattr(p, "points", 0.0) or 0.0,
+    position_of: Callable[[P], str] = lambda p: getattr(p, "position", "") or "",
+    eligible_of: Callable[[P], Iterable[str]] | None = None,
+) -> Lineup[P]:
     """Highest-scoring legal lineup.
 
     `eligible_of` optionally supplies multi-position eligibility (Yahoo lets a
@@ -130,7 +135,7 @@ def best_lineup(
     else:
         best_mask, best_value = max(dp.items(), key=lambda kv: (bin(kv[0]).count("1"), kv[1]))
 
-    assignment: dict[int, object] = {}
+    assignment: dict[int, P] = {}
     mask = best_mask
     for idx in range(len(candidates) - 1, -1, -1):
         step = choice[idx]

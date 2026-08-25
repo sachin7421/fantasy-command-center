@@ -19,13 +19,13 @@ designations therefore come from the NFL injury report adapter, not from here.
 """
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 from src import db
 from src.idmap import IdMapper, normalize_position, normalize_team
 from src.sources.base import Source
+from src.storage import Database
 
 BASE = "https://api.sleeper.app/v1"
 
@@ -75,7 +75,7 @@ class SleeperSource(Source):
     #: Sleeper explicitly asks that the ~14MB dump be pulled at most once a day.
     PLAYER_DUMP_MAX_AGE_HOURS = 20
 
-    def __init__(self, conn: sqlite3.Connection, **kwargs):
+    def __init__(self, conn: Database, **kwargs):
         super().__init__(conn, **kwargs)
         self.request_delay_seconds = 0.2  # far under the 1000/min limit
 

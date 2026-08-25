@@ -15,12 +15,13 @@ ESPN adapter is the better contributor for those positions.
 """
 from __future__ import annotations
 
-import sqlite3
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 from src import db
 from src.idmap import IdMapper
 from src.sources.base import Source
+from src.storage import Database
 
 #: Note: projections live at the API root, NOT under the documented /v1 prefix.
 PROJECTIONS_BASE = "https://api.sleeper.app"
@@ -120,7 +121,7 @@ def pick_adp_field(ppr_value: float, superflex: bool = False) -> str:
 class SleeperProjections(Source):
     name = "sleeper_proj"
 
-    def __init__(self, conn: sqlite3.Connection, **kwargs):
+    def __init__(self, conn: Database, **kwargs):
         super().__init__(conn, **kwargs)
         self.request_delay_seconds = 0.2
 

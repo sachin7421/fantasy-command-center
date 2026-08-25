@@ -8,13 +8,13 @@ and a paperweight if the API goes sideways mid-draft.
 from __future__ import annotations
 
 import logging
-import sqlite3
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Iterable
+from collections.abc import Callable
 
 from src import db
 from src.vorp import Board, PlayerValue
+from src.storage import Database
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ class DraftTracker:
 
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: Database,
         league_key: str,
         num_teams: int,
         rounds: int,

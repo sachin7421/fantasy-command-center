@@ -9,14 +9,12 @@ floor, using the uncertainty band from src/projections.py.
 """
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, field
-from typing import Any
 
 from src.lineup_solver import Lineup, best_lineup
 from src.notify import Notification
 from src.projections import resolve_risk_mode, risk_adjusted_points
-from src.sources.sleeper import severity_of
+from src.storage import Database
 
 #: Statuses that make a player unstartable regardless of projection.
 UNSTARTABLE = {"Out", "IR", "PUP", "Suspended", "NA", "DNR"}
@@ -97,7 +95,7 @@ class LineupReport:
 
 
 def load_roster(
-    conn: sqlite3.Connection,
+    conn: Database,
     league_key: str,
     team_key: str,
     season: int,
@@ -151,7 +149,7 @@ def load_roster(
 
 
 def run(
-    conn: sqlite3.Connection,
+    conn: Database,
     league_key: str,
     team_key: str,
     season: int,

@@ -16,14 +16,14 @@ from __future__ import annotations
 
 import csv
 import logging
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from src import db
 from src.idmap import IdMapper, normalize_position, normalize_team
 from src.sources.base import Source
+from src.storage import Database
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class Ranking:
 class FantasyProsSource(Source):
     name = "fantasypros"
 
-    def __init__(self, conn: sqlite3.Connection, csv_dir: str | Path | None = None, **kwargs):
+    def __init__(self, conn: Database, csv_dir: str | Path | None = None, **kwargs):
         super().__init__(conn, **kwargs)
         self.csv_dir = Path(csv_dir) if csv_dir else None
 

@@ -179,12 +179,20 @@ def draft_view(cfg, conn, league_key):
         )
 
     # -- mark drafted ---------------------------------------------------------
+    # This is the whole manual workflow, so it says so rather than relying on
+    # placeholder text inside a collapsed label: every recommendation depends on
+    # knowing who is off the board, and nothing else here records that.
     with st.container(border=True):
+        st.markdown(
+            f"<div class='fcc-section'>Record pick {current_pick} &mdash; "
+            f"slot {on_the_clock}{' (you)' if is_mine else ''}</div>",
+            unsafe_allow_html=True,
+        )
         search_col, undo_col = st.columns([5, 1])
         with search_col:
             query = st.text_input(
                 "Mark a player drafted",
-                placeholder="Type any player taken by anyone, then tap the match…",
+                placeholder="Any player taken by anyone - type a name, then tap the match",
                 label_visibility="collapsed",
             )
         with undo_col:
@@ -192,6 +200,12 @@ def draft_view(cfg, conn, league_key):
                 tracker.undo_last()
                 st.cache_data.clear()
                 st.rerun()
+
+        st.caption(
+            "Every pick goes here, yours and everyone else's, in order. The "
+            "snake order decides which team each one belongs to, so the "
+            "recommendations only stay right if no pick is skipped."
+        )
 
         if query:
             matches = [p for p in resolve_player(board, query) if p.player_key not in drafted]
@@ -214,7 +228,7 @@ def draft_view(cfg, conn, league_key):
         )
         with tab_rec:
             _pane_recommendations(recommender, drafted, roster, current_pick,
-                                  tracker, my_slot)
+                                  tracker, my_slot, is_mine, on_the_clock)
         with tab_board:
             _pane_board(board, drafted, True)
         with tab_roster:
@@ -225,7 +239,7 @@ def draft_view(cfg, conn, league_key):
         left, middle, right = st.columns([3, 4, 2])
         with left:
             _pane_recommendations(recommender, drafted, roster, current_pick,
-                                  tracker, my_slot)
+                                  tracker, my_slot, is_mine, on_the_clock)
         with middle:
             _pane_board(board, drafted, False)
             _pane_shape(board, drafted)
@@ -235,7 +249,8 @@ def draft_view(cfg, conn, league_key):
 
 # --- panes -------------------------------------------------------------------
 
-def _pane_recommendations(recommender, drafted, roster, current_pick, tracker, my_slot):
+def _pane_recommendations(recommender, drafted, roster, current_pick, tracker,
+                          my_slot, is_mine, on_the_clock):
     st.markdown("<div class='fcc-section'>Recommended</div>", unsafe_allow_html=True)
     recs = recommender.recommend(drafted, roster, current_pick, top_n=10)
     if not recs:
@@ -276,9 +291,16 @@ def _pane_recommendations(recommender, drafted, roster, current_pick, tracker, m
             + "</div>",
             unsafe_allow_html=True,
         )
-        if st.button("Draft", key=f"take_{p.player_key}", width="stretch",
-                     type="primary" if i == 1 else "secondary"):
-            tracker.record_pick(p.player_key, team_key=str(my_slot))
+        # The label says whose pick this is, and the pick is recorded to the
+        # team the snake order says is on the clock. Hardcoding it to my_slot
+        # meant pressing Draft out of turn silently added another team's pick
+        # to my roster, and every pick number after it referred to the wrong
+        # team. Out of turn this list doubles as the fastest way to mark an
+        # opponent's pick, because opponents mostly take from the top too.
+        label = "Draft" if is_mine else f"Taken by slot {on_the_clock}"
+        if st.button(label, key=f"take_{p.player_key}", width="stretch",
+                     type="primary" if i == 1 and is_mine else "secondary"):
+            tracker.record_pick(p.player_key)
             st.cache_data.clear()
             st.rerun()
 

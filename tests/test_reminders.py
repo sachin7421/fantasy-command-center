@@ -8,7 +8,6 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import pytest
 
 from src import email_render
 from src.season import reminders

@@ -11,15 +11,16 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 import sys
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 from src import db
 from src.config import Config
 from src.idmap import IdMapper
 from src.scoring import LeagueScoring, build_from_yahoo
+from src.storage import Database
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ def serialize(obj: Any) -> Any:
 class YahooClient:
     """League-scoped Yahoo access with caching."""
 
-    def __init__(self, cfg: Config, conn: sqlite3.Connection | None = None):
+    def __init__(self, cfg: Config, conn: Database | None = None):
         self.cfg = cfg
         self.conn = conn or db.init_db(cfg.db_path)
         self._query = None

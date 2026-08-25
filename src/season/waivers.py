@@ -10,14 +10,13 @@ exactly the edge a Tuesday-morning run is trying to capture.
 """
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
 
 import logging
 
 from src.notify import Notification
-from src.sources.sleeper import severity_of
+from src.storage import Database
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +87,7 @@ def _ros_weeks(week: int, final_week: int = 17) -> int:
     return max(1, final_week - week + 1)
 
 
-def replacement_levels(conn: sqlite3.Connection, season: int) -> dict[str, float]:
+def replacement_levels(conn: Database, season: int) -> dict[str, float]:
     """Positional replacement level, shared with the FAAB model.
 
     Deliberately the same function the bid model trains on, so a claim's value
@@ -100,7 +99,7 @@ def replacement_levels(conn: sqlite3.Connection, season: int) -> dict[str, float
 
 
 def load_free_agents(
-    conn: sqlite3.Connection, league_key: str, season: int, week: int, limit: int = 200
+    conn: Database, league_key: str, season: int, week: int, limit: int = 200
 ) -> list[Candidate]:
     """Available players, valued on rest-of-season points.
 
@@ -160,7 +159,7 @@ recommended $1 bids on players worth real money.
 
 
 def load_my_droppables(
-    conn: sqlite3.Connection, league_key: str, team_key: str, season: int, week: int
+    conn: Database, league_key: str, team_key: str, season: int, week: int
 ) -> list[Candidate]:
     """Your roster, worst first, on the same season scale as the free agents.
 
@@ -241,7 +240,7 @@ def suggest_bid(
 
 
 def find_handcuffs(
-    conn: sqlite3.Connection, league_key: str, team_key: str, week: int
+    conn: Database, league_key: str, team_key: str, week: int
 ) -> list[dict[str, Any]]:
     """For each RB I roster, is his backup available? (spec 6.1)
 
@@ -327,7 +326,7 @@ def _protected_keys(
 
 
 def run(
-    conn: sqlite3.Connection,
+    conn: Database,
     league_key: str,
     team_key: str,
     season: int,

@@ -20,8 +20,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from statistics import fmean
-from typing import Sequence
+from collections.abc import Sequence
 
 
 @dataclass

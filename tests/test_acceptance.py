@@ -164,7 +164,6 @@ def test_quarterbacks_are_devalued_relative_to_raw_points(league):
 
 @pytest.fixture
 def injury_league(tmp_path):
-    from src.config import Config
 
     conn = db.init_db(tmp_path / "injuries.db")
     idmap = IdMapper(conn)
@@ -259,7 +258,7 @@ def test_a_change_to_an_irrelevant_player_is_ignored(injury_league):
 
 def test_a_dead_source_degrades_to_cache_rather_than_crashing(tmp_path):
     """Spec 10.5: a failed source downgrades to cache with a warning."""
-    from src.sources.base import Source, SourceUnavailable
+    from src.sources.base import Source
 
     conn = db.init_db(tmp_path / "cache.db")
     source = Source(conn)

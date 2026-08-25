@@ -23,7 +23,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 from src import db
 from src.analytics import shrinkage
@@ -142,7 +143,7 @@ def derive_weights(
     for r in relevant:
         totals.setdefault(r.source, []).append(r.mae)
     if len(totals) < 2:
-        return {source: 1.0 for source in totals}
+        return dict.fromkeys(totals, 1.0)
 
     mean_mae = {s: sum(v) / len(v) for s, v in totals.items()}
     n = sum(r.n for r in relevant)

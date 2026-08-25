@@ -48,10 +48,12 @@ def _parse_draft_time(raw: Any, tz: ZoneInfo) -> datetime | None:
     # ambiguous and Python 3.15 will refuse it, so supply the current year up
     # front rather than patching it afterwards.
     candidates = [text]
-    if not re.search(r"\d{4}", text):
+    if not re.search(r"\b\d{4}\b", text):
         parts = text.split()
         if len(parts) >= 3:
-            candidates.insert(0, " ".join(parts[:3] + [str(date.today().year)] + parts[3:]))
+            candidates.insert(
+                0, " ".join(parts[:3] + [str(datetime.now(tz).year)] + parts[3:])
+            )
 
     for candidate in candidates:
         for fmt in ("%a %b %d %Y %I:%M%p", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"):

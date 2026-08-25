@@ -10,10 +10,9 @@ flex slots and team count all come from Yahoo (spec 2.3).
 """
 from __future__ import annotations
 
-import math
-import sqlite3
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from src.storage import Database
 
 # Which real positions each Yahoo flex slot can absorb.
 FLEX_ELIGIBILITY: dict[str, set[str]] = {
@@ -153,7 +152,7 @@ def compute_replacement_levels(
         baseline.setdefault(pos, 0)
 
     # Simulate the flex draft to learn each position's real share.
-    flex_share: dict[str, float] = {pos: 0.0 for pos in baseline}
+    flex_share: dict[str, float] = dict.fromkeys(baseline, 0.0)
     cursor = dict(baseline)
     for slot, count in flex.items():
         eligible = FLEX_ELIGIBILITY[slot]
@@ -240,7 +239,7 @@ def scarcity_curve(
 # --- board assembly ----------------------------------------------------------
 
 def _apply_prior_season(
-    conn: sqlite3.Connection,
+    conn: Database,
     season: int,
     players_by_position: dict[str, list[PlayerValue]],
     strength: float,
@@ -280,7 +279,7 @@ def _apply_prior_season(
 
 
 def build_board(
-    conn: sqlite3.Connection,
+    conn: Database,
     season: int,
     starting_slots: dict[str, int],
     num_teams: int,

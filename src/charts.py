@@ -10,9 +10,9 @@ dual-axis charts anywhere in this project.
 """
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
-from src.ui import INK_FAINT, INK_MUTED, POSITION_HUES, position_hue
+from src.ui import INK_MUTED, POSITION_HUES, position_hue
 
 # Recessive chart furniture: the data should be the only assertive thing.
 GRID_COLOR = "rgba(148,163,184,0.12)"

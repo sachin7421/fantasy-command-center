@@ -21,12 +21,12 @@ reported made-field-goals total, id 83).
 from __future__ import annotations
 
 import json
-import sqlite3
-from typing import Any, Iterable
+from typing import Any
 
 from src import db
 from src.idmap import IdMapper
 from src.sources.base import Source
+from src.storage import Database
 
 BASE = (
     "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{season}"
@@ -92,7 +92,7 @@ def translate_stats(raw: dict[str, Any]) -> dict[str, float]:
 class EspnSource(Source):
     name = "espn"
 
-    def __init__(self, conn: sqlite3.Connection, **kwargs):
+    def __init__(self, conn: Database, **kwargs):
         super().__init__(conn, **kwargs)
         self.request_delay_seconds = 0.5
 

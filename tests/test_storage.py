@@ -10,7 +10,6 @@ import pytest
 
 from src import db
 from src.storage import (
-    Database,
     _named_to_pyformat,
     connect_sqlite,
     is_postgres_url,

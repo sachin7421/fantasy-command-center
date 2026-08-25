@@ -13,7 +13,8 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 # --- canonical stat vocabulary ----------------------------------------------
 # Every projection adapter emits stat lines keyed by these names.
@@ -225,7 +226,7 @@ class LeagueScoring:
         )
 
     @classmethod
-    def from_json(cls, raw: str) -> "LeagueScoring":
+    def from_json(cls, raw: str) -> LeagueScoring:
         data = json.loads(raw)
         return cls(
             categories=[StatCategory(**c) for c in data.get("categories", [])],

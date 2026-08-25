@@ -7,15 +7,15 @@ a dead source degrades to last-known-good instead of crashing a job.
 from __future__ import annotations
 
 import logging
-import sqlite3
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from typing import Any
 
 import requests
 
 from src import db
+from src.storage import Database
 
 log = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class Source:
     #: Politeness delay between consecutive requests.
     request_delay_seconds: float = 0.0
 
-    def __init__(self, conn: sqlite3.Connection, max_cache_age_hours: int | None = None):
+    def __init__(self, conn: Database, max_cache_age_hours: int | None = None):
         self.conn = conn
         if max_cache_age_hours is not None:
             self.max_cache_age_hours = max_cache_age_hours
@@ -140,5 +140,5 @@ def _age_hours(iso_timestamp: str) -> float:
     except ValueError:
         return float("inf")
     if then.tzinfo is None:
-        then = then.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - then) / timedelta(hours=1)
+        then = then.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - then) / timedelta(hours=1)

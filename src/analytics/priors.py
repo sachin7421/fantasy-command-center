@@ -29,7 +29,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from statistics import fmean, pstdev
-from typing import Any
 
 from src.storage import Database
 
@@ -257,7 +256,7 @@ def expected_carryover(residual: float) -> float:
 
 
 def draft_adjustment(
-    projection: float, flag: "PriorFlag | None", strength: float = 1.0
+    projection: float, flag: PriorFlag | None, strength: float = 1.0
 ) -> float:
     """Nudge a season projection for prior-year luck.
 

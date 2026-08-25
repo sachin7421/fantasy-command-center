@@ -25,7 +25,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from statistics import fmean
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 from src.analytics import shrinkage
 from src.storage import Database

@@ -380,7 +380,7 @@ def cmd_rank(ctx: Context, args) -> int:
         print(f"  {pos:4s} {pos}{level.rank:<3d} = {level.points:7.1f}  "
               f"(flex share {level.flex_share:.0f})")
 
-    print(f"\nScarcity (pts lost per pick waited):")
+    print("\nScarcity (pts lost per pick waited):")
     for pos, value in sorted(board.scarcity.items(), key=lambda kv: -kv[1]):
         print(f"  {pos:4s} {value:6.2f}")
 
@@ -457,7 +457,7 @@ def cmd_mockdraft(ctx: Context, args) -> int:
 def cmd_draft(ctx: Context, args) -> int:
     """Live draft assistant (spec 5.2)."""
     from src.draft.live import DraftTracker
-    from src.draft.recommender import DraftRecommender, RosterState
+    from src.draft.recommender import DraftRecommender
     from src.draft.survival import DraftPosition
 
     board = ctx.board()
@@ -675,8 +675,14 @@ def cmd_job(ctx: Context, args) -> int:
 def cmd_daily(ctx: Context, args) -> int:
     """Sync then run every job that is due today (spec 11.3: idempotent)."""
     import datetime as dt
+    from zoneinfo import ZoneInfo
 
-    weekday = dt.datetime.now().strftime("%a").upper()[:3]
+    # The league's timezone, not the machine's. A GitHub runner is on UTC, so
+    # `fcc daily` after 8pm Eastern read as the NEXT day and ran the wrong
+    # jobs - Monday evening would fire the Tuesday waiver run and skip the
+    # recap entirely. Everything else here already reads schedule.timezone.
+    tz = ZoneInfo(str(ctx.cfg.get("schedule.timezone", "America/New_York")))
+    weekday = dt.datetime.now(tz).strftime("%a").upper()[:3]
     schedule = {
         "TUE": ["waivers", "injuries", "reminders"],
         "WED": ["byes", "injuries"],
@@ -1025,10 +1031,13 @@ def cmd_playoffs(ctx: Context, args) -> int:
             )
         )
 
+    # Only the regular season decides seeding. `final_week` was computed here
+    # and then never used, so playoff-week matchups were simulated as though
+    # they still counted toward making the playoffs.
     stored = ctx.conn.fetchall(
         "SELECT week, team_key, opponent_key FROM matchups "
-        "WHERE league_key=? AND season=? AND week>? ORDER BY week",
-        (ctx.league_key, season, week),
+        "WHERE league_key=? AND season=? AND week>? AND week<=? ORDER BY week",
+        (ctx.league_key, season, week, final_week),
     )
     seen = set()
     remaining = []
@@ -1040,7 +1049,12 @@ def cmd_playoffs(ctx: Context, args) -> int:
         remaining.append(Matchup(int(row["week"]), pair[0], pair[1]))
 
     if not remaining:
-        print(f"No remaining schedule stored beyond week {week}; nothing to simulate.")
+        if week >= final_week:
+            print(f"Week {week} is at or past the last regular-season week "
+                  f"({final_week}); seeding is already decided.")
+        else:
+            print(f"No remaining schedule stored beyond week {week}; "
+                  "nothing to simulate.")
         return EXIT_OK
 
     results = simulate(teams, remaining, playoff_spots=spots, trials=args.trials)
@@ -1224,6 +1238,44 @@ def cmd_faab(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+def cmd_check(ctx: Context, args) -> int:
+    """Run the static analysers over the source tree.
+
+    Kept as a command so it is one thing to remember and runs the same way for
+    everyone, rather than four invocations with different flags that drift.
+    """
+    import subprocess
+
+    tools = [
+        ("ruff", [sys.executable, "-m", "ruff", "check", "src", "dashboard.py",
+                  "fcc.py", "tests"]),
+        ("mypy", [sys.executable, "-m", "mypy", "src", "dashboard.py", "fcc.py"]),
+        ("vulture", [sys.executable, "-m", "vulture", "src", "dashboard.py",
+                     "fcc.py", "--min-confidence", "80"]),
+        ("bandit", [sys.executable, "-m", "bandit", "-r", "src", "-q", "-ll"]),
+    ]
+    if args.only:
+        wanted = {name.strip() for name in args.only.split(",")}
+        tools = [(n, c) for n, c in tools if n in wanted]
+        if not tools:
+            print("No such analyser. Choose from: ruff, mypy, vulture, bandit.")
+            return EXIT_FAIL
+
+    worst = EXIT_OK
+    for name, command in tools:
+        print("")
+        print(f"=== {name} " + "=" * (60 - len(name)))
+        try:
+            result = subprocess.run(command, check=False)
+        except FileNotFoundError:
+            print(f"{name} is not installed. Run: pip install -r requirements.txt")
+            worst = EXIT_FAIL
+            continue
+        if result.returncode != 0:
+            worst = EXIT_FAIL
+    return worst
+
+
 def cmd_test_notify(ctx: Context, args) -> int:
     """Send a test notification through every configured channel.
 
@@ -1233,7 +1285,6 @@ def cmd_test_notify(ctx: Context, args) -> int:
     run - which matters most in CI, where a misnamed secret otherwise fails
     silently until the first Tuesday of the season.
     """
-    from src.storage import database_url
 
     notifier = ctx.notifier()
     channels = [
@@ -1392,6 +1443,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_faab.add_argument("--curve", action="store_true",
                         help="show win probability at every bid")
 
+    p_check = sub.add_parser("check", help="run the static analysers")
+    p_check.add_argument("--only", help="comma-separated subset, e.g. ruff,mypy")
+
     sub.add_parser("test-notify", help="send a test notification on every channel")
     sub.add_parser("dashboard", help="launch the Streamlit dashboard")
     return parser
@@ -1416,6 +1470,7 @@ HANDLERS = {
     "startsit": cmd_startsit,
     "playoffs": cmd_playoffs,
     "faab": cmd_faab,
+    "check": cmd_check,
     "test-notify": cmd_test_notify,
     "migrate": cmd_migrate,
     "dashboard": cmd_dashboard,

@@ -9,16 +9,17 @@ file for the stragglers (spec 7).
 from __future__ import annotations
 
 import re
-import sqlite3
 import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 import yaml
 
 from src.db import utcnow
+from src.storage import Database
 
 # Suffixes that sources disagree about attaching.
 _SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
@@ -119,7 +120,7 @@ class IdMapper:
     #: A fuzzy match below this is rejected rather than guessed at.
     FUZZY_THRESHOLD = 0.87
 
-    def __init__(self, conn: sqlite3.Connection, overrides_path: str | Path | None = None):
+    def __init__(self, conn: Database, overrides_path: str | Path | None = None):
         self.conn = conn
         self.overrides = self._load_overrides(overrides_path)
         self._index_dirty = True

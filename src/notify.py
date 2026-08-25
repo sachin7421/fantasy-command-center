@@ -11,11 +11,10 @@ import hashlib
 import json
 import logging
 import smtplib
-import sqlite3
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from email.message import EmailMessage
 from typing import Any
 
@@ -23,6 +22,7 @@ import requests
 
 from src import db
 from src.config import Config, env
+from src.storage import Database
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class Notification:
 
 
 class Notifier:
-    def __init__(self, cfg: Config, conn: sqlite3.Connection):
+    def __init__(self, cfg: Config, conn: Database):
         self.cfg = cfg
         self.conn = conn
         self.dedup_hours = int(cfg.get("notifications.dedup_window_hours", 72))
@@ -70,7 +70,7 @@ class Notifier:
 
     def already_sent(self, notification: Notification) -> bool:
         cutoff = (
-            datetime.now(timezone.utc) - timedelta(hours=self.dedup_hours)
+            datetime.now(UTC) - timedelta(hours=self.dedup_hours)
         ).isoformat(timespec="seconds")
         row = self.conn.execute(
             "SELECT 1 FROM recommendations WHERE job=? AND dedup_key=? "

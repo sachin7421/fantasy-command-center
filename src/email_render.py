@@ -86,9 +86,7 @@ def _line_html(line: str) -> str:
         color = POSITIVE
     elif stripped.startswith("!"):
         color = WARNING
-    elif stripped.startswith(("ADD ", "START ")):
-        weight = "600"
-    elif re.match(r"^\d+\.", stripped):
+    elif stripped.startswith(("ADD ", "START ")) or re.match(r"^\d+\.", stripped):
         weight = "600"
 
     return (

@@ -11,8 +11,8 @@ Provides:
 from __future__ import annotations
 
 import logging
-import sqlite3
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 from src import db
 from src.idmap import normalize_team

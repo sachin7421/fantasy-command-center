@@ -23,7 +23,8 @@ import os
 import re
 import sqlite3
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 log = logging.getLogger(__name__)
 

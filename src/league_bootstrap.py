@@ -13,9 +13,9 @@ table stays authoritative. Use `fcc verify-settings` to diff the two.
 from __future__ import annotations
 
 import json
-import sqlite3
 
 from src import db
+from src.storage import Database
 
 LEAGUE_ID = "796511"
 LEAGUE_NAME = "Extra Fun League"
@@ -118,7 +118,7 @@ def build_settings() -> dict:
     }
 
 
-def install(conn: sqlite3.Connection, league_key: str | None = None) -> str:
+def install(conn: Database, league_key: str | None = None) -> str:
     """Store the bootstrap settings if nothing is stored yet.
 
     Never overwrites settings that came from the live API.

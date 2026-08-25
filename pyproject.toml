@@ -1,0 +1,72 @@
+# Static analysis settings.
+#
+# The suite proves behaviour; these tools catch the things a test only finds if
+# you thought to write it. Run them with:
+#
+#     python fcc.py check          (all of them, in order of noisiness)
+#
+# What each one is for, and what it actually caught here:
+#
+#   ruff    style and bug-pattern linting, very fast. Found a regex built from
+#           literal backspace characters, a filter neutered by `or True`, and
+#           datetime.now() reading the machine's timezone instead of the
+#           league's - which made `fcc daily` run the wrong day's jobs.
+#   mypy    type checking. Its value is entirely gated on the annotations being
+#           honest: while every `conn` was annotated sqlite3.Connection but was
+#           really a Database, mypy emitted 121 versions of that one lie and
+#           could see nothing else.
+#   vulture dead code. Weaker here than a call-graph sweep, because a function
+#           referenced once in a dict still counts as used.
+#   bandit  security. Mostly noise for a single-user fantasy app - Monte Carlo
+#           `random`, notify-send subprocess calls - but worth a read.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".venv", "data"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes: undefined names, unused variables
+    "B",         # bugbear: likely-wrong constructs
+    "C4",        # comprehension simplifications
+    "SIM",       # simplifications, including always-true conditions
+    "RET",       # return-statement smells
+    "PIE",       # miscellaneous lints
+    "PL",        # pylint subset
+    "RUF",       # ruff's own rules
+    "UP",        # pyupgrade
+    "DTZ",       # naive datetimes - a real source of scheduling bugs here
+    "PTH",       # os.path -> pathlib
+    "N",         # naming
+]
+ignore = [
+    "E501",      # line length is handled by the formatter, not the linter
+    "PLR0911",   # a dispatch function legitimately has many returns
+    "PLR0912",   # ... and many branches
+    "PLR0913",   # ... and many arguments; the season jobs all take league/team/season/week
+    "PLR0915",   # ... and many statements
+    "PLR0917",   # positional arguments, same reason
+    "PLR2004",   # "magic" numbers are usually a documented threshold here
+    "PLC0415",   # imports inside functions are deliberate: they keep `fcc doctor`
+                 # fast and stop a broken optional source from breaking startup
+    "N818",      # exception naming
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLR2004", "N806", "ARG001", "ARG002"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+# Deliberately not strict. The goal is to catch a renamed dataclass field
+# reaching its caller - which is what actually broke - not to annotate every
+# local. Raising this to strict at once would bury that signal again.
+warn_unused_ignores = true
+warn_redundant_casts = true
+exclude = ["\\.venv", "data"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::SyntaxWarning"]

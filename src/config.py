@@ -18,7 +18,7 @@ class Config:
         self.path = path
 
     @classmethod
-    def load(cls, path: str | Path = DEFAULT_CONFIG_PATH) -> "Config":
+    def load(cls, path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         p = Path(path)
         if not p.exists():
             raise FileNotFoundError(

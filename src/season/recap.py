@@ -6,12 +6,11 @@ manager can actually learn from.
 """
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, field
-from typing import Any
 
 from src.lineup_solver import best_lineup
 from src.notify import Notification
+from src.storage import Database
 
 
 @dataclass
@@ -63,7 +62,7 @@ class _Scored:
 
 
 def _actual_week_scores(
-    conn: sqlite3.Connection, league_key: str, team_key: str, season: int, week: int
+    conn: Database, league_key: str, team_key: str, season: int, week: int
 ) -> list[_Scored]:
     """Actual scored points for my roster that week.
 
@@ -100,7 +99,7 @@ def _actual_week_scores(
 
 
 def run(
-    conn: sqlite3.Connection,
+    conn: Database,
     league_key: str,
     team_key: str,
     season: int,

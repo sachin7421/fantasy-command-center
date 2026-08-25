@@ -9,13 +9,12 @@ only helps me is one no one accepts, so it is not a useful suggestion.
 """
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, field
 from itertools import product
-from typing import Any
 
 from src.lineup_solver import best_lineup
 from src.notify import Notification
+from src.storage import Database
 
 
 @dataclass
@@ -54,7 +53,7 @@ class TradeIdea:
 
 
 def _load_team(
-    conn: sqlite3.Connection, league_key: str, team_key: str, season: int, week: int
+    conn: Database, league_key: str, team_key: str, season: int, week: int
 ) -> list[TradePlayer]:
     rows = conn.execute(
         """
@@ -78,7 +77,7 @@ def _load_team(
     ]
 
 
-def _teams_in_league(conn: sqlite3.Connection, league_key: str, week: int) -> list[tuple[str, str]]:
+def _teams_in_league(conn: Database, league_key: str, week: int) -> list[tuple[str, str]]:
     rows = conn.execute(
         "SELECT DISTINCT team_key, team_name FROM rosters WHERE league_key=? AND week=?",
         (league_key, week),
@@ -141,7 +140,7 @@ def _rationale(
 
 
 def run(
-    conn: sqlite3.Connection,
+    conn: Database,
     league_key: str,
     my_team_key: str,
     season: int,

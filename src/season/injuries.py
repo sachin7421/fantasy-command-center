@@ -9,13 +9,14 @@ the snapshot diff is the whole point: an unchanged Questionable tag is silent.
 """
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 from src import db
 from src.notify import Notification
 from src.sources.sleeper import is_escalation, severity_of
+from src.storage import Database
 
 SNAPSHOT_KIND = "injuries"
 
@@ -70,7 +71,7 @@ class InjuryReport:
         return [c for c in self.changes if c.is_escalation]
 
 
-def current_statuses(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
+def current_statuses(conn: Database) -> dict[str, dict[str, Any]]:
     """Latest known injury status for every player carrying one."""
     rows = conn.execute(
         """
@@ -92,7 +93,7 @@ def current_statuses(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
     }
 
 
-def my_roster_keys(conn: sqlite3.Connection, league_key: str, team_key: str) -> set[str]:
+def my_roster_keys(conn: Database, league_key: str, team_key: str) -> set[str]:
     rows = conn.execute(
         "SELECT DISTINCT player_key FROM rosters WHERE league_key=? AND team_key=? "
         "AND week=(SELECT MAX(week) FROM rosters WHERE league_key=?)",
@@ -102,7 +103,7 @@ def my_roster_keys(conn: sqlite3.Connection, league_key: str, team_key: str) -> 
 
 
 def opponent_roster_keys(
-    conn: sqlite3.Connection, league_key: str, opponent_team_key: str | None
+    conn: Database, league_key: str, opponent_team_key: str | None
 ) -> set[str]:
     if not opponent_team_key:
         return set()
@@ -110,7 +111,7 @@ def opponent_roster_keys(
 
 
 def top_free_agent_keys(
-    conn: sqlite3.Connection, league_key: str, limit: int = 60
+    conn: Database, league_key: str, limit: int = 60
 ) -> set[str]:
     rows = conn.execute(
         """
@@ -152,7 +153,7 @@ def practice_note(conn, player_key: str, season: int, week: int) -> str | None:
 
 
 def best_bench_replacement(
-    conn: sqlite3.Connection,
+    conn: Database,
     league_key: str,
     team_key: str,
     position: str,
@@ -177,7 +178,7 @@ def best_bench_replacement(
 
 
 def run(
-    conn: sqlite3.Connection,
+    conn: Database,
     league_key: str,
     my_team_key: str | None,
     season: int,
@@ -288,7 +289,7 @@ def to_notification(report: InjuryReport, week: int, season: int) -> Notificatio
     )
     return Notification(
         title=title,
-        lines=[line for line in lines if line != "" or True],
+        lines=lines,
         job="injuries",
         urgency=urgency,
         season=season,

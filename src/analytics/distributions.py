@@ -30,7 +30,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass, field
-from typing import Callable, Sequence
+from collections.abc import Sequence
 
 from src.lineup_solver import best_lineup
 

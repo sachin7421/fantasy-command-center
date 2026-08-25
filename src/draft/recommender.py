@@ -14,7 +14,7 @@ that moved it, so a human can disagree on the spot.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 from src.draft.survival import DraftPosition, survival_probability
 from src.vorp import FLEX_ELIGIBILITY, Board, PlayerValue, split_slots
