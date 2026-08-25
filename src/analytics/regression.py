@@ -31,12 +31,35 @@ from collections.abc import Sequence
 from src.analytics import shrinkage
 from src.storage import Database
 
-#: Residual per game (in league points) beyond which a player is worth flagging.
-#: Calibrated against 2025: over a trailing six-game window the residual has a
-#: standard deviation of about 1.7 points per game, so this is roughly one
-#: standard deviation - uncommon enough to mean something, common enough to
-#: surface a handful of names a week.
-FLAG_THRESHOLD = 1.8
+#: Standard deviation of the SHRUNK trailing-six-game residual, measured over
+#: 12,477 windows (tools/calibrate.py). This is the scale a threshold has to be
+#: expressed in.
+#:
+#: The old constant was 1.8 points per game, justified as "roughly one standard
+#: deviation" of the residual. It was one standard deviation of the RAW residual
+#: (measured 1.898) while `is_actionable` compared it against the SHRUNK one -
+#: two different quantities, a factor of three apart, so 1.8 was really 3.0
+#: sigma and the module fired on 0.2%-0.9% of players a season rather than the
+#: handful a week its docstring promised. Correcting the shrinkage constant made
+#: it worse: at the measured k of 60 an absolute 1.8 fires on exactly nothing.
+SHRUNK_RESIDUAL_SD = 0.173
+
+#: How many standard deviations of that distribution count as out of line. Two
+#: sigma is about 5% of players, which for a 12-team league scanning a couple of
+#: hundred relevant names is the handful a week that was always intended.
+FLAG_Z = 2.0
+FLAG_THRESHOLD = FLAG_Z * SHRUNK_RESIDUAL_SD
+
+#: Measured coefficient for correcting a projection, from an out-of-sample fit
+#: over 8,098 trailing-6 / next-4 windows:
+#:
+#:     next4_ppg = 1.199 + 0.870 * trailing_actual_ppg - 0.574 * raw_residual
+#:
+#: So against a points-anchored baseline the right correction is -0.574 of the
+#: RAW residual. The old code applied `-strength * shrunk_residual`, which at
+#: its default worked out to about -0.167 - the right sign and a third of the
+#: right size.
+RESIDUAL_CORRECTION = -0.574
 #: Minimum games before the signal is trusted at all.
 MIN_GAMES = 3
 #: Games to look back over. A full season averages the luck away - which is the
@@ -123,8 +146,13 @@ def analyse(
     raw_residual = actual - expected
 
     # Shrink toward zero: the prior on luck is that there is none.
-    confidence = shrinkage.weight(len(played), metric="points")
-    residual = shrinkage.shrink(raw_residual, 0.0, len(played), metric="points")
+    # The residual has its OWN stabilisation constant. Sharing "points" with a
+    # player's scoring level meant one number served two estimands whose correct
+    # values differ thirty-fold.
+    confidence = shrinkage.weight(len(played), metric="points_residual")
+    residual = shrinkage.shrink(
+        raw_residual, 0.0, len(played), metric="points_residual"
+    )
     trend = usage_trend(played)
 
     reasons: list[str] = []
@@ -152,8 +180,17 @@ def analyse(
         if trend < -0.05:
             reasons.append(f"snap share also falling ({trend:+.0%})")
 
-    if confidence < 0.45 and verdict != "hold":
-        reasons.append(f"only {len(played)} games - treat as a lean, not a call")
+    # `confidence` is the shrinkage weight, and for a residual that is nearly
+    # all noise it is structurally low - it was 0.33 for EVERY signal at the old
+    # constant and is about 0.09 at the measured one. Repeating "treat as a
+    # lean" on every line taught the reader to ignore the caveat, so it is only
+    # said when the SAMPLE is genuinely short rather than when the statistic is
+    # simply a noisy one.
+    if len(played) < DEFAULT_WINDOW and verdict != "hold":
+        reasons.append(
+            f"only {len(played)} games so far - thinner than the usual "
+            f"{DEFAULT_WINDOW}-game window"
+        )
 
     return RegressionSignal(
         player_key=player_key, name=name, position=position, team=team,
@@ -231,14 +268,23 @@ def scan(
 
 
 def adjusted_projection(
-    baseline: float, signal: RegressionSignal | None, strength: float = 0.5
+    baseline: float, signal: RegressionSignal | None, strength: float = 1.0
 ) -> float:
-    """Nudge a projection toward what usage implies.
+    """Correct a per-game projection toward what usage implies.
 
-    Deliberately partial: the projection sources already price in some of this,
-    so applying the whole residual would double-count. `strength` is how much of
-    the shrunk residual to remove.
+    Uses the measured coefficient on the RAW residual rather than an assumed
+    fraction of the shrunk one. Fitted out-of-sample over 8,098 windows:
+
+        next4_ppg = 1.199 + 0.870 * trailing_actual - 0.574 * raw_residual
+
+    `strength` scales it, and defaults to 1.0 now that the coefficient itself
+    is measured. Reduce it if the projection being corrected has already priced
+    some of the effect in - a blended pre-season number has, a naive trailing
+    average has not.
+
+    `baseline` is points PER GAME, which is the scale the coefficient was fitted
+    on.
     """
     if signal is None or signal.verdict == "hold":
         return baseline
-    return baseline - strength * signal.residual
+    return baseline + strength * RESIDUAL_CORRECTION * signal.raw_residual

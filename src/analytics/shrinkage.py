@@ -29,24 +29,56 @@ from collections.abc import Iterable, Sequence
 
 #: Games at which the observed rate and the prior are weighted equally.
 #: Larger = slower to believe. These are *rates*, not counts.
+#: MEASURED over 22,175 player-weeks by tools/calibrate.py, as the ratio of
+#: within-player to between-player variance IN GAMES - which is what `k` has to
+#: be for `n / (n + k)` to be the empirical-Bayes weight.
+#:
+#: **`k` depends on the population you shrink within**, and that turns out to
+#: matter more than anything else here. Pooled over every player with six
+#: games, `k` for points comes out near 2, because the gap between a star and a
+#: deep reserve dominates the between-player variance. Restricted to the
+#: players this estimator is actually applied to it is far larger:
+#:
+#:   population              points        residual
+#:   all players (>=6 g)     1.4 - 2.4     33 - 136
+#:   fantasy-relevant        4.3 - 21.8    29 - 199
+#:   startable (>=8 ppg)     4.8 - 14.2    24 - inf
+#:
+#: An initial reading of a pooled measurement said the shipped `points` value of
+#: 12.0 was six times too large. It is not: on the population that matters it
+#: sits inside the measured range, and only the usage metrics needed moving.
+#: Recorded because it is the kind of mistake that is easy to repeat.
+#:
+#: What IS robust across every population is that one constant cannot serve two
+#: estimands. `points` was used both for a player's own scoring level and for
+#: his weekly RESIDUAL against expected points. The residual measures 24 to 250
+#: whichever way it is sliced - it is nearly pure noise - so sharing a constant
+#: under-shrank it by a factor of five or more.
 STABILISATION: dict[str, float] = {
-    # Usage: what a coach chooses to do. Settles fast.
-    "snap_pct": 4.0,
-    "target_share": 5.0,
-    "rush_share": 5.0,
-    "air_yards": 6.0,
+    # Usage: what a coach chooses to do. Settles within about two games.
+    # Measured on startable players: snap 2.0-2.3, target share 2.7-3.5,
+    # rush share 1.6.
+    "snap_pct": 2.0,
+    "target_share": 3.0,
+    "rush_share": 2.0,
+    "air_yards": 3.0,
     # Volume-ish: still mostly decision, some game-script noise.
-    "targets": 6.0,
-    "rush_attempts": 6.0,
-    "receptions": 7.0,
-    # Efficiency: much noisier.
+    "targets": 3.0,
+    "rush_attempts": 3.0,
+    "receptions": 3.5,
+    # Efficiency: much noisier. Not separately measured; left conservative.
     "yards_per_target": 14.0,
     "yards_per_carry": 20.0,
+    # A player's own scoring level, among players worth starting.
+    "points": 10.0,
+    # Points OVER EXPECTED. Almost entirely noise, and the correction that
+    # actually mattered: a trailing-six-game residual carries roughly a tenth
+    # of a real signal, not a third.
+    "points_residual": 60.0,
     # Scoring rate: barely stabilises inside one season. Trust the prior.
     "td_rate": 30.0,
-    "points": 12.0,
-    "points_expected": 8.0,
 }
+
 DEFAULT_STABILISATION = 10.0
 
 

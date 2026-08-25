@@ -133,12 +133,24 @@ def test_too_few_games_produces_no_signal():
     assert regression.analyse("k", "New Guy", "WR", "GB", weeks([(30, 5), (28, 6)])) is None
 
 
-def test_small_samples_are_flagged_as_leans():
-    signal = regression.analyse(
+def test_a_thin_sample_says_so_and_a_full_one_does_not():
+    """The caveat has to mean something, or it teaches you to ignore it.
+
+    It used to fire whenever `confidence < 0.45`, and confidence is the
+    shrinkage weight - which for a residual that is almost entirely noise is
+    structurally low. Every signal carried "treat as a lean, not a call",
+    including ones with a full window behind them.
+    """
+    thin = regression.analyse(
         "k", "Small Sample", "RB", "KC", weeks([(25, 10), (26, 11), (24, 10)])
     )
-    assert signal.confidence < 0.45
-    assert any("lean" in r for r in signal.reasons)
+    assert any("only 3 games" in r for r in thin.reasons), thin.reasons
+
+    full = regression.analyse(
+        "k", "Full Window", "RB", "KC",
+        weeks([(25, 10), (26, 11), (24, 10), (25, 11), (26, 10), (24, 11)]),
+    )
+    assert not any("games so far" in r for r in full.reasons), full.reasons
 
 
 def test_shrinkage_makes_the_reported_residual_smaller_than_the_raw_one():

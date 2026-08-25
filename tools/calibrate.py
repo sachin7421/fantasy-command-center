@@ -285,6 +285,70 @@ def bust_probability(rows) -> dict[str, float]:
     }
 
 
+# --- empirical-Bayes stabilisation ------------------------------------------
+
+def stabilisation(rows) -> dict[str, dict[str, float]]:
+    """The `k` in `weight = n / (n + k)`, per metric and position.
+
+    `k` is only the empirical-Bayes weight when it equals the ratio of WITHIN-
+    player variance to BETWEEN-player variance, expressed in the same units as
+    `n`. The constants in src/analytics/shrinkage.py were literature
+    stabilisation points quoted in OPPORTUNITIES - targets, carries - and used
+    as GAMES, which is why they came out several times too large.
+
+    Two estimands are reported for points, because one constant cannot serve
+    both:
+
+      points          the player's own scoring level
+      points_residual actual minus expected, which is mostly noise and needs a
+                      far larger k - shrinking it with the same number
+                      under-shrinks by an order of magnitude
+    """
+    metrics = {
+        "snap_pct": lambda w: w["snap_pct"],
+        "target_share": lambda w: w["target_share"],
+        "rush_share": lambda w: w["rush_share"],
+        "points": lambda w: w["points_actual"],
+        "points_residual": lambda w: (
+            None if w["points_expected"] is None or w["points_actual"] is None
+            else float(w["points_actual"]) - float(w["points_expected"])
+        ),
+    }
+
+    out: dict[str, dict[str, float]] = {}
+    grouped = _by_player_season(rows)
+    for metric, extract in metrics.items():
+        per_pos: dict[str, list[list[float]]] = {}
+        for (_, _, pos), weeks in grouped.items():
+            values = []
+            for w in weeks:
+                try:
+                    v = extract(w)
+                except (KeyError, IndexError):
+                    v = None
+                if v is not None:
+                    values.append(float(v))
+            if len(values) >= MIN_GAMES:
+                per_pos.setdefault(pos, []).append(values)
+
+        result: dict[str, float] = {}
+        for pos, series in per_pos.items():
+            if len(series) < 25:
+                continue
+            within = statistics.fmean(statistics.variance(s) for s in series)
+            means = [statistics.fmean(s) for s in series]
+            sizes = [len(s) for s in series]
+            observed = statistics.variance(means)
+            # The spread of observed means includes sampling noise; remove it.
+            between = observed - within / statistics.fmean(sizes)
+            if between <= 1e-9:
+                continue
+            result[pos] = round(within / between, 2)
+        if result:
+            out[metric] = result
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", required=True, help="SQLite file with player_week_usage")
@@ -337,6 +401,12 @@ def main() -> int:
     print("\nBUST_PROBABILITY  P(points < 2 | startable)")
     for pos, p in bust_probability(rows).items():
         print(f"    {pos:<4} {p}")
+
+    print("")
+    print("STABILISATION  k in weight = n/(n+k), in GAMES")
+    for metric, per_pos in stabilisation(rows).items():
+        line = "  ".join(f"{pos} {k}" for pos, k in sorted(per_pos.items()))
+        print(f"    {metric:<18} {line}")
     return 0
 
 

@@ -979,9 +979,16 @@ def cmd_regression(ctx: Context, args) -> int:
         print(label)
         print("-" * len(label))
         for s in group:
+            # Show the raw gap beside the numbers it is the difference of, and
+            # the shrunk figure separately. Printing "actual 20.1 expected 14.2
+            # gap +0.5" put a shrunk value next to two unshrunk ones and read
+            # as an arithmetic error.
             print(f"  {s.name:<22} {s.position} {s.team:<4} "
                   f"actual {s.points_actual:5.1f}  expected {s.points_expected:5.1f}  "
-                  f"gap {s.residual:+5.1f}/gm  ({s.games}g, {s.confidence:.0%} conf)")
+                  f"gap {s.raw_residual:+5.1f}/gm over {s.games}g")
+            print(f"      after shrinking for luck: {s.residual:+.2f}/gm "
+                  f"(about {abs(s.residual) / regression.SHRUNK_RESIDUAL_SD:.1f} "
+                  f"sd of the usual spread)")
             for reason in s.reasons:
                 print(f"      {reason}")
     return EXIT_OK
