@@ -75,6 +75,21 @@ PROFILE_STABILISATION = 6.0
 #: Below this balance a manager is effectively out of the bidding.
 NUISANCE_BUDGET = 2
 
+#: How often a given manager bids on a given claim at all.
+#:
+#: The old model multiplied `P(rival bids below b)` over all eleven rivals with
+#: no participation term, so a bid at the median implied 0.5^11 = 0.0005 and a
+#: routine claim came back at a 2% chance of winning. That is not a property of
+#: auctions - it is the signature of a mis-specified likelihood, and the module
+#: then abandoned expected-surplus maximisation to work around a number its own
+#: model had invented.
+#:
+#: Most managers do not put in a claim most weeks. Two to three live bidders on
+#: a typical add is the realistic field; this is the fallback until enough of
+#: the transaction log exists to estimate it per manager.
+DEFAULT_PARTICIPATION = 0.25
+
+
 
 @dataclass
 class BidRecord:
@@ -105,10 +120,34 @@ class ManagerProfile:
     mean_bid: float
     max_bid: int
     budget_left: int | None = None
+    #: Auctions this manager was eligible for, used to estimate how often he
+    #: actually enters one. Only winning bids are observable, so this is a
+    #: lower bound on his participation - which is the safe direction.
+    auctions_seen: int = 0
 
     @property
     def confidence(self) -> float:
         return shrinkage.weight(self.observations, k=PROFILE_STABILISATION)
+
+    @property
+    def participation(self) -> float:
+        """How often this manager bids on a claim at all.
+
+        A manager sitting on a nuisance budget is not a rival whatever his
+        habits, and a manager who has never bid is not eleven-elevenths of a
+        threat. Estimated from his own history where there is enough of it,
+        shrunk toward the league default otherwise.
+        """
+        if self.budget_left is not None and self.budget_left <= NUISANCE_BUDGET:
+            return 0.0
+        if self.auctions_seen <= 0:
+            return DEFAULT_PARTICIPATION
+        observed = self.observations / self.auctions_seen
+        weight = shrinkage.weight(self.auctions_seen, k=PROFILE_STABILISATION)
+        return max(
+            0.02,
+            min(1.0, weight * observed + (1.0 - weight) * DEFAULT_PARTICIPATION),
+        )
 
     def describe(self) -> str:
         style = (
@@ -256,29 +295,73 @@ def resolve_player_keys(conn: Database, records: Sequence[BidRecord]) -> None:
         record.player_key = row["player_key"] if row else None
 
 
-def replacement_levels(conn: Database, season: int) -> dict[str, float]:
-    """Roughly what a freely available player at each position projects for.
+def replacement_levels(
+    conn: Database,
+    season: int,
+    league_key: str | None = None,
+    week: int | None = None,
+    starting_slots: dict[str, int] | None = None,
+    num_teams: int = 12,
+) -> dict[str, float]:
+    """What a freely available player at each position projects for.
 
-    Taken as the median projection among rostered players at the position: a
-    crude but stable stand-in for the board's replacement level, and stable is
-    what matters here since it only has to be CONSISTENT with how value is
-    computed at bid time.
+    In season this is not a theoretical construct: it is whoever is actually on
+    the wire. So the best available free agent at each position IS the
+    replacement, and that is used whenever the free-agent table has been synced.
+
+    The previous implementation took "the median projection among rostered
+    players", except the query had no join to `rosters` - it was the median over
+    every player with a stored line. With 1,361 receivers and 742 backs in that
+    table, most of whom project nothing, it returned exactly **0.0** for every
+    offensive position and a real number only for defences.
+
+    The consequences ran through everything downstream. A player's value became
+    his gross projection, so a backup quarterback out-valued a starting flex.
+    Defences alone had a baseline subtracted, which made the defence permanently
+    the worst-valued player on any roster and so permanently the top drop
+    candidate. And `attach_values` trained the bid model on gross points while
+    the callers passed points-over-replacement - the exact scale mismatch its
+    own docstring claims to have fixed.
     """
+    # The same rank-based definition the draft board uses, so the two can
+    # never disagree about what replacement means.
+    #
+    # Note what this deliberately is NOT: the best player on the waiver wire.
+    # That sounds like the in-season definition and is self-defeating - if the
+    # best free agent is a genuine upgrade, using him as the baseline makes
+    # every player on your roster look replaceable, and the one man worth
+    # claiming sets the bar that hides his own value. Replacement is the
+    # level a competent manager can ALWAYS reach, which is what a rank-based
+    # level measures.
+    from src.vorp import PlayerValue, compute_replacement_levels
+
     rows = conn.fetchall(
-        "SELECT p.position, b.points FROM projections_blended b "
-        "JOIN players p USING(player_key) "
-        "WHERE b.season=? AND b.week=0 AND b.points IS NOT NULL",
+        "SELECT p.position, p.full_name, b.player_key, b.points "
+        "FROM projections_blended b JOIN players p USING(player_key) "
+        "WHERE b.season=? AND b.week=0 AND b.points IS NOT NULL AND b.points > 0",
         (season,),
     )
-    grouped: dict[str, list[float]] = {}
+    pools: dict[str, list[PlayerValue]] = {}
     for r in rows:
-        grouped.setdefault(r["position"], []).append(float(r["points"]))
-    out: dict[str, float] = {}
-    for position, values in grouped.items():
-        values.sort()
-        if values:
-            out[position] = values[len(values) // 2]
-    return out
+        pools.setdefault(r["position"], []).append(
+            PlayerValue(
+                player_key=r["player_key"], name=r["full_name"],
+                position=r["position"], team="", points=float(r["points"]),
+            )
+        )
+    if not pools:
+        return {}
+    for pool in pools.values():
+        pool.sort(key=lambda p: p.points, reverse=True)
+
+    slots = starting_slots or {"QB": 1, "RB": 2, "WR": 2, "TE": 1,
+                               "W/R/T": 2, "DEF": 1}
+    return {
+        position: level.points
+        for position, level in compute_replacement_levels(
+            pools, slots, num_teams
+        ).items()
+    }
 
 
 def attach_values(conn: Database, records: Sequence[BidRecord], season: int) -> None:
@@ -378,13 +461,23 @@ class BidAdvice:
         )
 
 
+
+
 def win_probability(
     bid: float, rivals: Sequence[ManagerProfile], value: float
 ) -> float:
-    """P(this bid beats every rival)."""
+    """P(this bid beats every rival who actually bids.
+
+    Each rival contributes `1 - p_i * P(he outbids me)`: he has to both enter
+    the auction and beat the bid. A manager who is not bidding cannot lose you
+    the player, and treating all eleven as certain entrants is what drove every
+    recommendation to a near-zero win probability.
+    """
     probability = 1.0
     for rival in rivals:
-        probability *= rival.probability_bids_below(bid, value)
+        participation = rival.participation
+        outbids = 1.0 - rival.probability_bids_below(bid, value)
+        probability *= 1.0 - participation * outbids
     return probability
 
 
@@ -394,10 +487,11 @@ def market_rate(rivals: Sequence[ManagerProfile]) -> float:
     return fmean(live) if live else LEAGUE_PRIOR_BETA
 
 
-#: ROS points above replacement that would count as a league-winning claim - the
-#: kind of add that shows up two or three times a season. Used as the anchor for
-#: how much of a budget a player justifies.
+#: Rest-of-season points above replacement at which a claim is worth about a
+#: third of the remaining budget. The scale anchor, not a cap.
 ELITE_CLAIM_VALUE = 55.0
+#: Last week of the fantasy regular season, shared with src/season/waivers.py.
+FINAL_WEEK = 17
 #: Most of a remaining budget that any single claim should ever consume.
 MAX_BUDGET_FRACTION = 0.6
 
@@ -418,8 +512,19 @@ def worth_to_you(
     """
     if value <= 0 or my_budget <= 0:
         return 0
-    urgency = 1.0 + max(0.0, (14 - weeks_left)) / 14 * 0.6
-    share = min(1.0, value / ELITE_CLAIM_VALUE) ** 0.7
+    # Urgency uses the same horizon as everything else rather than a private
+    # constant: budget carried past the last waiver run is worth nothing.
+    urgency = 1.0 + max(0.0, (FINAL_WEEK - weeks_left)) / FINAL_WEEK * 0.6
+
+    # Concave but NOT saturating. `min(1, value/55) ** 0.7` pinned at 1.0 for
+    # every claim worth 55-plus points, so with the old zero replacement level
+    # essentially every free agent came back at the same $60 - the model could
+    # not tell a league-winning Tuesday claim from a WR5, and said both were
+    # worth 60% of the budget.
+    #
+    # value / (value + ELITE_CLAIM_VALUE) rises smoothly and never reaches 1,
+    # so a genuinely enormous add still outranks a merely good one.
+    share = value / (value + ELITE_CLAIM_VALUE)
     return int(max(1, round(my_budget * MAX_BUDGET_FRACTION * share * urgency)))
 
 

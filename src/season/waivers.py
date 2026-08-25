@@ -83,11 +83,35 @@ class WaiverReport:
     week: int = 0
 
 
-def _ros_weeks(week: int, final_week: int = 17) -> int:
+#: Last week of the fantasy regular season. This lived as three different
+#: literals - `18 - week` here, `15 - week` in the FAAB command, and a `14`
+#: inside the urgency multiplier - so `fcc waivers` and `fcc faab <player>`
+#: priced the same player about 10% apart, and a week-13 add for the title run
+#: was valued as though two weeks remained.
+FINAL_WEEK = 17
+
+
+def ros_fraction(week: int, final_week: int = FINAL_WEEK) -> float:
+    """How much of a season projection is still ahead of you.
+
+    A week-0 projection covers the whole season. Treating it as
+    rest-of-season value in week 12 overstates a claim by roughly 2.4x, and
+    that inflated number is what the bid model was handed - so a routine add
+    in November was priced like a league-winner in September.
+    """
+    return max(0.0, min(1.0, _ros_weeks(week, final_week) / float(final_week)))
+
+
+def _ros_weeks(week: int, final_week: int = FINAL_WEEK) -> int:
     return max(1, final_week - week + 1)
 
 
-def replacement_levels(conn: Database, season: int) -> dict[str, float]:
+def replacement_levels(
+    conn: Database,
+    season: int,
+    league_key: str | None = None,
+    week: int | None = None,
+) -> dict[str, float]:
     """Positional replacement level, shared with the FAAB model.
 
     Deliberately the same function the bid model trains on, so a claim's value
@@ -95,7 +119,7 @@ def replacement_levels(conn: Database, season: int) -> dict[str, float]:
     """
     from src.analytics.faab import replacement_levels as _levels
 
-    return _levels(conn, season)
+    return _levels(conn, season, league_key=league_key, week=week)
 
 
 def load_free_agents(
@@ -146,13 +170,14 @@ recommended $1 bids on players worth real money.
         },
     ).fetchall()
     baseline = replacement_levels(conn, season)
+    share = ros_fraction(week)
     return [
         Candidate(
             player_key=r["player_key"], name=r["full_name"], position=r["position"],
             team=r["team"] or "FA", ros_points=float(r["pts"] or 0),
             pct_owned=float(r["pct_owned"] or 0), trending_add=int(r["trending"] or 0),
             injury_status=r["injury_status"], bye_week=r["bye_week"],
-            value=float(r["pts"] or 0) - baseline.get(r["position"], 0.0),
+            value=(float(r["pts"] or 0) - baseline.get(r["position"], 0.0)) * share,
         )
         for r in rows
     ]
@@ -190,12 +215,13 @@ def load_my_droppables(
         {"season": season, "week": week, "league": league_key, "team": str(team_key)},
     ).fetchall()
     baseline = replacement_levels(conn, season)
+    share = ros_fraction(week)
     out = [
         Candidate(
             player_key=r["player_key"], name=r["full_name"], position=r["position"],
             team=r["team"] or "", ros_points=float(r["pts"] or 0), pct_owned=100.0,
             trending_add=0, injury_status=r["injury_status"], bye_week=r["bye_week"],
-            value=float(r["pts"] or 0) - baseline.get(r["position"], 0.0),
+            value=(float(r["pts"] or 0) - baseline.get(r["position"], 0.0)) * share,
         )
         for r in rows
     ]

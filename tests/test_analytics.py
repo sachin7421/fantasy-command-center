@@ -637,3 +637,71 @@ def test_the_bust_tail_is_thicker_than_a_bare_gamma():
     )
     rate = duds / 20_000
     assert 0.03 < rate < 0.12, rate
+
+
+# --- FAAB --------------------------------------------------------------------
+
+def _rival(name, beta, budget=80, observations=0, auctions=0):
+    from src.analytics.faab import ManagerProfile
+
+    return ManagerProfile(
+        team_key=name, name=name, observations=observations, beta=beta,
+        raw_beta=beta, mean_bid=20.0, max_bid=40, budget_left=budget,
+        auctions_seen=auctions,
+    )
+
+
+def test_the_bid_distinguishes_a_league_winner_from_a_wr5():
+    """It used to return the same number for everyone.
+
+    `min(1, value / 55) ** 0.7` pins at 1.0 for every claim worth 55-plus
+    points, so with a replacement level of zero every free agent saturated and
+    came back at $60 - the model could not tell a Tuesday league-winner from a
+    bench receiver, and told you both were worth 60% of your budget.
+    """
+    from src.analytics import faab
+
+    field = [_rival(f"T{i}", faab.LEAGUE_PRIOR_BETA) for i in range(11)]
+    bids = [
+        faab.recommend(value=float(v), my_budget=100, rivals=field,
+                       weeks_left=10).recommended
+        for v in (5, 20, 80, 150)
+    ]
+    assert bids == sorted(bids), bids
+    assert len(set(bids)) == len(bids), f"every value produced the same bid: {bids}"
+    assert bids[-1] > bids[0] * 3
+
+
+def test_a_broke_field_is_cheap_to_beat():
+    """A manager with a dollar left is not a rival, whatever his habits."""
+    from src.analytics import faab
+
+    broke = [_rival(f"B{i}", faab.LEAGUE_PRIOR_BETA, budget=1) for i in range(11)]
+    advice = faab.recommend(value=20.0, my_budget=100, rivals=broke, weeks_left=10)
+    assert advice.recommended <= 2
+    assert advice.win_probability > 0.9
+
+
+def test_win_probability_accounts_for_who_actually_bids():
+    """Treating all eleven rivals as certain entrants gives 0.5^11 at the
+    median - a 0.05% chance of winning a routine claim. That is not a property
+    of auctions, it is a mis-specified likelihood, and the module previously
+    abandoned expected-surplus maximisation to work around the number."""
+    from src.analytics import faab
+
+    field = [_rival(f"T{i}", faab.LEAGUE_PRIOR_BETA) for i in range(11)]
+    median_bid = faab.LEAGUE_PRIOR_BETA * 20.0
+    probability = faab.win_probability(median_bid, field, 20.0)
+    assert probability > 0.10, probability
+    assert probability < 0.60, probability
+
+
+def test_a_manager_who_never_bids_is_barely_a_threat():
+    from src.analytics import faab
+
+    quiet = _rival("Quiet", faab.LEAGUE_PRIOR_BETA, observations=1, auctions=40)
+    busy = _rival("Busy", faab.LEAGUE_PRIOR_BETA, observations=30, auctions=40)
+    assert quiet.participation < busy.participation
+    assert faab.win_probability(20.0, [quiet], 20.0) > faab.win_probability(
+        20.0, [busy], 20.0
+    )
