@@ -9,9 +9,14 @@ league:
   # Season year. Leave blank to auto-resolve to the current NFL season.
   season: 2026
   # Your own team id within the league (integer, 1..N).
-  # Your team's number in the league (1-12), from your team page URL after
-  # `/t/`. REQUIRED: every roster-dependent job fails without it.
-  my_team_id:
+  # Butt Fumblers = team 4. Read from the Yahoo team URL: /f1/796511/4.
+  #
+  # NOT the same thing as draft_slot below. The team id is assigned when the
+  # league is created; the draft slot comes from the draft order, and this
+  # league's order was changed to "custom" on 2026-08-23. They happen to differ
+  # here - team 4, drafting 3rd - which is exactly the mix-up that would make
+  # every roster job read someone else's team.
+  my_team_id: 4
 
 paths:
   db: "data/league.db"

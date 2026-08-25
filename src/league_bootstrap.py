@@ -89,6 +89,17 @@ def build_settings() -> dict:
         "playoff_start_week": 15,
         "num_playoff_teams": 6,
         "max_acquisitions_season": 75,
+        # Both verified against the live Yahoo settings page on 2026-08-25.
+        #
+        # This league does NOT reseed between playoff rounds, so the bracket is
+        # fixed once the field is set: the 1 seed plays the winner of 4-v-5
+        # whatever happens elsewhere. Reseeding would hand the top seed the
+        # weakest survivor instead, which is a materially different set of
+        # title odds.
+        "playoff_reseeding": 0,
+        # 1 minute 30 seconds per pick - the reason the draft board is built to
+        # be read at a glance rather than studied.
+        "draft_pick_time": 90,
         "fractional_points": "1",
         "negative_points": "1",
         "roster_positions": [

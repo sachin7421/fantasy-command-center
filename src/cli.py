@@ -1167,7 +1167,13 @@ def cmd_playoffs(ctx: Context, args) -> int:
                   "nothing to simulate.")
         return EXIT_OK
 
-    results = simulate(teams, remaining, playoff_spots=spots, trials=args.trials)
+    # Whether the bracket reseeds is a league setting, not a convention: with
+    # reseeding the top seed always draws the weakest survivor, and this league
+    # has it turned off.
+    reseed = str(settings.get("playoff_reseeding", 0)) in ("1", "true", "True")
+    results = simulate(
+        teams, remaining, playoff_spots=spots, trials=args.trials, reseed=reseed
+    )
     print(f"Playoff odds after week {week} "
           f"({len(remaining)} games left, {spots} spots, {args.trials:,} simulations)")
     print("")

@@ -73,7 +73,11 @@ class Odds:
         )
 
 
-def _play_bracket(seeds: Sequence[TeamSeason], rng: random.Random) -> TeamSeason | None:
+def _play_bracket(
+    seeds: Sequence[TeamSeason],
+    rng: random.Random,
+    reseed: bool = False,
+) -> TeamSeason | None:
     """A standard seeded bracket with byes for the top seeds.
 
     The previous version was structurally incoherent. With six spots it paired
@@ -83,8 +87,14 @@ def _play_bracket(seeds: Sequence[TeamSeason], rng: random.Random) -> TeamSeason
     not an estimate of anything.
 
     The real format: teams beyond the nearest power of two play a wild-card
-    round, the top seeds sit it out, and the field is re-seeded each round so
-    the best surviving team always faces the worst.
+    round and the top seeds sit it out.
+
+    `reseed` decides what happens next, and it matters. With reseeding the best
+    surviving team faces the worst each round. Without it - which is what THIS
+    league is set to, verified on the settings page - the bracket is fixed once
+    the field is known: the 1 seed plays the winner of 4-v-5 however the other
+    game goes. The difference is worth real probability to the top seeds, so it
+    is read from the league settings rather than assumed.
     """
     field = list(seeds)
     if not field:
@@ -102,9 +112,14 @@ def _play_bracket(seeds: Sequence[TeamSeason], rng: random.Random) -> TeamSeason
             high, low = contest[i], contest[len(contest) - 1 - i]
             winners.append(high if high.sample(rng) >= low.sample(rng) else low)
 
-        # Re-seed: survivors keep their original seeding order.
-        order = {team.team_key: i for i, team in enumerate(seeds)}
-        field = sorted(byes + winners, key=lambda team: order[team.team_key])
+        if reseed:
+            # Best surviving team faces the worst next round.
+            order = {team.team_key: i for i, team in enumerate(seeds)}
+            field = sorted(byes + winners, key=lambda team: order[team.team_key])
+        else:
+            # Fixed bracket: a winner inherits the slot it played in, so the
+            # top seed meets whoever came out of the bottom half.
+            field = byes + winners
 
     return field[0]
 
@@ -115,6 +130,7 @@ def simulate(
     playoff_spots: int = 6,
     trials: int = 5_000,
     seed: int = 41,
+    reseed: bool = False,
 ) -> list[Odds]:
     """Play out the rest of the season repeatedly and count outcomes.
 
@@ -156,7 +172,7 @@ def simulate(
             if position <= playoff_spots:
                 made_playoffs[team.team_key] += 1
 
-        champion = _play_bracket(standings[:playoff_spots], rng)
+        champion = _play_bracket(standings[:playoff_spots], rng, reseed=reseed)
         if champion is not None:
             won_title[champion.team_key] += 1
 

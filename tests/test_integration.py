@@ -170,6 +170,25 @@ def test_faab_curve_renders(league_db, capsys):
     assert "<- recommended" in out
 
 
+def _config_without_team(tmp_path):
+    """A config with no my_team_id.
+
+    Written out rather than relying on the repository's config.yaml, which now
+    has a real team id in it - a test must not depend on a setting the user is
+    expected to fill in, in either direction.
+    """
+    path = tmp_path / "noteam.yaml"
+    path.write_text(
+        "league:\n"
+        '  league_id: "796511"\n'
+        "  season: 2026\n"
+        "paths:\n"
+        f'  env_dir: "{tmp_path.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    return str(path)
+
+
 def _config(tmp_path):
     """A config naming team 3 as mine, which several behaviours depend on."""
     path = tmp_path / "with_team.yaml"
@@ -206,9 +225,13 @@ def test_faab_never_lists_you_among_your_own_rivals(league_db, tmp_path, capsys)
     assert not any("Butt Fumblers" in line for line in rivals), rivals
 
 
-def test_faab_warns_when_it_cannot_tell_which_team_is_yours(league_db, capsys):
+def test_faab_warns_when_it_cannot_tell_which_team_is_yours(league_db, tmp_path, capsys):
     """Silently counting yourself as a rival is worse than saying you cannot tell."""
-    code = cli.main(["--db", str(league_db), "faab", "Waiver Add", "--week", str(WEEK)])
+    # Its own config with no team id - the repository config now has one, and a
+    # test must not depend on a setting the user is expected to fill in.
+    config = _config_without_team(tmp_path)
+    code = cli.main(["--config", str(config), "--db", str(league_db),
+                     "faab", "Waiver Add", "--week", str(WEEK)])
     out = capsys.readouterr().out
     assert code == 0
     assert "my_team_id is not set" in out
