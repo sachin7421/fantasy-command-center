@@ -14,6 +14,21 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+def pytest_addoption(parser):
+    """`--update-golden` rewrites the stored snapshots in tests/golden/.
+
+    Deliberately a flag and not an environment variable: blessing a change to
+    every number the model produces should be something a person typed on
+    purpose, and something that shows up in shell history.
+    """
+    parser.addoption(
+        "--update-golden",
+        action="store_true",
+        default=False,
+        help="rewrite tests/golden/*.json from the current behaviour",
+    )
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _never_touch_the_real_database():
     """Pin the whole suite to SQLite, whatever the ambient configuration says.
@@ -136,26 +151,33 @@ STAT_MODIFIERS = [
 ]
 
 
+#: The same payload as a plain constant, so non-fixture code - the shared league
+#: builder the invariant and golden suites use - can reach it without pytest.
+YAHOO_SETTINGS_FOR_FIXTURE: dict = {
+    "stat_categories": {"stats": STAT_CATEGORIES},
+    "stat_modifiers": {"stats": STAT_MODIFIERS},
+    "roster_positions": [
+        {"roster_position": {"position": "QB", "count": 1}},
+        {"roster_position": {"position": "WR", "count": 2}},
+        {"roster_position": {"position": "RB", "count": 2}},
+        {"roster_position": {"position": "TE", "count": 1}},
+        {"roster_position": {"position": "W/R/T", "count": 1}},
+        {"roster_position": {"position": "K", "count": 1}},
+        {"roster_position": {"position": "DEF", "count": 1}},
+        {"roster_position": {"position": "BN", "count": 6}},
+        {"roster_position": {"position": "IR", "count": 2}},
+    ],
+    "num_teams": 12,
+    "uses_faab": 1,
+    "waiver_type": "FR",
+}
+
+
 @pytest.fixture
 def yahoo_settings() -> dict:
-    return {
-        "stat_categories": {"stats": STAT_CATEGORIES},
-        "stat_modifiers": {"stats": STAT_MODIFIERS},
-        "roster_positions": [
-            {"roster_position": {"position": "QB", "count": 1}},
-            {"roster_position": {"position": "WR", "count": 2}},
-            {"roster_position": {"position": "RB", "count": 2}},
-            {"roster_position": {"position": "TE", "count": 1}},
-            {"roster_position": {"position": "W/R/T", "count": 1}},
-            {"roster_position": {"position": "K", "count": 1}},
-            {"roster_position": {"position": "DEF", "count": 1}},
-            {"roster_position": {"position": "BN", "count": 6}},
-            {"roster_position": {"position": "IR", "count": 2}},
-        ],
-        "num_teams": 12,
-        "uses_faab": 1,
-        "waiver_type": "FR",
-    }
+    import copy
+
+    return copy.deepcopy(YAHOO_SETTINGS_FOR_FIXTURE)
 
 
 @pytest.fixture

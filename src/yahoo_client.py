@@ -53,7 +53,9 @@ def serialize(obj: Any) -> Any:
         if callable(fn):
             try:
                 return serialize(fn())
-            except Exception:  # pragma: no cover - defensive against yfpy internals
+            # silent: yfpy exposes several serialisers and not all work on every
+            # object; trying the next one is the entire point of the loop
+            except Exception:  # pragma: no cover
                 continue
     if hasattr(obj, "__dict__"):
         return {

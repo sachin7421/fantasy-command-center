@@ -1,0 +1,652 @@
+[
+  {
+    "choices": [
+      {
+        "name": "WR2",
+        "need": 1.12,
+        "pos": "WR",
+        "reasons": [
+          "2% chance he lasts to pick 22",
+          "fills a starting WR need"
+        ],
+        "score": 306.83,
+        "survival": 0.02,
+        "urgency": 1.77,
+        "vorp": 155.4,
+        "warnings": []
+      },
+      {
+        "name": "WR3",
+        "need": 1.12,
+        "pos": "WR",
+        "reasons": [
+          "5% chance he lasts to pick 22",
+          "fills a starting WR need"
+        ],
+        "score": 292.18,
+        "survival": 0.05,
+        "urgency": 1.73,
+        "vorp": 151.2,
+        "warnings": []
+      },
+      {
+        "name": "WR4",
+        "need": 1.12,
+        "pos": "WR",
+        "reasons": [
+          "11% chance he lasts to pick 22",
+          "fills a starting WR need"
+        ],
+        "score": 275.02,
+        "survival": 0.11,
+        "urgency": 1.68,
+        "vorp": 147.0,
+        "warnings": []
+      }
+    ],
+    "pick": 3,
+    "round": 1
+  },
+  {
+    "choices": [
+      {
+        "name": "WR11",
+        "need": 0.98,
+        "pos": "WR",
+        "reasons": [],
+        "score": 139.58,
+        "survival": 0.77,
+        "urgency": 1.21,
+        "vorp": 117.6,
+        "warnings": []
+      },
+      {
+        "name": "WR12",
+        "need": 0.98,
+        "pos": "WR",
+        "reasons": [],
+        "score": 129.26,
+        "survival": 0.82,
+        "urgency": 1.16,
+        "vorp": 113.4,
+        "warnings": []
+      },
+      {
+        "name": "RB11",
+        "need": 1.18,
+        "pos": "RB",
+        "reasons": [
+          "fills a starting RB need"
+        ],
+        "score": 121.15,
+        "survival": 0.77,
+        "urgency": 1.0,
+        "vorp": 102.38,
+        "warnings": []
+      }
+    ],
+    "pick": 22,
+    "round": 2
+  },
+  {
+    "choices": [
+      {
+        "name": "WR13",
+        "need": 0.81,
+        "pos": "WR",
+        "reasons": [
+          "17% chance he lasts to pick 46"
+        ],
+        "score": 155.7,
+        "survival": 0.17,
+        "urgency": 1.77,
+        "vorp": 109.2,
+        "warnings": []
+      },
+      {
+        "name": "WR14",
+        "need": 0.81,
+        "pos": "WR",
+        "reasons": [
+          "23% chance he lasts to pick 46"
+        ],
+        "score": 143.4,
+        "survival": 0.23,
+        "urgency": 1.7,
+        "vorp": 105.0,
+        "warnings": []
+      },
+      {
+        "name": "WR15",
+        "need": 0.81,
+        "pos": "WR",
+        "reasons": [
+          "30% chance he lasts to pick 46"
+        ],
+        "score": 131.22,
+        "survival": 0.3,
+        "urgency": 1.62,
+        "vorp": 100.8,
+        "warnings": []
+      }
+    ],
+    "pick": 27,
+    "round": 3
+  },
+  {
+    "choices": [
+      {
+        "name": "RB19",
+        "need": 1.3,
+        "pos": "RB",
+        "reasons": [
+          "fills a starting RB need"
+        ],
+        "score": 83.99,
+        "survival": 0.76,
+        "urgency": 1.0,
+        "vorp": 64.44,
+        "warnings": []
+      },
+      {
+        "name": "RB20",
+        "need": 1.3,
+        "pos": "RB",
+        "reasons": [
+          "fills a starting RB need"
+        ],
+        "score": 78.27,
+        "survival": 0.8,
+        "urgency": 1.0,
+        "vorp": 60.05,
+        "warnings": []
+      },
+      {
+        "name": "TE5",
+        "need": 1.02,
+        "pos": "TE",
+        "reasons": [],
+        "score": 76.93,
+        "survival": 0.78,
+        "urgency": 1.12,
+        "vorp": 67.02,
+        "warnings": []
+      }
+    ],
+    "pick": 46,
+    "round": 4
+  },
+  {
+    "choices": [
+      {
+        "name": "WR21",
+        "need": 0.77,
+        "pos": "WR",
+        "reasons": [
+          "18% chance he lasts to pick 70",
+          "value falling to you: ADP 53, board rank 41"
+        ],
+        "score": 111.08,
+        "survival": 0.18,
+        "urgency": 1.92,
+        "vorp": 75.6,
+        "warnings": []
+      },
+      {
+        "name": "WR22",
+        "need": 0.77,
+        "pos": "WR",
+        "reasons": [
+          "22% chance he lasts to pick 70",
+          "value falling to you: ADP 56, board rank 43"
+        ],
+        "score": 100.77,
+        "survival": 0.22,
+        "urgency": 1.84,
+        "vorp": 71.4,
+        "warnings": []
+      },
+      {
+        "name": "WR23",
+        "need": 0.77,
+        "pos": "WR",
+        "reasons": [
+          "28% chance he lasts to pick 70",
+          "value falling to you: ADP 58, board rank 45"
+        ],
+        "score": 90.83,
+        "survival": 0.28,
+        "urgency": 1.76,
+        "vorp": 67.2,
+        "warnings": []
+      }
+    ],
+    "pick": 51,
+    "round": 5
+  },
+  {
+    "choices": [
+      {
+        "name": "TE9",
+        "need": 1.12,
+        "pos": "TE",
+        "reasons": [
+          "fills a starting TE need"
+        ],
+        "score": 36.95,
+        "survival": 0.81,
+        "urgency": 1.1,
+        "vorp": 30.02,
+        "warnings": []
+      },
+      {
+        "name": "RB27",
+        "need": 1.12,
+        "pos": "RB",
+        "reasons": [
+          "fills a starting RB need"
+        ],
+        "score": 34.46,
+        "survival": 0.76,
+        "urgency": 1.0,
+        "vorp": 30.86,
+        "warnings": []
+      },
+      {
+        "name": "WR28",
+        "need": 0.5,
+        "pos": "WR",
+        "reasons": [
+          "value falling to you: ADP 70, board rank 58",
+          "WR already deep"
+        ],
+        "score": 31.89,
+        "survival": 0.75,
+        "urgency": 1.38,
+        "vorp": 46.2,
+        "warnings": []
+      }
+    ],
+    "pick": 70,
+    "round": 6
+  },
+  {
+    "choices": [
+      {
+        "name": "WR30",
+        "need": 0.5,
+        "pos": "WR",
+        "reasons": [
+          "24% chance he lasts to pick 94",
+          "value falling to you: ADP 75, board rank 63",
+          "WR already deep"
+        ],
+        "score": 43.8,
+        "survival": 0.24,
+        "urgency": 2.32,
+        "vorp": 37.8,
+        "warnings": []
+      },
+      {
+        "name": "WR31",
+        "need": 0.5,
+        "pos": "WR",
+        "reasons": [
+          "28% chance he lasts to pick 94",
+          "WR already deep"
+        ],
+        "score": 37.02,
+        "survival": 0.28,
+        "urgency": 2.2,
+        "vorp": 33.6,
+        "warnings": []
+      },
+      {
+        "name": "RB28",
+        "need": 1.35,
+        "pos": "RB",
+        "reasons": [
+          "21% chance he lasts to pick 94",
+          "fills a starting RB need"
+        ],
+        "score": 36.29,
+        "survival": 0.21,
+        "urgency": 1.0,
+        "vorp": 26.88,
+        "warnings": []
+      }
+    ],
+    "pick": 75,
+    "round": 7
+  },
+  {
+    "choices": [
+      {
+        "name": "WR36",
+        "need": 0.5,
+        "pos": "WR",
+        "reasons": [
+          "WR already deep"
+        ],
+        "score": 10.15,
+        "survival": 0.74,
+        "urgency": 1.61,
+        "vorp": 12.6,
+        "warnings": []
+      },
+      {
+        "name": "WR37",
+        "need": 0.5,
+        "pos": "WR",
+        "reasons": [
+          "WR already deep"
+        ],
+        "score": 6.43,
+        "survival": 0.77,
+        "urgency": 1.53,
+        "vorp": 8.4,
+        "warnings": []
+      },
+      {
+        "name": "WR38",
+        "need": 0.5,
+        "pos": "WR",
+        "reasons": [
+          "WR already deep"
+        ],
+        "score": 3.06,
+        "survival": 0.79,
+        "urgency": 1.46,
+        "vorp": 4.2,
+        "warnings": []
+      }
+    ],
+    "pick": 94,
+    "round": 8
+  },
+  {
+    "choices": [
+      {
+        "name": "WR38",
+        "need": 0.5,
+        "pos": "WR",
+        "reasons": [
+          "25% chance he lasts to pick 118",
+          "WR already deep"
+        ],
+        "score": 5.54,
+        "survival": 0.25,
+        "urgency": 2.64,
+        "vorp": 4.2,
+        "warnings": []
+      },
+      {
+        "name": "DEF1",
+        "need": 0.05,
+        "pos": "DEF",
+        "reasons": [
+          "value falling to you: ADP 131, board rank 78"
+        ],
+        "score": 1.1,
+        "survival": 0.78,
+        "urgency": 1.0,
+        "vorp": 22.0,
+        "warnings": []
+      },
+      {
+        "name": "DEF2",
+        "need": 0.05,
+        "pos": "DEF",
+        "reasons": [
+          "value falling to you: ADP 132, board rank 81"
+        ],
+        "score": 1.0,
+        "survival": 0.79,
+        "urgency": 1.0,
+        "vorp": 20.0,
+        "warnings": []
+      }
+    ],
+    "pick": 99,
+    "round": 9
+  },
+  {
+    "choices": [
+      {
+        "name": "DEF1",
+        "need": 0.05,
+        "pos": "DEF",
+        "reasons": [
+          "likely available at 123 (89%) - can wait",
+          "value falling to you: ADP 131, board rank 78"
+        ],
+        "score": 1.1,
+        "survival": 0.89,
+        "urgency": 1.0,
+        "vorp": 22.0,
+        "warnings": []
+      },
+      {
+        "name": "DEF2",
+        "need": 0.05,
+        "pos": "DEF",
+        "reasons": [
+          "likely available at 123 (90%) - can wait",
+          "value falling to you: ADP 132, board rank 81"
+        ],
+        "score": 1.0,
+        "survival": 0.9,
+        "urgency": 1.0,
+        "vorp": 20.0,
+        "warnings": []
+      },
+      {
+        "name": "DEF3",
+        "need": 0.05,
+        "pos": "DEF",
+        "reasons": [
+          "likely available at 123 (90%) - can wait",
+          "value falling to you: ADP 133, board rank 84"
+        ],
+        "score": 0.9,
+        "survival": 0.9,
+        "urgency": 1.0,
+        "vorp": 18.0,
+        "warnings": []
+      }
+    ],
+    "pick": 118,
+    "round": 10
+  },
+  {
+    "choices": [
+      {
+        "name": "QB19",
+        "need": 1.35,
+        "pos": "QB",
+        "reasons": [
+          "30% chance he lasts to pick 142",
+          "fills a starting QB need"
+        ],
+        "score": -13.78,
+        "survival": 0.3,
+        "urgency": 1.0,
+        "vorp": -18.6,
+        "warnings": [
+          "reach vs ADP 116 (board rank 129)"
+        ]
+      },
+      {
+        "name": "QB20",
+        "need": 1.35,
+        "pos": "QB",
+        "reasons": [
+          "fills a starting QB need"
+        ],
+        "score": -16.07,
+        "survival": 0.36,
+        "urgency": 1.0,
+        "vorp": -21.7,
+        "warnings": [
+          "reach vs ADP 120 (board rank 132)"
+        ]
+      },
+      {
+        "name": "QB21",
+        "need": 1.35,
+        "pos": "QB",
+        "reasons": [
+          "fills a starting QB need"
+        ],
+        "score": -18.37,
+        "survival": 0.42,
+        "urgency": 1.0,
+        "vorp": -24.8,
+        "warnings": []
+      }
+    ],
+    "pick": 123,
+    "round": 11
+  },
+  {
+    "choices": [
+      {
+        "name": "QB23",
+        "need": 0.2,
+        "pos": "QB",
+        "reasons": [
+          "QB already deep"
+        ],
+        "score": -155.0,
+        "survival": 0.8,
+        "urgency": 1.0,
+        "vorp": -31.0,
+        "warnings": []
+      },
+      {
+        "name": "QB24",
+        "need": 0.2,
+        "pos": "QB",
+        "reasons": [
+          "QB already deep"
+        ],
+        "score": -170.5,
+        "survival": 0.82,
+        "urgency": 1.0,
+        "vorp": -34.1,
+        "warnings": []
+      },
+      {
+        "name": "TE18",
+        "need": 0.2,
+        "pos": "TE",
+        "reasons": [
+          "last 1 in TE tier 4; next tier drops 30%",
+          "TE already deep"
+        ],
+        "score": -171.51,
+        "survival": 0.77,
+        "urgency": 1.07,
+        "vorp": -32.14,
+        "warnings": [
+          "reach vs ADP 130 (board rank 142)"
+        ]
+      }
+    ],
+    "pick": 142,
+    "round": 12
+  },
+  {
+    "choices": [
+      {
+        "name": "TE20",
+        "need": 0.2,
+        "pos": "TE",
+        "reasons": [
+          "last 2 in TE tier 5; next tier drops 31%",
+          "TE already deep"
+        ],
+        "score": -249.74,
+        "survival": 0.41,
+        "urgency": 1.14,
+        "vorp": -43.83,
+        "warnings": []
+      },
+      {
+        "name": "TE19",
+        "need": 0.2,
+        "pos": "TE",
+        "reasons": [
+          "last 2 in TE tier 5; next tier drops 64%",
+          "34% chance he lasts to pick 166",
+          "TE already deep"
+        ],
+        "score": -250.22,
+        "survival": 0.34,
+        "urgency": 1.31,
+        "vorp": -38.05,
+        "warnings": [
+          "reach vs ADP 136 (board rank 148)"
+        ]
+      },
+      {
+        "name": "TE21",
+        "need": 0.2,
+        "pos": "TE",
+        "reasons": [
+          "last 2 in TE tier 6; next tier drops 61%",
+          "TE already deep"
+        ],
+        "score": -306.4,
+        "survival": 0.48,
+        "urgency": 1.24,
+        "vorp": -49.49,
+        "warnings": []
+      }
+    ],
+    "pick": 147,
+    "round": 13
+  },
+  {
+    "choices": [
+      {
+        "name": "DEF12",
+        "need": 1.0,
+        "pos": "DEF",
+        "reasons": [
+          "best of what is left"
+        ],
+        "score": 0.0,
+        "survival": null,
+        "urgency": 0.0,
+        "vorp": 0.0,
+        "warnings": [
+          "everyone left is below replacement or plays a position this roster cannot start another of"
+        ]
+      }
+    ],
+    "pick": 166,
+    "round": 14
+  },
+  {
+    "choices": [
+      {
+        "name": "TE21",
+        "need": 1.0,
+        "pos": "TE",
+        "reasons": [
+          "best of what is left"
+        ],
+        "score": -0.0,
+        "survival": null,
+        "urgency": 0.0,
+        "vorp": -49.49,
+        "warnings": [
+          "everyone left is below replacement or plays a position this roster cannot start another of"
+        ]
+      }
+    ],
+    "pick": 171,
+    "round": 15
+  }
+]

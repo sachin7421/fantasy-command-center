@@ -1,0 +1,27 @@
+{
+  "DEF": {
+    "points": 116.0,
+    "rank": 13,
+    "scarce": true
+  },
+  "QB": {
+    "points": 339.7,
+    "rank": 13,
+    "scarce": false
+  },
+  "RB": {
+    "points": 138.93,
+    "rank": 35,
+    "scarce": false
+  },
+  "TE": {
+    "points": 86.04,
+    "rank": 13,
+    "scarce": false
+  },
+  "WR": {
+    "points": 136.2,
+    "rank": 39,
+    "scarce": false
+  }
+}

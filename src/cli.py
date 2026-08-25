@@ -57,7 +57,7 @@ class Context:
         if self._yahoo is not None:
             try:
                 return self.yahoo.league_key
-            except Exception:
+            except Exception:  # silent: falls through to the configured id below
                 pass
         return f"nfl.l.{self.cfg.get('league.league_id', league_bootstrap.LEAGUE_ID)}"
 

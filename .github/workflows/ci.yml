@@ -10,6 +10,12 @@
 # mypy is not gated yet: it currently reports errors, most of them cascades from
 # a single variable-rebinding pattern. It runs in report-only mode until that is
 # cleaned up, then `continue-on-error` comes off and it becomes a real gate.
+#
+# Everything here is also runnable in one command locally - `python tools/gate.py`
+# - and the pre-push hook in .githooks runs it automatically. CI and the hook
+# execute the SAME list in the SAME order on purpose: a gate that disagrees with
+# the one on the developer's machine teaches people to ignore whichever is
+# noisier.
 
 name: CI
 
@@ -55,6 +61,9 @@ jobs:
       - name: Types (report only, not yet gating)
         run: python -m mypy src dashboard.py fcc.py
         continue-on-error: true
+
+      - name: Silent degradation
+        run: python tools/check_degradation.py
 
       - name: Dead code
         run: python -m vulture src dashboard.py fcc.py --min-confidence 80

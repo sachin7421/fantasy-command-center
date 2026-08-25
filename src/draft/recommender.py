@@ -403,6 +403,35 @@ class DraftRecommender:
             )
 
         results.sort(key=lambda r: r.score, reverse=True)
+
+        # Two filters run above - below-replacement noise, and positions this
+        # roster can no longer start - and each is right on its own. Together
+        # they can remove EVERY remaining player, which happens in the late
+        # rounds of a thin board. The caller then gets [], which renders as an
+        # empty panel: it reads as "no good options" rather than "this is
+        # broken", and on a 90-second clock nobody investigates a blank panel.
+        #
+        # There is always a best remaining player, so say who it is and be
+        # honest about why he was filtered out. Silence is the one answer this
+        # is not allowed to give.
+        if not results and available:
+            fallback = max(available, key=lambda p: p.vorp)
+            results = [
+                Recommendation(
+                    player=fallback,
+                    score=round(self._score_for(fallback.vorp, 1.0, 0.0), 2),
+                    vorp=fallback.vorp,
+                    need_multiplier=1.0,
+                    tier_urgency=0.0,
+                    survival=None,
+                    reasons=["best of what is left"],
+                    warnings=[
+                        "everyone left is below replacement or plays a position "
+                        "this roster cannot start another of"
+                    ],
+                )
+            ]
+
         return results[:top_n]
 
     # -- helpers for the UI --------------------------------------------------

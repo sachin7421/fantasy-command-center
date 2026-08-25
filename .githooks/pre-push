@@ -1,0 +1,27 @@
+#!/bin/sh
+# Run the full gate before anything leaves this machine.
+#
+# This hook exists because of a specific push: a broken f-string went to main
+# because the gate was not run, and CI reported it 47 seconds later. The checks
+# were not missing - running them was optional. This makes it the default.
+#
+# Enable once, per clone:
+#     git config core.hooksPath .githooks
+#
+# Skip deliberately when you know why (a WIP branch, a docs-only commit):
+#     git push --no-verify
+
+if [ -x ./.venv/Scripts/python.exe ]; then
+    PY=./.venv/Scripts/python.exe          # Windows
+elif [ -x ./.venv/bin/python ]; then
+    PY=./.venv/bin/python                  # macOS / Linux
+else
+    PY=python3
+fi
+
+echo "running the gate before push (tools/gate.py)"
+"$PY" tools/gate.py || {
+    echo ""
+    echo "Push aborted. Fix the above, or push with --no-verify if you meant it."
+    exit 1
+}

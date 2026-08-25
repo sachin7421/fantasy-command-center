@@ -118,7 +118,7 @@ def _search_secrets(secrets: Any, depth: int = 0) -> str | None:
         return None
     try:
         keys = list(secrets.keys())
-    except Exception:
+    except Exception:  # silent: not a mapping, so there is nothing to search
         return None
     present = set(keys)
 
@@ -131,7 +131,7 @@ def _search_secrets(secrets: Any, depth: int = 0) -> str | None:
     for key in keys:
         try:
             value = secrets[key]
-        except Exception:
+        except Exception:  # silent: one unreadable key must not hide the others
             continue
         if hasattr(value, "keys"):
             nested = _search_secrets(value, depth + 1)
@@ -150,7 +150,7 @@ def secret_key_names() -> list[str]:
         import streamlit as st
 
         return sorted(str(k) for k in st.secrets)
-    except Exception:
+    except Exception:  # silent: no streamlit, or no secrets file - both mean none
         return []
 
 
@@ -302,7 +302,7 @@ class Database:
     def _safe_rollback(self) -> None:
         try:
             self._conn.rollback()
-        except Exception:
+        except Exception:  # silent: rolling back a dead connection is a no-op
             pass
 
     def executescript(self, script: str) -> None:
@@ -324,7 +324,8 @@ class Database:
     def close(self) -> None:
         try:
             self._conn.close()
-        except Exception:  # pragma: no cover - closing twice is not an error
+        # silent: closing twice, or closing a dropped connection, is not an error
+        except Exception:  # pragma: no cover
             pass
 
     # -- convenience ---------------------------------------------------------

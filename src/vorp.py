@@ -10,6 +10,8 @@ flex slots and team count all come from Yahoo (spec 2.3).
 """
 from __future__ import annotations
 
+import logging
+
 from dataclasses import dataclass, field
 from collections.abc import Iterable, Sequence
 from src.storage import Database
@@ -30,6 +32,9 @@ DEFENSIVE_SLOTS = {"DEF", "DST", "D"}
 BENCH_SLOTS = {"BN", "IR", "IR+", "NA"}
 
 REAL_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DEF")
+
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -365,7 +370,14 @@ def _apply_prior_season(
         from src.analytics.priors import draft_adjustment, flag_players
 
         flags = flag_players(conn, season - 1)
-    except Exception:  # pragma: no cover - the board must never fail for this
+    except Exception:
+        # The board must never fail for this - but it must not go quiet either.
+        # Without the adjustment every value on the board changes, and a silent
+        # return leaves no way to tell that from the adjustment finding nothing.
+        log.warning(
+            "prior-season adjustment unavailable; the board is built from raw "
+            "projections only", exc_info=True,
+        )
         return False
     if not flags:
         return False

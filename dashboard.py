@@ -11,6 +11,7 @@ palette.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -23,6 +24,8 @@ from src.config import Config
 from src.draft.live import DraftTracker, resolve_player
 from src.draft.recommender import DraftRecommender, RosterState
 from src.draft.survival import DraftPosition
+
+log = logging.getLogger(__name__)
 
 st.set_page_config(
     page_title="Fantasy Command Center",
@@ -89,6 +92,10 @@ def get_context():
         conn.scalar("SELECT 1")
         return cfg, conn, league_key
     except Exception:
+        # A dropped connection is survivable and is survived here - but it is
+        # still an event. Unlogged, a pooler closing connections all afternoon
+        # is indistinguishable from an app that never had a problem.
+        log.info("database connection was dead; reconnecting", exc_info=True)
         _build_context.clear()
         return _build_context()
 
@@ -790,8 +797,13 @@ def _tab_edge(conn, season: int):
     )
     try:
         results = accuracy.score_sources(conn, season)
-    except Exception:
-        results = []
+    except Exception as exc:
+        # Distinguish "no data yet" from "the scorer broke". Both used to print
+        # the same reassuring sentence, which is how a crash spends a season
+        # disguised as a normal empty state.
+        log.warning("source accuracy scoring failed", exc_info=True)
+        st.warning(f"Source accuracy could not be computed: {exc}")
+        return
 
     if not results:
         st.info(

@@ -44,7 +44,7 @@ def configured_password() -> str | None:
                 cleaned = str(st.secrets[key]).strip()
                 if cleaned:
                     return cleaned
-    except Exception:
+    except Exception:  # silent: no streamlit secrets here; the env var path follows
         pass
     return None
 

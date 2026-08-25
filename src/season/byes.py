@@ -217,7 +217,7 @@ def _load_schedule(
         from src import db
 
         cached = db.cache_get(conn, f"nflverse:schedule:{season}")
-    except Exception:
+    except Exception:  # silent: no cached schedule is handled as no schedule below
         return {}
     if not cached:
         return {}

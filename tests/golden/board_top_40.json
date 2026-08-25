@@ -1,0 +1,322 @@
+[
+  {
+    "name": "RB1",
+    "points": 306.0,
+    "pos": "RB",
+    "rank": 1,
+    "tier": 1,
+    "vorp": 167.07
+  },
+  {
+    "name": "WR1",
+    "points": 295.8,
+    "pos": "WR",
+    "rank": 2,
+    "tier": 1,
+    "vorp": 159.6
+  },
+  {
+    "name": "RB2",
+    "points": 296.94,
+    "pos": "RB",
+    "rank": 3,
+    "tier": 1,
+    "vorp": 158.01
+  },
+  {
+    "name": "WR2",
+    "points": 291.6,
+    "pos": "WR",
+    "rank": 4,
+    "tier": 1,
+    "vorp": 155.4
+  },
+  {
+    "name": "WR3",
+    "points": 287.4,
+    "pos": "WR",
+    "rank": 5,
+    "tier": 1,
+    "vorp": 151.2
+  },
+  {
+    "name": "RB3",
+    "points": 289.12,
+    "pos": "RB",
+    "rank": 6,
+    "tier": 2,
+    "vorp": 150.2
+  },
+  {
+    "name": "WR4",
+    "points": 283.2,
+    "pos": "WR",
+    "rank": 7,
+    "tier": 1,
+    "vorp": 147.0
+  },
+  {
+    "name": "RB4",
+    "points": 282.02,
+    "pos": "RB",
+    "rank": 8,
+    "tier": 2,
+    "vorp": 143.09
+  },
+  {
+    "name": "WR5",
+    "points": 279.0,
+    "pos": "WR",
+    "rank": 9,
+    "tier": 1,
+    "vorp": 142.8
+  },
+  {
+    "name": "WR6",
+    "points": 274.8,
+    "pos": "WR",
+    "rank": 10,
+    "tier": 1,
+    "vorp": 138.6
+  },
+  {
+    "name": "RB5",
+    "points": 275.39,
+    "pos": "RB",
+    "rank": 11,
+    "tier": 3,
+    "vorp": 136.47
+  },
+  {
+    "name": "WR7",
+    "points": 270.6,
+    "pos": "WR",
+    "rank": 12,
+    "tier": 1,
+    "vorp": 134.4
+  },
+  {
+    "name": "RB6",
+    "points": 269.14,
+    "pos": "RB",
+    "rank": 13,
+    "tier": 3,
+    "vorp": 130.21
+  },
+  {
+    "name": "WR8",
+    "points": 266.4,
+    "pos": "WR",
+    "rank": 14,
+    "tier": 1,
+    "vorp": 130.2
+  },
+  {
+    "name": "WR9",
+    "points": 262.2,
+    "pos": "WR",
+    "rank": 15,
+    "tier": 1,
+    "vorp": 126.0
+  },
+  {
+    "name": "RB7",
+    "points": 263.17,
+    "pos": "RB",
+    "rank": 16,
+    "tier": 3,
+    "vorp": 124.24
+  },
+  {
+    "name": "TE1",
+    "points": 210.0,
+    "pos": "TE",
+    "rank": 17,
+    "tier": 1,
+    "vorp": 123.96
+  },
+  {
+    "name": "WR10",
+    "points": 258.0,
+    "pos": "WR",
+    "rank": 18,
+    "tier": 1,
+    "vorp": 121.8
+  },
+  {
+    "name": "RB8",
+    "points": 257.43,
+    "pos": "RB",
+    "rank": 19,
+    "tier": 3,
+    "vorp": 118.51
+  },
+  {
+    "name": "WR11",
+    "points": 253.8,
+    "pos": "WR",
+    "rank": 20,
+    "tier": 1,
+    "vorp": 117.6
+  },
+  {
+    "name": "WR12",
+    "points": 249.6,
+    "pos": "WR",
+    "rank": 21,
+    "tier": 1,
+    "vorp": 113.4
+  },
+  {
+    "name": "RB9",
+    "points": 251.89,
+    "pos": "RB",
+    "rank": 22,
+    "tier": 3,
+    "vorp": 112.97
+  },
+  {
+    "name": "WR13",
+    "points": 245.4,
+    "pos": "WR",
+    "rank": 23,
+    "tier": 1,
+    "vorp": 109.2
+  },
+  {
+    "name": "RB10",
+    "points": 246.53,
+    "pos": "RB",
+    "rank": 24,
+    "tier": 3,
+    "vorp": 107.6
+  },
+  {
+    "name": "TE2",
+    "points": 191.44,
+    "pos": "TE",
+    "rank": 25,
+    "tier": 1,
+    "vorp": 105.39
+  },
+  {
+    "name": "WR14",
+    "points": 241.2,
+    "pos": "WR",
+    "rank": 26,
+    "tier": 1,
+    "vorp": 105.0
+  },
+  {
+    "name": "RB11",
+    "points": 241.31,
+    "pos": "RB",
+    "rank": 27,
+    "tier": 3,
+    "vorp": 102.38
+  },
+  {
+    "name": "WR15",
+    "points": 237.0,
+    "pos": "WR",
+    "rank": 28,
+    "tier": 1,
+    "vorp": 100.8
+  },
+  {
+    "name": "RB12",
+    "points": 236.22,
+    "pos": "RB",
+    "rank": 29,
+    "tier": 3,
+    "vorp": 97.29
+  },
+  {
+    "name": "WR16",
+    "points": 232.8,
+    "pos": "WR",
+    "rank": 30,
+    "tier": 1,
+    "vorp": 96.6
+  },
+  {
+    "name": "WR17",
+    "points": 228.6,
+    "pos": "WR",
+    "rank": 31,
+    "tier": 1,
+    "vorp": 92.4
+  },
+  {
+    "name": "RB13",
+    "points": 231.25,
+    "pos": "RB",
+    "rank": 32,
+    "tier": 3,
+    "vorp": 92.32
+  },
+  {
+    "name": "TE3",
+    "points": 176.81,
+    "pos": "TE",
+    "rank": 33,
+    "tier": 2,
+    "vorp": 90.76
+  },
+  {
+    "name": "WR18",
+    "points": 224.4,
+    "pos": "WR",
+    "rank": 34,
+    "tier": 1,
+    "vorp": 88.2
+  },
+  {
+    "name": "RB14",
+    "points": 226.39,
+    "pos": "RB",
+    "rank": 35,
+    "tier": 3,
+    "vorp": 87.46
+  },
+  {
+    "name": "WR19",
+    "points": 220.2,
+    "pos": "WR",
+    "rank": 36,
+    "tier": 1,
+    "vorp": 84.0
+  },
+  {
+    "name": "RB15",
+    "points": 221.62,
+    "pos": "RB",
+    "rank": 37,
+    "tier": 3,
+    "vorp": 82.69
+  },
+  {
+    "name": "WR20",
+    "points": 216.0,
+    "pos": "WR",
+    "rank": 38,
+    "tier": 1,
+    "vorp": 79.8
+  },
+  {
+    "name": "TE4",
+    "points": 164.26,
+    "pos": "TE",
+    "rank": 39,
+    "tier": 2,
+    "vorp": 78.21
+  },
+  {
+    "name": "RB16",
+    "points": 216.94,
+    "pos": "RB",
+    "rank": 40,
+    "tier": 3,
+    "vorp": 78.01
+  }
+]
