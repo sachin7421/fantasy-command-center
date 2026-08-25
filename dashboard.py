@@ -164,19 +164,80 @@ def draft_view(cfg, conn, league_key):
     is_mine = on_the_clock == int(my_slot)
 
     # -- header ---------------------------------------------------------------
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Pick", current_pick, f"Round {position.current_round(current_pick)}")
-    c2.metric("On the clock", f"Slot {on_the_clock}", "YOU" if is_mine else None)
-    c3.metric(
-        "Your next pick", next_pick or "—",
-        f"{next_pick - current_pick} away" if next_pick else None,
-    )
-    c4.metric("Off the board", len(drafted), f"of {teams * rounds}")
+    # The pick number is EDITABLE, and it never gates anything. It used to be
+    # derived solely from how many picks had been typed in, and it disabled the
+    # draft controls whenever it disagreed with reality - so missing five
+    # opponent picks meant arriving at your own turn, on a 90-second clock,
+    # with every button greyed out and a message telling you to go do data
+    # entry first. Who is off the board and which pick we are on are two
+    # different facts; only the first has to be complete.
+    c1, c2, c3 = st.columns([1.1, 1.2, 1.7])
+    with c1:
+        chosen_pick = st.number_input(
+            "Pick", min_value=1, max_value=teams * rounds, value=int(current_pick),
+            step=1, key="pick_number",
+            help="Set this if the app has fallen behind the real draft.",
+        )
+        st.caption(f"Round {position.current_round(int(chosen_pick))}")
+    if int(chosen_pick) != current_pick:
+        written = tracker.skip_to(int(chosen_pick))
+        if written:
+            st.cache_data.clear()
+            st.rerun()
+        current_pick = int(chosen_pick)
+        on_the_clock = tracker.state.team_key_for_pick(current_pick)
+        is_mine = on_the_clock == int(my_slot)
+        next_pick = position.next_pick_after(current_pick)
+
+    with c2:
+        if is_mine:
+            st.metric("On the clock", "YOU", f"slot {my_slot}")
+        else:
+            until = position.picks_until_next(current_pick)
+            st.metric(
+                f"Slot {on_the_clock}",
+                f"{until} until you" if until else "on the clock",
+            )
+    with c3:
+        # Strictly-after, so while you are ON the clock this is your NEXT turn.
+        # Labelled accordingly: "Your next pick 22 - 19 away" read as "your
+        # pick is 19 away" at the exact moment it was not.
+        label = "Your next pick after this one" if is_mine else "Your next pick"
+        st.metric(
+            label, next_pick or "—",
+            f"{next_pick - current_pick} picks away" if next_pick else None,
+        )
 
     if is_mine:
         st.markdown(
-            "<div class='fcc-clock'>You are on the clock.</div>", unsafe_allow_html=True
+            "<div class='fcc-clock'>You are on the clock — "
+            f"pick {current_pick}.</div>", unsafe_allow_html=True
         )
+
+    # A draft already in progress on first open is usually last night's mock.
+    # `reset()` existed in the tracker and was reachable from nowhere, so the
+    # only way out was one Undo tap per pick.
+    if tracker.state.picks and not st.session_state.get("_fcc_draft_resumed"):
+        recorded = len(tracker.state.picks)
+        with st.container(border=True):
+            st.warning(
+                f"Resuming a draft already in progress — {recorded} "
+                f"pick(s) recorded, currently at pick {current_pick}."
+            )
+            keep, wipe = st.columns(2)
+            with keep:
+                if st.button("Continue this draft", width="stretch",
+                             type="primary"):
+                    st.session_state["_fcc_draft_resumed"] = True
+                    st.rerun()
+            with wipe:
+                if st.button("Start a new draft", width="stretch"):
+                    tracker.reset()
+                    st.session_state["_fcc_draft_resumed"] = True
+                    st.session_state.pop("pick_number", None)
+                    st.cache_data.clear()
+                    st.rerun()
+        st.stop()
 
     # -- mark drafted ---------------------------------------------------------
     # This is the whole manual workflow, so it says so rather than relying on
@@ -188,29 +249,47 @@ def draft_view(cfg, conn, league_key):
             f"slot {on_the_clock}{' (you)' if is_mine else ''}</div>",
             unsafe_allow_html=True,
         )
-        search_col, undo_col = st.columns([5, 1])
+        search_col, skip_col, undo_col = st.columns([4, 1.2, 1.4])
         with search_col:
             query = st.text_input(
                 "Mark a player drafted",
                 placeholder="Any player taken by anyone - type a name, then tap the match",
                 label_visibility="collapsed",
+                key="mark_query",
             )
+        with skip_col:
+            if st.button("Didn't catch it", width="stretch",
+                         help="Advance one pick without naming anyone. He stays "
+                              "on the board until you spot him."):
+                tracker.record_pick(None, source="skipped")
+                st.cache_data.clear()
+                st.rerun()
         with undo_col:
-            if st.button("Undo", width="stretch"):
-                tracker.undo_last()
+            last = max(tracker.state.picks) if tracker.state.picks else None
+            if st.button(f"Undo {last}" if last else "Undo", width="stretch",
+                         disabled=last is None):
+                removed = tracker.undo_last()
+                if removed:
+                    st.toast(f"Undid pick {removed.pick}")
                 st.cache_data.clear()
                 st.rerun()
 
         st.caption(
-            "Every pick goes here, yours and everyone else's, in order. The "
-            "snake order decides which team each one belongs to, so the "
-            "recommendations only stay right if no pick is skipped."
+            "Every pick goes here, yours and everyone else's. Missing a name "
+            "only costs you that one player - the rest of the board stays "
+            "usable, and you can set the pick number above at any time."
         )
 
         if query:
             matches = [p for p in resolve_player(board, query) if p.player_key not in drafted]
             if not matches:
-                st.caption("No available player matches that.")
+                # Distinguish "nothing matches" from "you just recorded the only
+                # match": the second used to render as an error immediately
+                # after a successful action.
+                st.caption(
+                    "Nothing left on the board matches that - he may already "
+                    "be recorded."
+                )
             cols = st.columns(min(4, max(1, len(matches[:8]))))
             for i, player in enumerate(matches[:8]):
                 with cols[i % len(cols)]:
@@ -218,7 +297,12 @@ def draft_view(cfg, conn, league_key):
                         f"{player.name} · {player.position}{player.position_rank}",
                         key=f"mark_{player.player_key}", width="stretch",
                     ):
-                        tracker.record_pick(player.player_key)
+                        entry = tracker.record_pick(player.player_key)
+                        st.toast(
+                            f"Pick {entry.pick}: {player.name} → "
+                            f"slot {entry.team_key}"
+                        )
+                        st.session_state["mark_query"] = ""
                         st.cache_data.clear()
                         st.rerun()
 
@@ -250,6 +334,55 @@ def draft_view(cfg, conn, league_key):
 
 
 # --- panes -------------------------------------------------------------------
+
+def _record_buttons(tracker, player, rank, is_mine, my_slot, current_pick,
+                    on_the_clock, key_prefix):
+    """One control per player, labelled by what it does to THIS pick.
+
+    Three things this replaces, all of them live-draft hazards:
+
+    * A disabled "Draft to me" whenever the app's pick counter disagreed with
+      the real draft. Falling five picks behind meant reaching your own turn
+      with every control greyed out. Nothing is ever disabled now; taking a
+      player simply sets the pick to yours.
+    * A "Taken" button that, on your own pick, resolved the team from the snake
+      order - which is you - and silently put the player on your roster. The
+      two buttons did exactly the same thing when it mattered most, one of them
+      labelled the opposite.
+    * Twenty buttons per screen of which ten were ever live.
+
+    "Take" always means mine and always works. "Gone" always means somebody
+    else's, and on your own pick it hands the pick to the next team rather than
+    to you.
+    """
+    take_col, gone_col = st.columns(2)
+    with take_col:
+        if st.button(
+            f"Take at {current_pick}" if is_mine else "Take (it's my pick)",
+            key=f"{key_prefix}_take_{player.player_key}", width="stretch",
+            type="primary" if rank == 1 and is_mine else "secondary",
+            help=None if is_mine else
+                 f"Records him to you and moves the draft to pick {current_pick}.",
+        ):
+            entry = tracker.record_pick(player.player_key, team_key=str(my_slot))
+            st.toast(f"Pick {entry.pick}: {player.name} → your roster")
+            st.cache_data.clear()
+            st.rerun()
+    with gone_col:
+        if st.button(
+            f"Gone at {current_pick}",
+            key=f"{key_prefix}_gone_{player.player_key}", width="stretch",
+            help="Someone else took him.",
+        ):
+            # Never to my own slot: on my pick, an opponent taking him means the
+            # pick was not mine after all.
+            owner = tracker.state.team_key_for_pick(current_pick)
+            team = str(owner if owner != int(my_slot) else "?")
+            entry = tracker.record_pick(player.player_key, team_key=team)
+            st.toast(f"Pick {entry.pick}: {player.name} → slot {team}")
+            st.cache_data.clear()
+            st.rerun()
+
 
 def _pane_recommendations(recommender, drafted, roster, current_pick, tracker,
                           my_slot, is_mine, on_the_clock):
@@ -298,29 +431,8 @@ def _pane_recommendations(recommender, drafted, roster, current_pick, tracker,
         # decides which team owns it - so the two differ only in whether the
         # player lands on my roster. A single button labelled by the team on
         # the clock read as if it were about that player, not about the pick.
-        draft_col, taken_col = st.columns(2)
-        with draft_col:
-            if st.button(
-                "Draft to me", key=f"take_{p.player_key}", width="stretch",
-                type="primary" if i == 1 and is_mine else "secondary",
-                disabled=not is_mine,
-                help=None if is_mine else (
-                    f"Pick {current_pick} belongs to slot {on_the_clock}. Record "
-                    "the picks before yours first, then this becomes available."
-                ),
-            ):
-                tracker.record_pick(p.player_key, team_key=str(my_slot))
-                st.cache_data.clear()
-                st.rerun()
-        with taken_col:
-            if st.button(
-                "Taken", key=f"gone_{p.player_key}", width="stretch",
-                help=f"Someone else took him with pick {current_pick} "
-                     f"(slot {on_the_clock}).",
-            ):
-                tracker.record_pick(p.player_key)
-                st.cache_data.clear()
-                st.rerun()
+        _record_buttons(tracker, p, i, is_mine, my_slot, current_pick,
+                        on_the_clock, key_prefix="rec")
 
 
 def _pane_board(board, drafted, phone_layout, tracker, my_slot, is_mine,
@@ -384,23 +496,8 @@ def _pane_board(board, drafted, phone_layout, tracker, my_slot, is_mine,
         f"**{chosen.name}** · {chosen.position}{chosen.position_rank} · "
         f"{chosen.points:.0f} proj"
     )
-    draft_col, taken_col = st.columns(2)
-    with draft_col:
-        if st.button(
-            "Draft to me", key=f"board_take_{chosen.player_key}", width="stretch",
-            type="primary" if is_mine else "secondary", disabled=not is_mine,
-            help=None if is_mine else
-                 f"Pick {current_pick} belongs to slot {on_the_clock}.",
-        ):
-            tracker.record_pick(chosen.player_key, team_key=str(my_slot))
-            st.cache_data.clear()
-            st.rerun()
-    with taken_col:
-        if st.button("Taken", key=f"board_gone_{chosen.player_key}",
-                     width="stretch"):
-            tracker.record_pick(chosen.player_key)
-            st.cache_data.clear()
-            st.rerun()
+    _record_buttons(tracker, chosen, 1, is_mine, my_slot, current_pick,
+                    on_the_clock, key_prefix="board")
 
 
 def _pane_shape(board, drafted):

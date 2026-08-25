@@ -111,9 +111,28 @@ class DraftTracker:
 
     # -- manual entry (the fallback that must always work) -------------------
 
+    def skip_to(self, target_pick: int) -> int:
+        """Fill the gap up to `target_pick` with picks whose player is unknown.
+
+        The live-draft reality this exists for: three players went while you
+        were looking at your own roster and you caught one name. Without a way
+        to say so, the app's pick counter falls behind the real draft and every
+        round-based rule - survival probability, deferral, need - is computed
+        for the wrong pick. Anonymous picks advance the count and the snake
+        order without claiming anyone is off the board, so the players you did
+        not catch stay available and cost you only themselves.
+
+        Returns the number of placeholder picks written.
+        """
+        written = 0
+        while self.state.next_pick < target_pick:
+            self.record_pick(None, source="skipped")
+            written += 1
+        return written
+
     def record_pick(
         self,
-        player_key: str,
+        player_key: str | None,
         pick: int | None = None,
         team_key: str | None = None,
         source: str = "manual",

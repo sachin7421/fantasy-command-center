@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib
 import json
 import pkgutil
+from pathlib import Path
 
 import pytest
 
@@ -906,3 +907,85 @@ def test_score_is_monotone_in_vorp_at_every_need_level():
         assert ordered == sorted([v for v, _ in scored], reverse=True), (
             f"need={need} ranked {ordered}"
         )
+
+
+# --- the draft must never lock you out --------------------------------------
+
+def test_falling_behind_the_real_draft_is_recoverable(tmp_path):
+    """The live-draft failure the pick counter used to cause.
+
+    `next_pick` was derived purely from how many picks had been typed in, and
+    it gated the draft controls. Missing five opponent picks meant arriving at
+    your own turn, on a 90-second clock, with every button disabled and a
+    message telling you to go do data entry first.
+    """
+    from src.draft.live import DraftTracker
+
+    conn = db.init_db(tmp_path / "behind.db")
+    for i in range(40):
+        _player(conn, f"p{i}|RB", f"Player {i}", "RB", 200.0 - i)
+    conn.commit()
+
+    tracker = DraftTracker(conn, LEAGUE, 12, 14, None)
+    tracker.record_pick("p0|RB")
+    tracker.record_pick("p1|RB")
+    assert tracker.state.next_pick == 3
+
+    # Slot 3's second pick is 22. Jump straight there.
+    written = tracker.skip_to(22)
+    assert written == 19
+    assert tracker.state.next_pick == 22
+    assert tracker.state.team_key_for_pick(22) == 3
+
+    # The players nobody named are still on the board - a missed pick costs
+    # only that player, not the board.
+    assert tracker.state.drafted_keys == {"p0|RB", "p1|RB"}
+
+    tracker.record_pick("p5|RB", team_key="3")
+    assert tracker.state.roster_of("3") == ["p5|RB"]
+
+
+def test_an_unknown_pick_advances_the_count_without_claiming_a_player(tmp_path):
+    from src.draft.live import DraftTracker
+
+    conn = db.init_db(tmp_path / "unknown.db")
+    _player(conn, "seen|RB", "Seen", "RB", 200.0)
+    conn.commit()
+
+    tracker = DraftTracker(conn, LEAGUE, 12, 14, None)
+    tracker.record_pick(None, source="skipped")
+    assert tracker.state.next_pick == 2
+    assert tracker.state.drafted_keys == set()
+
+    tracker.record_pick("seen|RB")
+    assert tracker.state.drafted_keys == {"seen|RB"}
+
+    # And an anonymous pick can be undone like any other.
+    tracker.undo_last()
+    tracker.undo_last()
+    assert tracker.state.next_pick == 1
+
+
+def test_the_draft_controls_are_never_disabled(tmp_path, monkeypatch):
+    """A control that disappears mid-draft is worse than one that is wrong."""
+    import os
+
+    from streamlit.testing.v1 import AppTest
+
+    monkeypatch.setenv("DATABASE_URL", "")
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "dashboard.py"),
+                            default_timeout=180)
+    app.run()
+    assert not app.exception, [str(e.value) for e in app.exception]
+
+    record_buttons = [
+        b for b in app.button
+        if b.label.startswith(("Take", "Gone", "Didn't catch"))
+    ]
+    assert record_buttons, [b.label for b in app.button]
+    assert not any(b.disabled for b in record_buttons), (
+        [(b.label, b.disabled) for b in record_buttons]
+    )
+
+    # And the pick number is settable rather than purely derived.
+    assert any(n.label == "Pick" for n in app.number_input)
