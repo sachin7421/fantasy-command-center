@@ -48,6 +48,38 @@ DEFAULT_VOLATILITY = 0.75
 #: Games a player is projected over for a full-season number.
 REGULAR_SEASON_GAMES = 17
 
+#: Within-player weekly spread as sd = a + b*mean, fitted per position over
+#: 22,175 player-weeks (tools/calibrate.py).
+#:
+#: A constant coefficient of variation forces the standard deviation through
+#: the origin, and the real relationship has a large positive intercept. The
+#: consequence ran in both directions and in the wrong one each time: a 25-PPG
+#: quarterback was given sd 12.0 against a fitted 7.7 (+55%), and a 6-PPG
+#: quarterback 2.9 against 5.8 (-50%). Since a start/sit call ranks on
+#: `mean + risk * sd`, that systematically over-picked stars when chasing
+#: upside and over-benched them when protecting a floor - the exact decision
+#: this module exists to inform.
+VOLATILITY_FIT = {
+    "QB": (4.722, 0.147),
+    "RB": (1.907, 0.419),
+    "WR": (1.939, 0.450),
+    "TE": (1.123, 0.554),
+}
+
+#: Season-total coefficient of variation, measured directly rather than derived
+#: from the weekly figure.
+#:
+#: `weekly / sqrt(17)` assumes every player plays every week. Measured mean
+#: games played among fantasy-relevant players: QB 10.8, RB 14.2, WR 14.3,
+#: TE 14.6, with standard deviations of 4.3 to 5.8. The games-played term ALONE
+#: is larger than the entire spread the old formula produced, so every
+#: draft-board floor and ceiling was roughly two to three times too tight.
+#:
+#:     CV_season^2 = CV_games^2 + CV_ppg^2
+SEASON_VOLATILITY = {"QB": 0.562, "RB": 0.373, "WR": 0.343, "TE": 0.343,
+                     "K": 0.30, "DEF": 0.35}
+DEFAULT_SEASON_VOLATILITY = 0.40
+
 
 @dataclass
 class Blend:
@@ -110,7 +142,24 @@ def effective_volatility(position: str | None, week: int = 0) -> float:
     weekly = POSITION_VOLATILITY.get(position or "", DEFAULT_VOLATILITY)
     if week and week > 0:
         return weekly
-    return weekly / math.sqrt(REGULAR_SEASON_GAMES)
+    return SEASON_VOLATILITY.get(position or "", DEFAULT_SEASON_VOLATILITY)
+
+
+def intrinsic_spread(points: float, position: str | None, week: int = 0) -> float:
+    """Standard deviation of a projection, from the fitted relationship.
+
+    Weekly numbers use the fitted `sd = a + b*mean`, which has a real intercept;
+    season totals use the measured season-level coefficient of variation, which
+    includes the games-played uncertainty a per-week figure cannot see.
+    """
+    points = abs(points)
+    if week and week > 0:
+        fit = VOLATILITY_FIT.get(position or "")
+        if fit:
+            intercept, slope = fit
+            return max(0.0, intercept + slope * points)
+        return points * POSITION_VOLATILITY.get(position or "", DEFAULT_VOLATILITY)
+    return points * effective_volatility(position, week)
 
 
 def blend_player(
@@ -141,7 +190,7 @@ def blend_player(
     # disagreement stopped affecting the band at all.
     spread = statistics.pstdev(list(values.values())) if len(values) > 1 else 0.0
 
-    intrinsic = abs(points) * effective_volatility(position, week)
+    intrinsic = intrinsic_spread(points, position, week)
     stdev = math.sqrt(spread**2 + intrinsic**2)
     return Blend(
         player_key=player_key,

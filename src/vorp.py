@@ -74,6 +74,10 @@ class ReplacementLevel:
     points: float
     dedicated_starters: int
     flex_share: float
+    #: True when the position has fewer projected players than starting slots,
+    #: so there is no genuine replacement to measure against and every VORP at
+    #: that position is optimistic.
+    scarce: bool = False
 
 
 @dataclass
@@ -155,7 +159,12 @@ def compute_replacement_levels(
     flex_share: dict[str, float] = dict.fromkeys(baseline, 0.0)
     cursor = dict(baseline)
     for slot, count in flex.items():
-        eligible = FLEX_ELIGIBILITY[slot]
+        # Sorted, because FLEX_ELIGIBILITY holds sets and Python randomises
+        # string hashing per process: on an exact points tie the flex spot went
+        # to a different position from one run to the next, shifting every
+        # replacement level and therefore the whole board. Rare with float
+        # projections, but a numeric pipeline should not be nondeterministic.
+        eligible = sorted(FLEX_ELIGIBILITY[slot])
         for _ in range(num_teams * count):
             best_pos, best_points = None, float("-inf")
             for pos in eligible:
@@ -175,12 +184,30 @@ def compute_replacement_levels(
         if not pool:
             continue
         rank = int(baseline.get(pos, 0) + flex_share.get(pos, 0.0))
-        # The replacement player is the *next* one after the last starter.
-        index = min(max(rank, 1), len(pool)) - 1
+        # The replacement player is the *next* one after the last starter -
+        # which is what the comment always said and the arithmetic never did.
+        # `rank` counts starters, so the last starter is pool[rank - 1] and the
+        # first man off the bench is pool[rank]. Taking the starter understated
+        # every VORP by that position's own starter-N to starter-N+1 gap, and
+        # since that gap is much steeper at RB and TE than at QB, it distorted
+        # exactly the cross-position comparison this module exists to make.
+        #
+        # If a position has fewer players than starting slots, there IS no
+        # replacement: it is not that the worst player in the pool is freely
+        # available, it is that nothing is. Clamping to the last man handed
+        # every one of them a large positive VORP.
+        replacement_index = max(rank, 1)
+        if replacement_index >= len(pool):
+            scarce = True
+            replacement_points = pool[-1].points
+        else:
+            scarce = False
+            replacement_points = pool[replacement_index].points
         levels[pos] = ReplacementLevel(
             position=pos,
-            rank=max(rank, 1),
-            points=pool[index].points,
+            rank=max(rank, 1) + 1,
+            points=replacement_points,
+            scarce=scarce,
             dedicated_starters=dedicated.get(pos, 0),
             flex_share=flex_share.get(pos, 0.0),
         )
@@ -243,7 +270,8 @@ def _apply_prior_season(
     season: int,
     players_by_position: dict[str, list[PlayerValue]],
     strength: float,
-) -> None:
+) -> bool:
+    """Returns True when any projection was actually moved."""
     """Attach prior-season regression flags, and optionally act on them.
 
     Flagging is always on and costs nothing; adjusting the projection is opt-in
@@ -260,9 +288,11 @@ def _apply_prior_season(
 
         flags = flag_players(conn, season - 1)
     except Exception:  # pragma: no cover - the board must never fail for this
-        return
+        return False
     if not flags:
-        return
+        return False
+
+    moved = False
 
     for pool in players_by_position.values():
         for player in pool:
@@ -274,8 +304,12 @@ def _apply_prior_season(
             player.prior_note = flag.reasons[0] if flag.reasons else None
             if strength > 0:
                 adjusted = draft_adjustment(player.points, flag, strength)
+                if adjusted != player.points:
+                    moved = True
                 player.prior_adjustment = round(adjusted - player.points, 2)
                 player.points = round(adjusted, 2)
+
+    return moved
 
 
 def build_board(
@@ -327,8 +361,14 @@ def build_board(
             players_by_position[pos] = pool
 
     # What last season says. Attached before replacement levels are computed,
-    # because an adjusted projection changes where replacement sits.
-    _apply_prior_season(conn, season, players_by_position, prior_strength)
+    # because an adjusted projection changes where replacement sits - and the
+    # pools are re-sorted and re-ranked afterwards, because it also changes the
+    # ORDER, which every index into these lists assumes.
+    if _apply_prior_season(conn, season, players_by_position, prior_strength):
+        for pos, pool in players_by_position.items():
+            pool.sort(key=lambda p: p.points, reverse=True)
+            for i, player in enumerate(pool, 1):
+                player.position_rank = i
 
     replacement = compute_replacement_levels(
         players_by_position, starting_slots, num_teams

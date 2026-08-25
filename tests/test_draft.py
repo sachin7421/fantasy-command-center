@@ -139,7 +139,11 @@ def test_flex_share_is_simulated_not_assumed():
         {"RB": rbs, "WR": wrs}, {"RB": 2, "WR": 2, "W/R/T": 2}, num_teams=12
     )
     assert levels["WR"].flex_share > levels["RB"].flex_share
-    assert levels["RB"].rank == 24 + levels["RB"].flex_share
+    # `rank` is the rank of the REPLACEMENT player, so it is one past the last
+    # starter: 24 dedicated RB starters plus the flex spots RBs claimed, then
+    # the next man. The old arithmetic pointed at the last starter himself and
+    # understated every VORP by that position's own starter-to-bench gap.
+    assert levels["RB"].rank == 24 + levels["RB"].flex_share + 1
     # Total flex spots handed out equals teams x flex slots.
     assert levels["WR"].flex_share + levels["RB"].flex_share == 24
 

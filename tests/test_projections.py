@@ -89,11 +89,33 @@ def test_agreement_does_not_imply_certainty():
     assert blend.stdev > 0
 
 
-def test_volatile_positions_get_wider_bands():
-    qb = blend_player("q", {"sleeper": 200.0}, WEIGHTS, "QB")
-    wr = blend_player("w", {"sleeper": 200.0}, WEIGHTS, "WR")
+def test_volatile_positions_get_wider_weekly_bands():
+    """Week to week, a receiver swings more than a quarterback."""
+    qb = blend_player("q", {"sleeper": 18.0}, WEIGHTS, "QB", week=5)
+    wr = blend_player("w", {"sleeper": 18.0}, WEIGHTS, "WR", week=5)
     assert POSITION_VOLATILITY["WR"] > POSITION_VOLATILITY["QB"]
     assert wr.stdev > qb.stdev
+
+
+def test_over_a_season_the_quarterback_band_is_the_widest():
+    """The ordering INVERTS at season scale, and that is not a bug.
+
+    Weekly spread and season spread are different quantities. A season total is
+    games played times points per game, and quarterbacks play the fewest games
+    of any position - a measured mean of 10.8 with a standard deviation of 5.8,
+    against about 14.3 +/- 4.3 for a receiver. That availability term dominates,
+    so the position with the steadiest weeks has the least certain season.
+
+    The old model could not express this at all: it derived the season figure as
+    weekly / sqrt(17), which assumes everyone plays every week, and produced
+    bands two to three times too tight for every position.
+    """
+    from src.projections import SEASON_VOLATILITY
+
+    qb = blend_player("q", {"sleeper": 200.0}, WEIGHTS, "QB")
+    wr = blend_player("w", {"sleeper": 200.0}, WEIGHTS, "WR")
+    assert SEASON_VOLATILITY["QB"] > SEASON_VOLATILITY["WR"]
+    assert qb.stdev > wr.stdev
 
 
 # --- risk mode ---------------------------------------------------------------

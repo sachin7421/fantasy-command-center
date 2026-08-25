@@ -37,21 +37,32 @@ MIN_GAMES = 8
 #: |z| beyond which a player is worth flagging on the draft board.
 Z_FLAG = 1.25
 
-#: How much of a prior-season residual carries into the next season.
+#: How much of a prior-season residual carries into the next season, by
+#: position. Regression SLOPES over 2022-25 (tools/calibrate.py):
 #:
-#: MEASURED, not assumed. Correlating each player's points-over-expected across
-#: consecutive seasons of nflverse opportunity data:
+#:     QB 0.253    TE 0.196    RB 0.180    WR 0.113
 #:
-#:     2023 -> 2024   r = +0.202  (n=208)
-#:     2024 -> 2025   r = +0.226  (n=202)
-#:     2023 -> 2025   r = +0.243  (n=169)
-#:
-#: So roughly a fifth of the gap repeats and about four fifths evaporates: there
-#: IS a persistent skill component - elite players really do beat league-average
-#: efficiency - but it is small, and most of any single season's overperformance
-#: is luck. Carrying the whole residual forward would fade every star; carrying
-#: none would ignore real ability. This is the middle, and it is empirical.
-RESIDUAL_PERSISTENCE = 0.22
+#: Two corrections to what stood here before. It was a single number, 0.22, and
+#: persistence varies by more than a factor of two across positions - a
+#: quarterback's edge over expected repeats twice as much as a receiver's. And
+#: it was quoted as a CORRELATION drawn from three hand-picked season pairs;
+#: the coefficient a shrinkage step needs is the slope, and the two unfavourable
+#: pairs were omitted (2022->23 r=0.119, 2022->25 r=0.049). Across all six pairs
+#: the mean is nearer 0.16 than 0.22, so the old constant sat at the optimistic
+#: end of its own evidence.
+RESIDUAL_PERSISTENCE = {"QB": 0.253, "RB": 0.180, "WR": 0.113, "TE": 0.196}
+DEFAULT_PERSISTENCE = 0.16
+
+#: Mean points-over-expected by position, over the same window. This is NOT
+#: luck: it is a standing offset in the upstream expected-points model, the same
+#: sign every season (tight ends run +0.18 to +0.39 every year). Subtracting a
+#: RAW residual therefore removes a structural level that was never noise -
+#: about four season points of pure bias from every flagged tight end.
+POSITIONAL_RESIDUAL_BIAS = {"QB": -0.424, "RB": -0.004, "WR": 0.044, "TE": 0.181}
+
+
+def persistence_for(position: str | None) -> float:
+    return RESIDUAL_PERSISTENCE.get(position or "", DEFAULT_PERSISTENCE)
 
 
 @dataclass
@@ -247,32 +258,58 @@ def measured_volatility(conn: Database, season: int) -> dict[str, float]:
     }
 
 
-def expected_carryover(residual: float) -> float:
+def expected_carryover(residual: float, position: str | None = None) -> float:
     """The part of a prior-season residual worth expecting to repeat.
 
-    See RESIDUAL_PERSISTENCE for the measurement behind the coefficient.
+    See RESIDUAL_PERSISTENCE for the measurement behind the coefficients.
     """
-    return RESIDUAL_PERSISTENCE * residual
+    return persistence_for(position) * residual
 
 
 def draft_adjustment(
-    projection: float, flag: PriorFlag | None, strength: float = 1.0
+    projection: float,
+    flag: PriorFlag | None,
+    strength: float = 1.0,
+    projected_games: float = 17.0,
 ) -> float:
     """Nudge a season projection for prior-year luck.
 
-    Deliberately small, and in the OPPOSITE direction to the residual: a player
-    who overperformed is expected to give most of it back. Only the portion that
-    does NOT persist is removed, so a genuinely elite player keeps the part of
-    his edge that is real.
+    In the OPPOSITE direction to the residual: a player who overperformed what
+    his own usage implied is expected to give most of it back. Only the portion
+    that does NOT persist is removed, so a genuinely elite player keeps the part
+    of his edge that is real.
 
-    `strength` scales the whole adjustment; the projection sources already price
-    in some of this, so applying it at full force would double-count.
+    Three corrections over the first version of this, all of which mattered:
+
+    * **The residual is centred on the position first.** The module argues at
+      the top that residuals must be read relative to the positional norm, and
+      then the adjustment used the raw figure - so it also subtracted the
+      standing offset in the upstream expected-points model, which is the same
+      sign every year and is not luck at all.
+    * **It scales by PROJECTED games, not last season's.** Scaling by games
+      already played meant the player with the noisier, shorter sample received
+      the SMALLER correction: two identical +2.0 pts/gm players were cut by
+      12.5 and 26.5 points depending only on how much they played last year.
+    * **It is continuous in the evidence.** The old hard `Z_FLAG` gate made a
+      season projection jump by 14 to 21 points between z=1.249 and z=1.250, on
+      a statistic whose own standard deviation is about 1.1. A shrinkage
+      estimator has no business having a cliff in it; the correction now fades
+      in smoothly and `is_flagged` governs only what gets SHOWN to a human.
     """
-    if flag is None or not flag.is_flagged:
+    if flag is None:
         return projection
-    # Per game -> per season, then remove only the non-repeating share.
-    non_persistent = flag.residual * (1.0 - RESIDUAL_PERSISTENCE)
-    return projection - strength * non_persistent * flag.games
+
+    centred = flag.residual - POSITIONAL_RESIDUAL_BIAS.get(flag.position, 0.0)
+    non_persistent = centred * (1.0 - persistence_for(flag.position))
+
+    # Fade in over the last half of the flagging threshold rather than
+    # switching on at it.
+    z = abs(flag.z)
+    ramp = max(0.0, min(1.0, (z - Z_FLAG * 0.5) / max(Z_FLAG * 0.5, 1e-6)))
+    if ramp <= 0.0:
+        return projection
+
+    return projection - strength * ramp * non_persistent * projected_games
 
 
 def usage_priors(conn: Database, season: int) -> dict[str, dict[str, float]]:

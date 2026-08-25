@@ -189,11 +189,23 @@ def test_teammates_increase_lineup_variance():
     assert distributions.totals(stacked)[1] > distributions.totals(spread_out)[1]
 
 
-def test_two_backs_on_one_team_are_negatively_correlated():
-    """They divide a fixed number of carries, so they hedge each other."""
+def test_two_backs_on_one_team_do_not_hedge_each_other():
+    """The "they split a fixed number of carries" intuition is false.
+
+    It was asserted here as a negative correlation of -0.20 and shipped for
+    months. Measured over 22,175 player-weeks (tools/calibrate.py) the figure is
+    +0.026 for same-team receivers and +0.011 for backs: in a week the team
+    runs more, both backs gain, and the splitting effect cancels against it.
+
+    So two backs are very slightly MORE volatile together than apart, not less
+    - and the practical consequence is that a same-team pair never got the
+    variance discount the old constant handed it.
+    """
     same = [forecast("RB1", "RB", 14, 6, "SF"), forecast("RB2", "RB", 10, 5, "SF")]
     apart = [forecast("RB1", "RB", 14, 6, "SF"), forecast("RB2", "RB", 10, 5, "GB")]
-    assert distributions.totals(same)[1] < distributions.totals(apart)[1]
+    assert distributions.totals(same)[1] >= distributions.totals(apart)[1]
+    # And the effect is small enough to be nearly a rounding difference.
+    assert distributions.totals(same)[1] - distributions.totals(apart)[1] < 0.5
 
 
 def test_gamma_parameters_respect_the_floor_at_zero():
@@ -554,3 +566,74 @@ def test_league_report_is_honest_with_no_history():
     from src.analytics.faab import league_report
 
     assert any("no faab history" in line.lower() for line in league_report({}))
+
+
+# --- the simulation and the closed form must describe the same thing --------
+
+def test_simulated_spread_matches_the_closed_form():
+    """`simulate()` used to sum INDEPENDENT draws while reporting the
+    CORRELATED sd from `totals()` in the same dictionary - measured at 19.0
+    against a reported 26.9 on a four-player stack, with a p10-p90 band that
+    matched neither. Whatever else is true, one dict must describe one
+    distribution.
+    """
+    import random
+    import statistics
+
+    stack = [
+        distributions.PlayerForecast("qb", "QB1", "QB", "KC", 22.0, 8.0),
+        distributions.PlayerForecast("w1", "WR1", "WR", "KC", 14.0, 7.0),
+        distributions.PlayerForecast("te", "TE1", "TE", "KC", 12.0, 6.0),
+        distributions.PlayerForecast("w2", "WR2", "WR", "KC", 11.0, 6.0),
+    ]
+    mean, closed_sd = distributions.totals(stack)
+    rng = random.Random(11)
+    draws = [distributions.sample_lineup(stack, rng) for _ in range(20_000)]
+
+    assert statistics.fmean(draws) == pytest.approx(mean, rel=0.02)
+    assert statistics.stdev(draws) == pytest.approx(closed_sd, rel=0.12)
+
+    out = distributions.simulate(stack, 110.0, 20.0, trials=8_000)
+    band_sd = (out["p90"] - out["p10"]) / 2.563
+    assert band_sd == pytest.approx(out["sd"], rel=0.15), out
+
+
+def test_a_stack_really_is_drawn_correlated():
+    """The QB-to-pass-catcher link has to survive into the samples, not just
+    into the closed-form variance."""
+    import random
+    import statistics
+
+    stacked = [
+        distributions.PlayerForecast("qb", "QB1", "QB", "KC", 22.0, 8.0),
+        distributions.PlayerForecast("w1", "WR1", "WR", "KC", 14.0, 7.0),
+        distributions.PlayerForecast("te", "TE1", "TE", "KC", 12.0, 6.0),
+    ]
+    apart = [
+        distributions.PlayerForecast("qb", "QB1", "QB", "KC", 22.0, 8.0),
+        distributions.PlayerForecast("w1", "WR1", "WR", "BUF", 14.0, 7.0),
+        distributions.PlayerForecast("te", "TE1", "TE", "SF", 12.0, 6.0),
+    ]
+    rng_a, rng_b = random.Random(5), random.Random(5)
+    sd_stacked = statistics.stdev(
+        [distributions.sample_lineup(stacked, rng_a) for _ in range(15_000)]
+    )
+    sd_apart = statistics.stdev(
+        [distributions.sample_lineup(apart, rng_b) for _ in range(15_000)]
+    )
+    assert sd_stacked > sd_apart * 1.05, (sd_stacked, sd_apart)
+
+
+def test_the_bust_tail_is_thicker_than_a_bare_gamma():
+    """Measured P(points < 2 | startable) is 3.4%-6.1%; a bare gamma gives
+    0.2%-2.3%. The dud game is most of what a floor is meant to describe."""
+    import random
+
+    forecast = distributions.PlayerForecast("w", "WR1", "WR", "LAR", 16.0, 7.0)
+    rng = random.Random(3)
+    duds = sum(
+        1 for _ in range(20_000)
+        if distributions.sample_lineup([forecast], rng) < 2.0
+    )
+    rate = duds / 20_000
+    assert 0.03 < rate < 0.12, rate
