@@ -51,14 +51,46 @@ def survival_probability(
     pick_number: int,
     adp_stdev: float | None = None,
     already_drafted: bool = False,
+    current_pick: int | None = None,
 ) -> float:
-    """P(this player is still on the board when pick `pick_number` arrives)."""
+    """P(still on the board at `pick_number`, GIVEN he is on it now.
+
+    The conditioning is the point. Unconditionally this is `S(next)`, the
+    chance a player lasts that long measured from before the draft started -
+    but during a draft you can see that he is still there, and the useful
+    quantity is `S(next) / S(current)`.
+
+    The difference is largest for exactly the players who matter most, the ones
+    falling past their ADP:
+
+        ADP 35, still available at pick 50, my next pick is 62
+            unconditional  0.017      conditional  0.145      8.3x
+
+    Treating a faller as already dead is what an unconditional model does, and
+    a faller is the best value on the board.
+    """
     if already_drafted:
         return 0.0
     if adp is None:
         return UNDRAFTED_SURVIVAL
+
     sigma = sigma_for(adp, adp_stdev)
-    return max(0.0, min(1.0, 1.0 - normal_cdf((pick_number - adp) / sigma)))
+
+    def survives_to(pick: int) -> float:
+        return max(0.0, min(1.0, 1.0 - normal_cdf((pick - adp) / sigma)))
+
+    unconditional = survives_to(pick_number)
+    if current_pick is None or current_pick >= pick_number:
+        return unconditional
+
+    # He is observably still available at `current_pick`, so renormalise.
+    so_far = survives_to(current_pick)
+    if so_far <= 1e-9:
+        # The model says he should already be gone and he is not, so it has
+        # nothing useful to say. Fall back to the undrafted prior rather than
+        # dividing by ~0 and claiming certainty.
+        return UNDRAFTED_SURVIVAL
+    return max(0.0, min(1.0, unconditional / so_far))
 
 
 @dataclass

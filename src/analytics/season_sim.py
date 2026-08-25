@@ -73,6 +73,42 @@ class Odds:
         )
 
 
+def _play_bracket(seeds: Sequence[TeamSeason], rng: random.Random) -> TeamSeason | None:
+    """A standard seeded bracket with byes for the top seeds.
+
+    The previous version was structurally incoherent. With six spots it paired
+    (1,6), (3,4), (5,2) in the first round and then gave the winner of 3-v-4 a
+    bye in the second - so the 3 seed needed TWO wins for the title and the 2
+    seed needed THREE, and neither of the top two got the bye. `title_odds` was
+    not an estimate of anything.
+
+    The real format: teams beyond the nearest power of two play a wild-card
+    round, the top seeds sit it out, and the field is re-seeded each round so
+    the best surviving team always faces the worst.
+    """
+    field = list(seeds)
+    if not field:
+        return None
+
+    while len(field) > 1:
+        # How many play this round: enough to bring the field to a power of two.
+        target = 1 << (len(field) - 1).bit_length() >> 1
+        playing = 2 * (len(field) - target)
+        byes = field[: len(field) - playing]
+        contest = field[len(field) - playing:]
+
+        winners = []
+        for i in range(len(contest) // 2):
+            high, low = contest[i], contest[len(contest) - 1 - i]
+            winners.append(high if high.sample(rng) >= low.sample(rng) else low)
+
+        # Re-seed: survivors keep their original seeding order.
+        order = {team.team_key: i for i, team in enumerate(seeds)}
+        field = sorted(byes + winners, key=lambda team: order[team.team_key])
+
+    return field[0]
+
+
 def simulate(
     teams: Sequence[TeamSeason],
     remaining: Sequence[Matchup],
@@ -120,20 +156,9 @@ def simulate(
             if position <= playoff_spots:
                 made_playoffs[team.team_key] += 1
 
-        # A simple seeded bracket: higher seed advances with probability set by
-        # the two teams' distributions. Enough to separate "in the field" from
-        # "actually likely to win it".
-        bracket = standings[:playoff_spots]
-        while len(bracket) > 1:
-            survivors = []
-            for i in range(0, len(bracket) - 1, 2):
-                a, b = bracket[i], bracket[len(bracket) - 1 - i]
-                survivors.append(a if a.sample(rng) >= b.sample(rng) else b)
-            if len(bracket) % 2:
-                survivors.append(bracket[len(bracket) // 2])
-            bracket = survivors
-        if bracket:
-            won_title[bracket[0].team_key] += 1
+        champion = _play_bracket(standings[:playoff_spots], rng)
+        if champion is not None:
+            won_title[champion.team_key] += 1
 
     return sorted(
         [

@@ -225,6 +225,7 @@ class DraftRecommender:
         available: Sequence[PlayerValue],
         next_pick: int | None,
         tier_index: dict[tuple[str, int], list[PlayerValue]] | None = None,
+        current_pick: int | None = None,
     ) -> tuple[float, float | None, list[str]]:
         """Boost the last man in a tier when he will not survive the wait.
 
@@ -236,7 +237,12 @@ class DraftRecommender:
         if next_pick is None:
             return 1.0, None, reasons
 
-        survival = survival_probability(player.adp, next_pick, player.adp_stdev)
+        # Conditioned on him still being here: a player who has already fallen
+        # past his ADP is far likelier to keep falling than the unconditional
+        # curve says, and fallers are where the value is.
+        survival = survival_probability(
+            player.adp, next_pick, player.adp_stdev, current_pick=current_pick
+        )
 
         if tier_index is None:
             tier_index = build_tier_index(available)
@@ -329,7 +335,7 @@ class DraftRecommender:
                 continue  # another one of these cannot start; it is dead weight
             need = self.need_multiplier(player.position, roster, round_number)
             urgency, survival, tier_reasons = self.tier_urgency(
-                player, available, next_pick, tier_index
+                player, available, next_pick, tier_index, current_pick=current_pick
             )
 
             # VORP can be negative, and a negative multiplied by a bonus points
