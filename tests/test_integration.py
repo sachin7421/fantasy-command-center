@@ -990,13 +990,38 @@ def test_an_unknown_pick_advances_the_count_without_claiming_a_player(tmp_path):
 
 
 def test_the_draft_controls_are_never_disabled(tmp_path, monkeypatch):
-    """A control that disappears mid-draft is worse than one that is wrong."""
+    """A control that disappears mid-draft is worse than one that is wrong.
 
+    Seeds its OWN board. The first version of this test read the repository's
+    data/league.db, which is gitignored - so it passed on a laptop that had
+    synced and failed in CI, where the database is empty, the draft view
+    returns early with "No projections stored", and there are no buttons at all
+    to assert about. A test that depends on data not in the repository is
+    testing the machine, not the code.
+    """
     from streamlit.testing.v1 import AppTest
 
+    from src.config import Config
+
+    seeded = tmp_path / "board.db"
+    conn = db.init_db(seeded)
+    for position, count, base in (("RB", 40, 300.0), ("WR", 40, 285.0),
+                                  ("QB", 20, 360.0), ("TE", 20, 210.0),
+                                  ("DEF", 12, 130.0)):
+        for i in range(1, count + 1):
+            _player(conn, f"{position.lower()}{i}|{position}",
+                    f"{position} Player {i}", position, base - i * 4.0)
+    conn.commit()
+
+    # Point the dashboard at it. It builds its own Config from config.yaml, so
+    # the path has to be overridden on the class rather than passed in.
+    monkeypatch.setattr(Config, "db_path", property(lambda self: str(seeded)))
     monkeypatch.setenv("DATABASE_URL", "")
-    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "dashboard.py"),
-                            default_timeout=180)
+
+    app = AppTest.from_file(
+        str(Path(__file__).resolve().parents[1] / "dashboard.py"),
+        default_timeout=180,
+    )
     app.run()
     assert not app.exception, [str(e.value) for e in app.exception]
 

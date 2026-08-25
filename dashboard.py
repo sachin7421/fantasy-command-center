@@ -32,6 +32,22 @@ st.set_page_config(
 )
 
 
+def _hosted() -> bool:
+    """Whether this is the deployed app rather than someone running it locally.
+
+    A SQLite backend is completely normal on a laptop and a catastrophe on
+    Streamlit Cloud, so the two need different messages.
+    """
+    import os
+
+    return bool(
+        os.environ.get("STREAMLIT_SERVER_HEADLESS")
+        or os.environ.get("STREAMLIT_RUNTIME_ENV")
+        or os.environ.get("HOSTNAME", "").startswith("streamlit")
+        or Path("/mount/src").exists()
+    )
+
+
 @st.cache_resource
 def _build_context():
     cfg = Config.load("config.yaml")
@@ -150,7 +166,24 @@ def draft_view(cfg, conn, league_key):
 
     board = board_for(cfg, conn, season, slots, teams)
     if not board.players:
-        st.warning("No projections stored. Run `python fcc.py sync` first.")
+        # Name the RIGHT cause. "Run fcc sync" is actively misleading when the
+        # app is simply pointed at the wrong database: a DATABASE_URL that is
+        # missing or unparseable falls back to a local SQLite file, which on a
+        # hosted deployment is always empty. Syncing would not fix it, and the
+        # message sent people to do exactly that.
+        if conn.dialect == "sqlite" and _hosted():
+            st.error("This app is reading a local SQLite file, not your league database.")
+            st.markdown(
+                "Everything here will look empty because that file is empty.\n\n"
+                "**Fix:** set `DATABASE_URL` in this app's secrets to the full "
+                "connection string - it starts `postgresql://` and ends "
+                "`/postgres`. A common mistake is pasting only the password."
+            )
+            from src.storage import describe_url_problem
+
+            st.caption(describe_url_problem())
+        else:
+            st.warning("No projections stored. Run `python fcc.py sync` first.")
         return
 
     tracker = DraftTracker(conn, league_key, teams, rounds, None)
