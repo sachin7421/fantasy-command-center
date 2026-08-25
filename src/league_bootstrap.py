@@ -69,6 +69,49 @@ ROSTER_POSITIONS = [
 ]
 
 
+#: How this league actually behaved in 2025, read off the standings page on
+#: 2026-08-25. Recorded because the FAAB model's only alternative is a guess
+#: until Yahoo access lands and the transaction log can be parsed properly.
+#:
+#:   team                       budget left   waiver moves
+#:   NUB                              $100              6
+#:   Fusballers                        $73             11
+#:   Butt Fumblers                     $50             15
+#:   Galloping Gandhi                  $38             29
+#:   STFU Y!                           $35             24
+#:   Ehcanadiantuxedo                  $32             24
+#:   Problematic Team Mascot           $25             26
+#:   Aaryan's Lamarvelous Team          $7             35
+#:   Pipelayers                         $4             17
+#:   Frustration Makes You Stronger     $3             21
+#:   BIG PENIX!                         $0             50
+#:   Dirties                            $0             32
+#:
+#: Two things worth knowing from it. The league SPENDS: median remaining budget
+#: was $28, so a typical manager used about 70% of it, and two finished at zero.
+#: A bid model that assumes people hoard would be wrong here.
+#:
+#: And Butt Fumblers is passive on waivers by this league's standards - 15
+#: moves against a median of 24, ending with half the budget unspent, while
+#: scoring the most points in the league and finishing 10-4. That is money left
+#: on the table.
+#:
+#: Three teams have since been renamed, so these do not all map onto the 2026
+#: team ids by name alone.
+LEAGUE_2025_BUDGET_LEFT = {
+    "NUB": 100, "Fusballers": 73, "Butt Fumblers": 50, "Galloping Gandhi": 38,
+    "STFU Y!": 35, "Ehcanadiantuxedo": 32, "Problematic Team Mascot": 25,
+    "Aaryan's Lamarvelous Team": 7, "Pipelayers": 4,
+    "Frustration Makes You Stronger": 3, "BIG PENIX!": 0, "Dirties": 0,
+}
+LEAGUE_2025_WAIVER_MOVES = {
+    "BIG PENIX!": 50, "Aaryan's Lamarvelous Team": 35, "Dirties": 32,
+    "Galloping Gandhi": 29, "Problematic Team Mascot": 26, "STFU Y!": 24,
+    "Ehcanadiantuxedo": 24, "Frustration Makes You Stronger": 21,
+    "Pipelayers": 17, "Butt Fumblers": 15, "Fusballers": 11, "NUB": 6,
+}
+
+
 def build_settings() -> dict:
     """A Yahoo-shaped league settings payload."""
     return {
