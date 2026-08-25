@@ -233,6 +233,16 @@ def connect_postgres(url: str) -> Database:
     if dsn.startswith("postgres://"):
         dsn = "postgresql://" + dsn[len("postgres://"):]
 
+    # Require TLS unless the caller has already said otherwise. libpq defaults
+    # to sslmode=prefer, which is opportunistic: no certificate verification and
+    # a silent fallback to plaintext if the server declines. For a connection
+    # string that carries a database superuser password across the public
+    # internet, that default is not acceptable. `require` encrypts without
+    # pinning a CA; set sslmode=verify-full in DATABASE_URL once you have the
+    # provider's root certificate installed, and this will respect it.
+    if "sslmode=" not in dsn:
+        dsn += ("&" if "?" in dsn else "?") + "sslmode=require"
+
     conn = psycopg.connect(
         dsn,
         row_factory=dict_row,

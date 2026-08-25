@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
+
+log = logging.getLogger("fcc.auth")
 
 SESSION_KEY = "_fcc_authenticated"
 ENV_KEYS = ("APP_PASSWORD", "DASHBOARD_PASSWORD")
@@ -54,6 +57,26 @@ def check(candidate: str, expected: str) -> bool:
     return hmac.compare_digest(_digest(candidate), _digest(expected))
 
 
+def is_hosted() -> bool:
+    """Whether this process is serving a publicly reachable dashboard.
+
+    Streamlit Community Cloud sets HOSTNAME to a container id and provides no
+    dedicated marker, so the check is deliberately broad: anything that is not
+    obviously a developer's own machine is treated as hosted. Being wrong in
+    that direction costs a password prompt; being wrong the other way publishes
+    the league to the internet.
+    """
+    if os.environ.get("FCC_REQUIRE_AUTH", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    if os.environ.get("FCC_LOCAL", "").strip().lower() in ("1", "true", "yes"):
+        return False
+    return any(
+        os.environ.get(marker)
+        for marker in ("STREAMLIT_SERVER_HEADLESS", "STREAMLIT_RUNTIME_ENV",
+                       "DYNO", "RENDER", "FLY_APP_NAME", "K_SERVICE")
+    )
+
+
 def require_password() -> bool:
     """Render the gate. Returns True when the app may proceed.
 
@@ -64,7 +87,26 @@ def require_password() -> bool:
 
     expected = configured_password()
     if not expected:
-        return True  # unconfigured: local use, no gate
+        # Fail CLOSED when hosted. This used to return True: if the secret was
+        # absent, misnamed, blank after stripping, or if st.secrets raised for
+        # any reason - and both lookups above swallow exceptions - the entire
+        # dashboard rendered to the public internet with no warning and no log
+        # line. The whole confidentiality of a public URL rested on a secret
+        # being present, and nothing checked that it was.
+        if is_hosted():
+            st.title("Fantasy Command Center")
+            st.error(
+                "No dashboard password is configured, so this app has locked "
+                "itself rather than serve the league publicly."
+            )
+            st.markdown(
+                "Set **APP_PASSWORD** in this app's secrets and reboot it. "
+                "To run without a gate deliberately - on your own machine - "
+                "set `FCC_LOCAL=1`."
+            )
+            log.error("APP_PASSWORD is not configured; refusing to serve.")
+            st.stop()
+        return True  # local use, no gate
 
     if st.session_state.get(SESSION_KEY) == _digest(expected):
         return True

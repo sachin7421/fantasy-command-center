@@ -544,6 +544,27 @@ def _my_faab_left(ctx: Context, season: int, settings: dict) -> int:
     return default
 
 
+def _require_team(ctx: Context) -> str | None:
+    """The configured team id, or None after printing why the job cannot run.
+
+    Callers must treat None as a FAILURE. Every roster-dependent job used to
+    print a note and `return EXIT_OK`, so with `my_team_id` blank six of the
+    seven scheduled jobs did nothing, sent nothing, and left a green workflow
+    run behind. The whole of season mode was off and the only evidence was the
+    absence of email.
+    """
+    team_key = ctx.team_key()
+    if team_key:
+        return team_key
+    print("league.my_team_id is not set, so this job has nothing to work on.")
+    print("")
+    print("Set it in config.yaml under `league:`. It is your team's number in")
+    print("the league (1-12), visible in the Yahoo URL for your team page as")
+    print("the digits after `/t/`. Once Yahoo access is approved,")
+    print("`fcc sync-settings` can confirm it.")
+    return None
+
+
 def cmd_job(ctx: Context, args) -> int:
     """Run one season job and notify (spec 6)."""
     from src.season import byes, injuries, lineup, recap, reminders, trades, waivers
@@ -555,8 +576,16 @@ def cmd_job(ctx: Context, args) -> int:
     notifier = ctx.notifier()
     notification: Notification | None = None
 
+    injury_report = None
     if args.job == "injuries":
-        report = injuries.run(ctx.conn, ctx.league_key, team_key, season, week)
+        # Not exempt from needing a team: with no roster key every status change
+        # falls through the "not my problem" branch, so this job ran daily and
+        # was guaranteed to find nothing.
+        if not _require_team(ctx):
+            return EXIT_FAIL
+        injury_report = report = injuries.run(
+            ctx.conn, ctx.league_key, team_key, season, week
+        )
         if report.first_run:
             print("Injury baseline established; changes will be reported from the next run.")
         else:
@@ -564,9 +593,8 @@ def cmd_job(ctx: Context, args) -> int:
         notification = injuries.to_notification(report, week, season)
 
     elif args.job == "lineup":
-        if not team_key:
-            print("league.my_team_id is not set; run `fcc whoami` once Yahoo auth is configured.")
-            return EXIT_OK
+        if not _require_team(ctx):
+            return EXIT_FAIL
         report = lineup.run(
             ctx.conn, ctx.league_key, team_key, season, week, slots,
             risk_mode=str(ctx.cfg.get("season.risk_mode", "auto")),
@@ -583,9 +611,8 @@ def cmd_job(ctx: Context, args) -> int:
         notification = lineup.to_notification(report, season)
 
     elif args.job == "waivers":
-        if not team_key:
-            print("league.my_team_id is not set; skipping.")
-            return EXIT_OK
+        if not _require_team(ctx):
+            return EXIT_FAIL
         settings = ctx.settings()
         report = waivers.run(
             ctx.conn, ctx.league_key, team_key, season, week,
@@ -600,9 +627,8 @@ def cmd_job(ctx: Context, args) -> int:
         notification = waivers.to_notification(report, season)
 
     elif args.job == "byes":
-        if not team_key:
-            print("league.my_team_id is not set; skipping.")
-            return EXIT_OK
+        if not _require_team(ctx):
+            return EXIT_FAIL
         report = byes.run(ctx.conn, ctx.league_key, team_key, season, week, slots,
                           playoff_weeks=tuple(ctx.cfg.get("season.playoff_weeks", [15, 16, 17])))
         if not report.has_data:
@@ -612,9 +638,8 @@ def cmd_job(ctx: Context, args) -> int:
         notification = byes.to_notification(report, season)
 
     elif args.job == "recap":
-        if not team_key:
-            print("league.my_team_id is not set; skipping.")
-            return EXIT_OK
+        if not _require_team(ctx):
+            return EXIT_FAIL
         report = recap.run(ctx.conn, ctx.league_key, team_key, season, max(1, week - 1), slots)
         if not report.has_data:
             print(f"No week {report.week} scores stored "
@@ -651,24 +676,43 @@ def cmd_job(ctx: Context, args) -> int:
         notification = reminders.to_notification(found, season, week)
 
     elif args.job == "trades":
-        if not team_key:
-            print("league.my_team_id is not set; skipping.")
-            return EXIT_OK
+        if not _require_team(ctx):
+            return EXIT_FAIL
         ideas = trades.run(ctx.conn, ctx.league_key, team_key, season, week, slots)
         print(f"{len(ideas)} mutually-beneficial trade idea(s).")
         notification = trades.to_notification(ideas, season, week)
 
     if notification is None:
+        # Nothing to say, but the run completed: advance the injury baseline so
+        # the same non-events are not re-examined tomorrow.
+        if injury_report is not None:
+            injuries.commit(ctx.conn, injury_report)
         print("Nothing actionable; no notification sent.")
         return EXIT_OK
 
     if args.dry_run:
         print("\n--- notification preview ---")
         print(notification.text())
+        if injury_report is not None:
+            print("")
+            print("(dry run: the injury baseline was NOT advanced, so this")
+            print(" report is still pending and will send on the next run.)")
         return EXIT_OK
 
     result = notifier.send(notification)
     print(f"Notification: {result}")
+    if result.get("errors"):
+        # A revoked app password or an SMTP timeout used to leave a green run
+        # behind forever. The finding was computed correctly and nobody saw it,
+        # which is indistinguishable from a quiet week.
+        for channel, message in result["errors"].items():
+            print(f"  delivery FAILED on {channel}: {message}", file=sys.stderr)
+        # The injury baseline is deliberately NOT advanced here: nobody has seen
+        # this change yet, so the next run must report it again.
+        return EXIT_FAIL
+
+    if injury_report is not None:
+        injuries.commit(ctx.conn, injury_report)
     return EXIT_OK
 
 
@@ -926,8 +970,8 @@ def cmd_startsit(ctx: Context, args) -> int:
     week = args.week if args.week is not None else ctx.current_week()
     team_key = ctx.team_key()
     if not team_key:
-        print("league.my_team_id is not set; run `fcc sync-settings` once Yahoo is wired.")
-        return EXIT_OK
+        _require_team(ctx)
+        return EXIT_FAIL
 
     rows = ctx.conn.fetchall(
         """

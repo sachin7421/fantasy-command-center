@@ -61,6 +61,10 @@ class InjuryReport:
     changes: list[StatusChange] = field(default_factory=list)
     checked: int = 0
     first_run: bool = False
+    #: The statuses to store once this report has actually been delivered.
+    #: Held rather than written so a failed send does not consume the delta.
+    pending_snapshot: dict[str, str] = field(default_factory=dict)
+
 
     @property
     def actionable(self) -> list[StatusChange]:
@@ -185,15 +189,23 @@ def run(
     week: int,
     opponent_team_key: str | None = None,
     watch_keys: Iterable[str] = (),
+    commit_snapshot: bool = True,
 ) -> InjuryReport:
-    """Snapshot, diff against yesterday, and classify every change."""
+    """Snapshot, diff against yesterday, and classify every change.
+
+    The new snapshot is NOT written here. Advancing it before the notification
+    is delivered makes the report single-use: a re-run, an SMTP failure, or the
+    daily path running this job twice consumed the delta and the alert was gone
+    for good. `--dry-run` had the same effect, so an injury report could not be
+    previewed without destroying it.
+
+    The caller commits it with `commit(conn, report)` once delivery succeeds.
+    """
     statuses = current_statuses(conn)
     previous = db.snapshot_latest(conn, SNAPSHOT_KIND)
-    db.snapshot_put(
-        conn, SNAPSHOT_KIND, {k: v["status"] for k, v in statuses.items()}
-    )
 
     report = InjuryReport(checked=len(statuses), first_run=previous is None)
+    report.pending_snapshot = {k: v["status"] for k, v in statuses.items()}
     if previous is None:
         # Nothing to diff against yet; establish the baseline silently rather
         # than firing an alert for every currently-injured player in the NFL.
@@ -257,6 +269,12 @@ def run(
         )
     )
     return report
+
+
+def commit(conn: Database, report: InjuryReport) -> None:
+    """Advance the baseline. Call only after the report has been delivered."""
+    if report.pending_snapshot:
+        db.snapshot_put(conn, SNAPSHOT_KIND, report.pending_snapshot)
 
 
 def to_notification(report: InjuryReport, week: int, season: int) -> Notification | None:

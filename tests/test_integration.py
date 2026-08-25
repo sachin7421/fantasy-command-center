@@ -704,3 +704,73 @@ def test_undo_puts_a_player_back_on_the_board(tmp_path):
     assert removed is not None and removed.player_key == "u1|RB"
     assert "u1|RB" not in tracker.state.drafted_keys
     assert tracker.state.next_pick == 2
+
+
+# --- a report nobody received must not be consumed --------------------------
+
+def test_an_injury_report_survives_a_failed_delivery(tmp_path):
+    """The baseline used to advance inside `run`, before anything was sent.
+
+    A re-run, an SMTP failure, or the daily path running injuries twice threw
+    the alert away for good - and `--dry-run` did the same, so an injury report
+    could not be previewed without destroying it.
+    """
+    from src.season import injuries
+
+    conn = db.init_db(tmp_path / "injuries.db")
+    _player(conn, "hurt|RB", "Hurt Player", "RB", 200.0)
+    conn.execute(
+        "INSERT INTO rosters(league_key, team_key, team_name, player_key, "
+        "selected_pos, week, fetched_at) VALUES (?,?,?,?,?,?,?)",
+        (LEAGUE, MY_TEAM, "Butt Fumblers", "hurt|RB", "RB", WEEK, db.utcnow()),
+    )
+
+    def record(status, when):
+        conn.execute(
+            "INSERT INTO injuries(player_key, status, source, observed_at) "
+            "VALUES (?,?,?,?)",
+            ("hurt|RB", status, "sleeper", when),
+        )
+        conn.commit()
+
+    record("Questionable", "2026-10-01T12:00:00+00:00")
+    baseline = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK)
+    assert baseline.first_run is True
+    injuries.commit(conn, baseline)
+
+    record("Out", "2026-10-02T12:00:00+00:00")
+
+    # Read it twice without committing: the delta must still be there.
+    first = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK)
+    assert [c.player_key for c in first.actionable] == ["hurt|RB"]
+
+    second = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK)
+    assert [c.player_key for c in second.actionable] == ["hurt|RB"], (
+        "reading the report must not consume it"
+    )
+
+    # Only after an explicit commit does it stop being news.
+    injuries.commit(conn, second)
+    third = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK)
+    assert third.actionable == []
+
+
+def test_a_roster_less_job_fails_rather_than_reporting_success(tmp_path, capsys):
+    """Six of seven scheduled jobs used to no-op and leave a green run behind."""
+    config = tmp_path / "noteam.yaml"
+    config.write_text(
+        "league:\n"
+        '  league_id: "796511"\n'
+        "  season: 2026\n"
+        "paths:\n"
+        f'  env_dir: "{tmp_path.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    for job in ("waivers", "lineup", "byes", "recap", "trades", "injuries"):
+        code = cli.main(
+            ["--config", str(config), "--db", str(tmp_path / "x.db"),
+             job, "--week", "5", "--dry-run"]
+        )
+        out = capsys.readouterr().out
+        assert code != 0, f"fcc {job} reported success with no team configured"
+        assert "my_team_id is not set" in out

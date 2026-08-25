@@ -203,6 +203,9 @@ def test_manufactured_status_change_fires_exactly_one_notification(injury_league
     first = injuries.run(conn, "nfl.l.1", "1", 2026, 5)
     assert first.first_run is True
     assert injuries.to_notification(first, 5, 2026) is None
+    # `run` no longer advances the baseline by itself; the caller commits once
+    # the report has been delivered, so a failed send cannot consume the delta.
+    injuries.commit(conn, first)
 
     # Manufacture the change.
     _record_injury(conn, key, "Out", "2026-10-02T12:00:00+00:00")

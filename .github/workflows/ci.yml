@@ -1,0 +1,63 @@
+# Tests and static analysis on every push.
+#
+# This is the gate that did not exist. `jobs.yml` runs the scheduled season
+# jobs; nothing ever ran the test suite or the analysers automatically, so the
+# entire quality apparatus was opt-in by memory. Both recurring defect classes
+# in this repository - code written and never connected, and a model refactored
+# without its callers - are inside the competence of the tools below, and both
+# shipped anyway because nothing ran them.
+#
+# mypy is not gated yet: it currently reports errors, most of them cascades from
+# a single variable-rebinding pattern. It runs in report-only mode until that is
+# cleaned up, then `continue-on-error` comes off and it becomes a real gate.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Deliberately NO secrets. The suite must never reach the hosted database,
+    # and conftest.py enforces that from the other side.
+    env:
+      PYTHONIOENCODING: utf-8
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Tests
+        run: python -m pytest tests -q
+
+      - name: Lint
+        run: python -m ruff check src dashboard.py fcc.py tests
+
+      - name: Types (report only, not yet gating)
+        run: python -m mypy src dashboard.py fcc.py
+        continue-on-error: true
+
+      - name: Dead code
+        run: python -m vulture src dashboard.py fcc.py --min-confidence 80
+
+      - name: Security
+        run: python -m bandit -r src -q -ll
