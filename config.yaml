@@ -3,13 +3,14 @@
 
 league:
   # Yahoo numeric league id, e.g. "123456" (from your league URL).
-  # Leave blank and run `fcc leagues` to have the tool list yours.
+  # Your Yahoo league id, from the league URL.
   league_id: "796511"
   game_code: "nfl"
   # Season year. Leave blank to auto-resolve to the current NFL season.
   season: 2026
   # Your own team id within the league (integer, 1..N).
-  # Leave blank and run `fcc whoami` to auto-detect it.
+  # Your team's number in the league (1-12), from your team page URL after
+  # `/t/`. REQUIRED: every roster-dependent job fails without it.
   my_team_id:
 
 paths:
@@ -102,10 +103,19 @@ notifications:
     # then put it in .env as SMTP_PASSWORD.
     smtp_host: "smtp.gmail.com"
     smtp_port: 587
-    from_addr: "sachin8@gmail.com"
-    to_addr: "sachin8@gmail.com"
-    # SMTP_USERNAME defaults to from_addr. SMTP_PASSWORD must be set in .env
-    # (locally) and in GitHub Actions secrets (for the scheduled jobs).
+    # Addresses come from the environment, NOT from here: this file is in a
+    # public repository, and the from address doubles as the SMTP username -
+    # so a real address here publishes half of a credential pair.
+    #
+    #   NOTIFY_TO_ADDR    where reports are sent
+    #   NOTIFY_FROM_ADDR  optional; defaults to SMTP_USERNAME
+    #   SMTP_USERNAME     the mailbox
+    #   SMTP_PASSWORD     a Google app password, never the account password
+    #
+    # Set them in .env locally and in GitHub Actions secrets for the scheduled
+    # jobs. `fcc doctor` reports whether they are present.
+    from_addr: ""
+    to_addr: ""
   desktop:
     enabled: true
   # Never re-send an identical unchanged fact (spec 6.6).

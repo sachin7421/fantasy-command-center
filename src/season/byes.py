@@ -276,7 +276,9 @@ def to_notification(report: ByeReport, season: int) -> Notification | None:
             lines.append(f"  {outlook.player} ({outlook.team}): {matchups}")
     elif not report.playoff_available:
         lines.append("")
-        lines.append("Playoff SOS unavailable: run `fcc sync-schedule` to load it.")
+        # There is no `fcc sync-schedule`; the schedule arrives with the
+        # nflverse leg of the ordinary sync.
+        lines.append("Playoff SOS unavailable: run `fcc sync` to load the schedule.")
 
     urgency = "high" if report.problem_weeks else "low"
     return Notification(

@@ -128,11 +128,30 @@ class Notifier:
                 if fn(notification):
                     delivered.append(name)
             except Exception as exc:
-                errors[name] = str(exc)
-                log.warning("Notification via %s failed: %s", name, exc)
+                # Redacted: this string is printed by `fcc test-notify` and
+                # logged, and a requests error carries the full URL.
+                safe = self._safe_error(exc)
+                errors[name] = safe
+                log.warning("Notification via %s failed: %s", name, safe)
 
         self.record(notification, notified=bool(delivered))
         return {"sent": bool(delivered), "channels": delivered, "errors": errors}
+
+    @staticmethod
+    def _safe_error(exc: Exception) -> str:
+        """An error message with any credential-bearing URL removed.
+
+        `requests` puts the full request URL into HTTPError.__str__, so a
+        failing Discord post carried the webhook token - and a failing odds
+        request carried the API key - into anything that printed the error.
+        `fcc test-notify` prints exactly that, and it is a dispatchable job on
+        a public repository.
+        """
+        import re
+
+        text = str(exc)
+        text = re.sub(r"https?://\S+", "<url redacted>", text)
+        return re.sub(r"(?i)(token|key|password|secret)=\S+", r"=<redacted>", text)
 
     def _send_discord(self, n: Notification) -> bool:
         url = env("DISCORD_WEBHOOK_URL") or self.cfg.get("notifications.discord.webhook_url")
@@ -143,7 +162,17 @@ class Notifier:
         content = f"{prefix}**{n.title}**\n{n.body()}"
         if len(content) > DISCORD_LIMIT:
             content = content[: DISCORD_LIMIT - 20] + "\n... (truncated)"
-        response = requests.post(url, json={"content": content}, timeout=15)
+        response = requests.post(
+            url,
+            json={
+                "content": content,
+                # Notification lines carry TEAM NAMES, which any league-mate
+                # controls. A team called "@everyone" would make every
+                # scheduled job mass-ping the channel.
+                "allowed_mentions": {"parse": []},
+            },
+            timeout=15,
+        )
         response.raise_for_status()
         return True
 
@@ -157,8 +186,24 @@ class Notifier:
         from src import email_render
 
         host = self.cfg.get("notifications.email.smtp_host")
-        to_addr = self.cfg.get("notifications.email.to_addr")
-        from_addr = self.cfg.get("notifications.email.from_addr") or to_addr
+        # Environment first. config.yaml is committed to a PUBLIC repository,
+        # and the from address doubles as the SMTP username by default - so
+        # putting a real address there publishes half of a credential pair, and
+        # tells anyone reading which mailbox to attack.
+        # Falls back to the mailbox we authenticate as, which is already a
+        # secret in every deployment - so email works with nothing extra to
+        # configure, and no address has to live in the committed config.
+        to_addr = (
+            env("NOTIFY_TO_ADDR")
+            or self.cfg.get("notifications.email.to_addr")
+            or env("SMTP_USERNAME")
+        )
+        from_addr = (
+            env("NOTIFY_FROM_ADDR")
+            or env("SMTP_USERNAME")
+            or self.cfg.get("notifications.email.from_addr")
+            or to_addr
+        )
         username = env("SMTP_USERNAME") or from_addr
         password = env("SMTP_PASSWORD")
 

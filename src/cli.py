@@ -189,6 +189,29 @@ def cmd_doctor(ctx: Context, args) -> int:
     has_creds = ctx.yahoo_configured()
     print(f"\n  yahoo oauth : {'configured' if has_creds else 'NOT configured - run: fcc setup'}")
 
+    # The settings whose absence makes something do nothing. Each of these has
+    # silently disabled part of the product at least once - a blank my_team_id
+    # turned six of seven scheduled jobs into no-ops that still exited 0.
+    print("\n  configuration:")
+    team = ctx.team_key()
+    print(f"    [{'ok  ' if team else 'FAIL'}] league.my_team_id"
+          + ("" if team else "     every roster-dependent job fails without this"))
+    for label, present, hint in (
+        ("notify to address",
+         bool(os.environ.get("NOTIFY_TO_ADDR")
+              or ctx.cfg.get("notifications.email.to_addr")
+              or os.environ.get("SMTP_USERNAME")),
+         "set NOTIFY_TO_ADDR (or SMTP_USERNAME, which it falls back to)"),
+        ("smtp password",
+         bool(os.environ.get("SMTP_PASSWORD")),
+         "set SMTP_PASSWORD - no email is sent without it"),
+        ("dashboard password",
+         bool(os.environ.get("APP_PASSWORD")),
+         "set APP_PASSWORD - the hosted app refuses to serve without it"),
+    ):
+        print(f"    [{'ok  ' if present else 'warn'}] {label:<20}"
+              + ("" if present else f" {hint}"))
+
     counts = {
         table: ctx.conn.execute(f"SELECT COUNT(*) c FROM {table}").fetchone()["c"]
         for table in ("players", "projections", "projections_blended", "adp",
