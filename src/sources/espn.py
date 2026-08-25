@@ -43,7 +43,7 @@ WEEK_SPLIT = 1
 STAT_MAP: dict[str, str] = {
     # Passing
     "0": "pass_att", "1": "pass_cmp", "2": "pass_inc", "3": "pass_yds",
-    "4": "pass_td", "19": "pass_2pt", "20": "pass_int",
+    "4": "pass_td", "19": "two_pt", "20": "pass_int",
     # Rushing
     "23": "rush_att", "24": "rush_yds", "25": "rush_td", "26": "two_pt",
     # Receiving

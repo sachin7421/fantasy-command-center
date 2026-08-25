@@ -135,9 +135,25 @@ class StatCategory:
         return self.bucket_base is not None
 
     def matches_bucket(self, value: float) -> bool:
+        """Whether `value` falls in this bracket.
+
+        Yahoo's brackets are integers and adjacent: 0, 1-6, 7-13, 14-20, 21-27,
+        28-34, 35+. Projections are not integers - Sleeper's defensive lines
+        carry values like 16.5 or 20.5 - so a literal `low <= value <= high`
+        leaves a gap between every pair of brackets, and a value landing in one
+        matched NOTHING and scored zero with no error. Points allowed is the
+        largest single component of a defence's score, so every DST projection
+        in the system was understated, and `sync_defense_season` summed
+        eighteen of them.
+
+        The upper edge is therefore treated as exclusive-to-the-next-bracket:
+        anything below `high + 1` belongs here. 20.5 lands in 14-20, 34.6 in
+        28-34, exactly as a human reading the table would expect.
+        """
         low = self.bucket_low if self.bucket_low is not None else float("-inf")
-        high = self.bucket_high if self.bucket_high is not None else float("inf")
-        return low <= value <= high
+        if self.bucket_high is None:
+            return value >= low
+        return low <= value < self.bucket_high + 1
 
 
 @dataclass

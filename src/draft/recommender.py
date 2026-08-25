@@ -270,6 +270,26 @@ class DraftRecommender:
 
     # -- main entry point ----------------------------------------------------
 
+    @staticmethod
+    def _score_for(vorp: float, need: float, urgency: float) -> float:
+        """Rank a player. Must be monotone increasing in `vorp` at any `need`.
+
+        VORP can be negative, and a negative multiplied by a bonus points the
+        wrong way. The old expression `vorp * (2.0 - need)` handled that below
+        need=2 and silently inverted above it - and nothing caps `need`, which
+        the deferred-position path drives to 2.5 in the final round. A kicker
+        at VORP -30 then scored +15 and ranked FIRST, ahead of one at -5: the
+        recommender preferred the worse player in the exact round it forces you
+        to draft one.
+
+        Dividing instead of multiplying below replacement keeps need meaningful
+        (a needed position still sorts above an unneeded one) while making it
+        impossible for need to reorder two players against their value.
+        """
+        if vorp > 0:
+            return vorp * need * urgency
+        return vorp / max(need, 1e-6) * urgency
+
     def recommend(
         self,
         drafted: set[str],
@@ -296,10 +316,18 @@ class DraftRecommender:
                 player, available, next_pick, tier_index
             )
 
-            # VORP can be negative; multiplying a negative by a bonus would
-            # invert the intent, so scale only the positive part.
-            base = player.vorp
-            score = base * need * urgency if base > 0 else base * (2.0 - need)
+            # VORP can be negative, and a negative multiplied by a bonus points
+            # the wrong way. The old expression `base * (2.0 - need)` handled
+            # that for need < 2, then silently inverted again above it: nothing
+            # caps `need`, and the deferred-position path reaches 2.5 in the
+            # final round. A kicker at VORP -30 with need 2.5 scored +15 and
+            # ranked FIRST, ahead of a kicker at -5 - the recommender preferred
+            # the worse player, in the exact round it forces you to draft one.
+            #
+            # Shifting into a strictly positive space instead keeps the ordering
+            # monotone in VORP for every value of `need`: a higher VORP always
+            # scores higher at the same need, and need still ranks positions.
+            score = self._score_for(player.vorp, need, urgency)
 
             reasons = list(tier_reasons)
             warnings: list[str] = []

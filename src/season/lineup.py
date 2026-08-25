@@ -11,10 +11,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from src.lineup_solver import Lineup, best_lineup
+from src.lineup_solver import Lineup, best_lineup, slot_accepts
 from src.notify import Notification
 from src.projections import resolve_risk_mode, risk_adjusted_points
 from src.storage import Database
+from src.vorp import BENCH_SLOTS
 
 #: Statuses that make a player unstartable regardless of projection.
 UNSTARTABLE = {"Out", "IR", "PUP", "Suspended", "NA", "DNR"}
@@ -40,9 +41,18 @@ class RosterPlayer:
             return False
         return (self.injury_status or "Healthy") not in UNSTARTABLE
 
+    #: Sentinel for "cannot play this week". Deliberately far below any real
+    #: projection so the solver never prefers this player to an empty slot.
+    #: A -1.0 sentinel did not achieve that: the solver's tie-break prefers a
+    #: fully-filled lineup over a higher-scoring partial one, so an Out or
+    #: on-bye player was still assigned, `is_complete` came back True, and the
+    #: "roster is short this week" warning stayed silent in exactly the week
+    #: the manager could not field a legal lineup.
+    UNPLAYABLE = -1e6
+
     def effective(self, mode: str) -> float:
         if not self.startable:
-            return -1.0
+            return self.UNPLAYABLE
         return risk_adjusted_points(self.points, self.floor, self.ceiling, mode)
 
 
@@ -163,8 +173,15 @@ def run(
     mode = resolve_risk_mode(risk_mode, projected_margin)
     projected = sum(1 for p in roster if p.points > 0)
 
+    # Only players who can actually play this week are offered to the solver.
+    # Scoring the rest at a sentinel does not work: the solver's tie-break
+    # prefers a fully-filled lineup over a higher-scoring partial one - which
+    # is right in general - so an Out or on-bye player was still assigned a
+    # slot, `is_complete` came back True, and the "roster is short this week"
+    # warning stayed silent in precisely the week it mattered.
+    playable = [p for p in roster if p.startable]
     optimal = best_lineup(
-        roster,
+        playable,
         starting_slots,
         points_of=lambda p: p.effective(mode),
         position_of=lambda p: p.position,
@@ -172,7 +189,7 @@ def run(
 
     currently_starting = {
         p.player_key for p in roster
-        if p.selected_pos and p.selected_pos.upper() not in ("BN", "IR", "IR+", "NA")
+        if p.selected_pos and p.selected_pos.upper() not in BENCH_SLOTS
     }
     current_points = sum(
         p.points for p in roster if p.player_key in currently_starting
@@ -186,13 +203,18 @@ def run(
         player: RosterPlayer | None = slot.player
         if player is None or player.player_key in currently_starting:
             continue
-        # This player should start but currently does not. Find who he displaces.
+        # This player should start but currently does not. Find who he displaces
+        # - and it has to be someone who could legally occupy THIS slot.
+        # Choosing the globally lowest-scoring displaced player produced
+        # instructions no manager could execute ("QB: START QBGood over WRBad")
+        # and stated gains that were wrong in both directions.
         displaced = [
             p for p in roster
             if p.player_key in currently_starting
             and p.player_key not in {s.player.player_key for s in optimal.slots if s.player}
         ]
-        out_player = min(displaced, key=lambda p: p.points, default=None)
+        eligible = [p for p in displaced if slot_accepts(slot.slot, p.position)]
+        out_player = min(eligible or displaced, key=lambda p: p.points, default=None)
         gain = player.points - (out_player.points if out_player else 0.0)
 
         reasons = []
@@ -217,7 +239,10 @@ def run(
             f"Cannot fill {', '.join(optimal.empty_slots)} - roster is short this week."
         )
     for p in roster:
-        if p.on_bye and p.selected_pos and p.selected_pos.upper() not in ("BN", "IR"):
+        # Same exclusion list as the starters query above. A shorter copy here
+        # meant a bye player parked on IR+ or NA was not counted as starting and
+        # was warned about anyway.
+        if p.on_bye and p.selected_pos and p.selected_pos.upper() not in BENCH_SLOTS:
             warnings.append(f"{p.name} is starting but on bye week {p.bye_week}.")
 
     return LineupReport(

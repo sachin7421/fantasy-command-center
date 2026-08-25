@@ -30,7 +30,9 @@ PROJECTIONS_BASE = "https://api.sleeper.app"
 STAT_MAP: dict[str, str] = {
     # Passing
     "pass_att": "pass_att", "pass_cmp": "pass_cmp", "pass_yd": "pass_yds",
-    "pass_td": "pass_td", "pass_int": "pass_int", "pass_2pt": "pass_2pt",
+    "pass_td": "pass_td", "pass_int": "pass_int",
+    # Yahoo has ONE 2-point category; all three flavours map onto it.
+    "pass_2pt": "two_pt",
     "pass_fd": "pass_fd", "pass_sack": "pass_sacked",
     # Rushing
     "rush_att": "rush_att", "rush_yd": "rush_yds", "rush_td": "rush_td",

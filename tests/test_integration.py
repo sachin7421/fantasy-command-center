@@ -774,3 +774,135 @@ def test_a_roster_less_job_fails_rather_than_reporting_success(tmp_path, capsys)
         out = capsys.readouterr().out
         assert code != 0, f"fcc {job} reported success with no team configured"
         assert "my_team_id is not set" in out
+
+
+# --- lineup advice must be executable in Yahoo ------------------------------
+
+def _roster_db(tmp_path, name, players, slots_week=WEEK):
+    """players: (key, name, position, points, selected_pos, injury, bye)."""
+    conn = db.init_db(tmp_path / name)
+    for key, label, pos, pts, slot, injury, bye in players:
+        conn.execute(
+            "INSERT INTO players(player_key, full_name, position, team, bye_week, "
+            "updated_at) VALUES (?,?,?,?,?,?)",
+            (key, label, pos, "NYJ", bye, db.utcnow()),
+        )
+        conn.execute(
+            "INSERT INTO projections_blended(player_key, season, week, points, "
+            "computed_at) VALUES (?,?,?,?,?)",
+            (key, SEASON, slots_week, pts, db.utcnow()),
+        )
+        conn.execute(
+            "INSERT INTO rosters(league_key, team_key, player_key, selected_pos, "
+            "week, fetched_at) VALUES (?,?,?,?,?,?)",
+            (LEAGUE, MY_TEAM, key, slot, slots_week, db.utcnow()),
+        )
+        if injury:
+            conn.execute(
+                "INSERT INTO injuries(player_key, status, source, observed_at) "
+                "VALUES (?,?,?,?)",
+                (key, injury, "sleeper", "2026-10-01T00:00:00+00:00"),
+            )
+    conn.commit()
+    return conn
+
+
+def test_a_swap_names_a_player_who_could_hold_that_slot(tmp_path):
+    """It used to pick the globally worst displaced starter, ignoring the slot.
+
+    That produced instructions no manager can execute - "QB: START QBGood over
+    WRBad" - and stated gains that were wrong in both directions.
+    """
+    from src.season import lineup
+
+    conn = _roster_db(tmp_path, "swaps.db", [
+        ("qbbad|QB", "QBBad", "QB", 5.0, "QB", None, None),
+        ("wrbad|WR", "WRBad", "WR", 9.0, "WR", None, None),
+        ("qbgood|QB", "QBGood", "QB", 25.0, "BN", None, None),
+        ("wrgood|WR", "WRGood", "WR", 22.0, "BN", None, None),
+    ])
+    report = lineup.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, {"WR": 1, "QB": 1})
+    by_slot = {s.slot: s for s in report.swaps}
+    assert by_slot["QB"].starter_out.position == "QB", by_slot["QB"].describe()
+    assert by_slot["WR"].starter_out.position == "WR", by_slot["WR"].describe()
+    assert by_slot["QB"].gain == pytest.approx(20.0)
+    assert by_slot["WR"].gain == pytest.approx(13.0)
+
+
+def test_an_unfillable_week_is_reported_not_hidden(tmp_path):
+    """An Out player used to be assigned anyway, so is_complete stayed True."""
+    from src.season import lineup
+
+    conn = _roster_db(tmp_path, "short.db", [
+        ("sq|QB", "Starter QB", "QB", 20.0, "QB", None, None),
+        ("it|TE", "Injured TE", "TE", 8.0, "TE", "Out", None),
+    ])
+    report = lineup.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, {"QB": 1, "TE": 1})
+    assert report.optimal.is_complete is False
+    assert report.optimal.empty_slots == ["TE"]
+    assert any("Cannot fill TE" in w for w in report.warnings), report.warnings
+
+
+def test_a_bye_player_parked_on_ir_plus_is_not_called_a_starter(tmp_path):
+    """Two different bench-slot lists disagreed about IR+ and NA."""
+    from src.season import lineup
+
+    conn = _roster_db(tmp_path, "irplus.db", [
+        ("ok|QB", "Fine QB", "QB", 20.0, "QB", None, None),
+        ("bye|WR", "Bye Guy", "WR", 15.0, "IR+", None, WEEK),
+    ])
+    report = lineup.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, {"QB": 1, "WR": 1})
+    assert not any("Bye Guy is starting" in w for w in report.warnings), report.warnings
+
+
+# --- scoring rules ----------------------------------------------------------
+
+def test_fractional_points_allowed_lands_in_a_bucket():
+    """Yahoo's brackets are integers; projections are not.
+
+    A literal low <= value <= high left a gap between every pair of brackets,
+    so 20.5 points allowed matched nothing and scored zero - silently, on the
+    largest component of a defence's score, eighteen times a season.
+    """
+    from src import league_bootstrap, scoring
+
+    rules = scoring.build_from_yahoo(league_bootstrap.build_settings())
+    buckets = [c for c in rules.categories if c.is_bucket]
+    assert buckets, "this league should score points allowed in brackets"
+
+    for value in (0.0, 0.9, 3.0, 6.5, 13.4, 16.5, 20.5, 27.0, 28.0, 34.6, 35.0, 41.2):
+        matched = [c for c in buckets if c.matches_bucket(value)]
+        assert len(matched) == 1, (
+            f"points allowed {value} matched {[c.display_name for c in matched]}"
+        )
+
+
+def test_passing_two_point_conversions_score():
+    """They mapped to a canonical no scoring category produces, so were free."""
+    from src import league_bootstrap, scoring
+    from src.sources.sleeper_projections import STAT_MAP
+
+    rules = scoring.build_from_yahoo(league_bootstrap.build_settings())
+    passing = rules.score({STAT_MAP["pass_2pt"]: 2.0})
+    rushing = rules.score({STAT_MAP["rush_2pt"]: 2.0})
+    assert passing > 0, "a passing 2-point conversion scored nothing"
+    assert passing == rushing, "Yahoo scores one combined 2-point category"
+
+
+# --- the recommender must never prefer a worse player -----------------------
+
+def test_score_is_monotone_in_vorp_at_every_need_level():
+    """`base * (2.0 - need)` inverted above need=2.0, which the deferred-position
+    path reaches in the final round: a kicker at VORP -30 scored +15 and ranked
+    first, ahead of one at -5, in the round that forces you to draft one."""
+    from src.draft.recommender import DraftRecommender
+    from src.draft.survival import DraftPosition
+    from src.vorp import Board
+
+    rec = DraftRecommender(Board(players=[]), DraftPosition(12, 3, rounds=14))
+    for need in (0.25, 1.0, 2.0, 2.5, 4.0):
+        scored = [(v, rec._score_for(v, need, 1.0)) for v in (-40.0, -5.0, 5.0, 60.0)]
+        ordered = [v for v, _ in sorted(scored, key=lambda kv: -kv[1])]
+        assert ordered == sorted([v for v, _ in scored], reverse=True), (
+            f"need={need} ranked {ordered}"
+        )
