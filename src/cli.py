@@ -149,6 +149,19 @@ class Context:
 
 # --- commands ----------------------------------------------------------------
 
+def _hosted_run() -> bool:
+    """Whether this is a scheduled or hosted run rather than someone's laptop.
+
+    Used to decide whether a SQLite backend is a normal local setup or a
+    silent catastrophe.
+    """
+    return bool(
+        os.environ.get("GITHUB_ACTIONS")
+        or os.environ.get("CI")
+        or os.environ.get("STREAMLIT_SERVER_HEADLESS")
+    )
+
+
 def cmd_doctor(ctx: Context, args) -> int:
     """Report on every data source and on configuration completeness."""
     from src.sources.sleeper import SleeperSource
@@ -214,6 +227,21 @@ def cmd_doctor(ctx: Context, args) -> int:
 
     # What has actually been RUNNING. Row counts say what exists; this says
     # whether the schedule is alive, which is the thing that was invisible.
+    # A hosted run on SQLite is writing to a disk that is about to be thrown
+    # away. `connect()` falls back to a local file whenever DATABASE_URL is
+    # absent OR unparseable - which includes a secret pasted with its own key
+    # name, with quotes, or truncated. Every write then lands on the runner,
+    # the runner is destroyed, and the job exits 0. That happened here, in
+    # production, and nothing said a word.
+    on_sqlite = ctx.conn.dialect == "sqlite"
+    if on_sqlite and _hosted_run():
+        print("")
+        print("  !! FATAL: hosted run, but the database is SQLite.")
+        print("     Everything written here dies with the runner.")
+        print("     DATABASE_URL is missing, or its value is not recognised as")
+        print("     a postgres:// or postgresql:// URL. Check the secret for a")
+        print("     pasted key name, surrounding quotes, or a truncated value.")
+
     health = db.job_health(ctx.conn, days=10)
     print("")
     print("  job runs (last 10 days):")
@@ -235,6 +263,12 @@ def cmd_doctor(ctx: Context, args) -> int:
     print("\n  stored rows :")
     for table, count in counts.items():
         print(f"    {table:22s} {count:>7,}")
+
+    # A hosted run on SQLite has nowhere real to write. Failing here is the
+    # whole point: the previous behaviour was to report the backend, return 0,
+    # and let every subsequent write land on a runner that is then destroyed.
+    if on_sqlite and _hosted_run():
+        return EXIT_FAIL
     return EXIT_OK
 
 

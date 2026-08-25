@@ -1080,3 +1080,31 @@ def test_a_failing_job_is_recorded_as_failed(tmp_path, capsys):
         "SELECT status, exit_code FROM job_runs WHERE job='lineup' ORDER BY id DESC"
     )
     assert row is not None and row["status"] == "failed"
+
+
+# --- a hosted run must never silently use a throwaway database --------------
+
+def test_doctor_fails_when_a_hosted_run_lands_on_sqlite(tmp_path, monkeypatch, capsys):
+    """This happened in production, and the run went green.
+
+    `connect()` falls back to a local SQLite file whenever DATABASE_URL is
+    absent OR unparseable - which includes a secret pasted with its own key
+    name, with quotes, or truncated. Every write then lands on the runner and
+    the runner is destroyed. `fcc doctor` printed the backend, returned 0, and
+    the "Verify database is reachable" step passed.
+    """
+    config = _config_without_team(tmp_path)
+    database = tmp_path / "throwaway.db"
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    code = cli.main(["--config", config, "--db", str(database), "doctor"])
+    out = capsys.readouterr().out
+    assert code != 0, out
+    assert "FATAL" in out and "SQLite" in out
+
+    # The same state on a laptop is completely normal and must not fail.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    code = cli.main(["--config", config, "--db", str(database), "doctor"])
+    capsys.readouterr()
+    assert code == 0
