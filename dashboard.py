@@ -33,7 +33,7 @@ st.set_page_config(
 
 
 @st.cache_resource
-def get_context():
+def _build_context():
     cfg = Config.load("config.yaml")
     # Streamlit reruns the script on a new thread each time while reusing this
     # cached connection, so it must not be pinned to its creating thread.
@@ -43,6 +43,27 @@ def get_context():
     league_key = f"nfl.l.{cfg.get('league.league_id', league_bootstrap.LEAGUE_ID)}"
     league_bootstrap.install(conn, league_key)
     return cfg, conn, league_key
+
+
+def get_context():
+    """The cached context, with a liveness check before it is handed out.
+
+    Supabase's pooler closes an idle connection, and `st.cache_resource` has no
+    idea that happened - it keeps handing back the same dead object, so every
+    page load raises "the connection is closed" until somebody reboots the app.
+    That is exactly what this app did after sitting idle overnight.
+
+    The wrapper pings first. `Database` can now rebuild its own connection, so
+    normally the ping repairs it in place; if that fails the cache is dropped
+    and the whole context is rebuilt.
+    """
+    cfg, conn, league_key = _build_context()
+    try:
+        conn.scalar("SELECT 1")
+        return cfg, conn, league_key
+    except Exception:
+        _build_context.clear()
+        return _build_context()
 
 
 @st.cache_data(ttl=60)

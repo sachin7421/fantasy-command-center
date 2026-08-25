@@ -286,3 +286,79 @@ def test_whitespace_only_value_is_treated_as_unset(monkeypatch):
     fake.secrets = {}
     monkeypatch.setitem(sys.modules, "streamlit", fake)
     assert storage.database_url() is None
+
+
+# --- a dropped connection must not be permanent -----------------------------
+
+def test_a_closed_postgres_connection_is_reopened():
+    """Supabase's pooler closes idle connections. The dashboard caches one in
+    st.cache_resource, which has no idea that happened - so it kept handing
+    back a dead object and every page load raised "the connection is closed"
+    until someone rebooted the app. That is exactly what happened in
+    production after the app sat idle overnight.
+
+    Exercised against a fake driver so the test needs no server.
+    """
+    from src.storage import Database
+
+    class DeadCursor:
+        def execute(self, *_a, **_k):
+            raise RuntimeError("server closed the connection unexpectedly")
+
+    class LiveCursor:
+        def __init__(self):
+            self.rows = [{"one": 1}]
+
+        def execute(self, *_a, **_k):
+            return self
+
+        def fetchone(self):
+            return self.rows[0]
+
+    class Conn:
+        def __init__(self, alive):
+            self.alive = alive
+
+        def cursor(self):
+            return LiveCursor() if self.alive else DeadCursor()
+
+        def rollback(self):
+            pass
+
+    opened = []
+
+    def reopen():
+        opened.append(1)
+        return Conn(alive=True)
+
+    database = Database(Conn(alive=False), "postgres", None, reopen=reopen)
+    row = database.fetchone("SELECT 1 AS one")
+
+    assert row == {"one": 1}
+    assert len(opened) == 1, "the connection should have been reopened exactly once"
+
+
+def test_a_genuine_query_error_is_not_retried():
+    """Only a DISCONNECT is worth retrying. Retrying a bad query fails twice
+    and hides the real message behind a reconnection attempt."""
+    from src.storage import Database
+
+    class Conn:
+        def __init__(self):
+            self.rolled_back = False
+
+        def cursor(self):
+            raise RuntimeError('relation "nope" does not exist')
+
+        def rollback(self):
+            self.rolled_back = True
+
+    opened = []
+    conn = Conn()
+    database = Database(conn, "postgres", None, reopen=lambda: opened.append(1))
+
+    with pytest.raises(RuntimeError, match="does not exist"):
+        database.execute("SELECT * FROM nope")
+
+    assert not opened, "a bad query must not trigger a reconnect"
+    assert conn.rolled_back, "a failed statement must roll back the transaction"

@@ -24,7 +24,7 @@ import re
 import sqlite3
 from pathlib import Path
 from typing import Any
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 log = logging.getLogger(__name__)
 
@@ -164,10 +164,53 @@ class Cursor:
 class Database:
     """One connection, either SQLite or Postgres."""
 
-    def __init__(self, connection: Any, dialect: str, url: str | None = None):
+    def __init__(
+        self,
+        connection: Any,
+        dialect: str,
+        url: str | None = None,
+        reopen: Callable[[], Any] | None = None,
+    ):
         self._conn = connection
         self.dialect = dialect
         self.url = url
+        #: How to build a fresh driver connection if this one dies. Without it
+        #: a dropped connection is permanent: the dashboard caches this object
+        #: in st.cache_resource, Supabase's pooler closes it when idle, and
+        #: every subsequent page load raises "the connection is closed" until
+        #: somebody reboots the app.
+        self._reopen = reopen
+
+    def _revive(self) -> bool:
+        """Replace a dead connection. True if a live one is now in place."""
+        if self._reopen is None:
+            return False
+        try:
+            self._conn = self._reopen()
+        except Exception as exc:  # pragma: no cover - depends on the server
+            log.warning("Could not reopen the database connection: %s", exc)
+            return False
+        log.info("Database connection was closed; reopened it.")
+        return True
+
+    @staticmethod
+    def _is_disconnect(exc: Exception) -> bool:
+        """Whether this error means the connection is gone rather than the query bad.
+
+        Matched on the message because psycopg raises the same OperationalError
+        class for a dead socket and for a genuine server error, and retrying a
+        bad query would just fail twice.
+        """
+        text = str(exc).lower()
+        return any(
+            marker in text
+            for marker in (
+                "connection is closed", "connection already closed",
+                "server closed the connection", "connection has been closed",
+                "terminating connection", "ssl connection has been closed",
+                "consuming input failed", "eof detected",
+            )
+        )
 
     @property
     def is_postgres(self) -> bool:
@@ -183,9 +226,27 @@ class Database:
         translated = (
             _named_to_pyformat(sql) if isinstance(params, dict) else to_postgres_sql(sql)
         )
-        cursor = self._conn.cursor()
-        cursor.execute(translated, params or ())
-        return Cursor(cursor, self.dialect)
+        try:
+            cursor = self._conn.cursor()
+            cursor.execute(translated, params or ())
+            return Cursor(cursor, self.dialect)
+        except Exception as exc:
+            if not self._is_disconnect(exc) or not self._revive():
+                # A failed statement leaves the transaction aborted, and every
+                # later query on it fails with a message about THAT rather than
+                # about the real cause. Roll back so the next one is judged on
+                # its own merits.
+                self._safe_rollback()
+                raise
+            cursor = self._conn.cursor()
+            cursor.execute(translated, params or ())
+            return Cursor(cursor, self.dialect)
+
+    def _safe_rollback(self) -> None:
+        try:
+            self._conn.rollback()
+        except Exception:
+            pass
 
     def executescript(self, script: str) -> None:
         """Run a multi-statement DDL script."""
@@ -276,20 +337,26 @@ def connect_postgres(url: str) -> Database:
     if "sslmode=" not in dsn:
         dsn += ("&" if "?" in dsn else "?") + "sslmode=require"
 
-    conn = psycopg.connect(
-        dsn,
-        row_factory=dict_row,
-        autocommit=False,
-        connect_timeout=20,
-        # psycopg promotes a statement to a server-side PREPARE after a few
-        # executions. Supabase's transaction pooler (port 6543) multiplexes
-        # statements across backends, so a prepared statement can be issued on a
-        # connection that never saw the PREPARE - which fails at runtime, and
-        # only under load. Disabling the promotion makes the app safe on the
-        # direct connection and on either pooler.
-        prepare_threshold=None,
-    )
-    return Database(conn, "postgres", url)
+    def _open():
+        """Build a connection. Kept as a closure so the Database can
+        rebuild itself after the pooler drops an idle connection."""
+        conn = psycopg.connect(
+            dsn,
+            row_factory=dict_row,
+            autocommit=False,
+            connect_timeout=20,
+            # psycopg promotes a statement to a server-side PREPARE after a few
+            # executions. Supabase's transaction pooler (port 6543) multiplexes
+            # statements across backends, so a prepared statement can be issued on a
+            # connection that never saw the PREPARE - which fails at runtime, and
+            # only under load. Disabling the promotion makes the app safe on the
+            # direct connection and on either pooler.
+            prepare_threshold=None,
+        )
+        return conn
+
+    conn = _open()
+    return Database(conn, "postgres", url, reopen=_open)
 
 
 def connect(
