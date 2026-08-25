@@ -395,3 +395,85 @@ def test_secret_key_names_never_returns_values():
     source = inspect.getsource(storage.secret_key_names)
     assert "st.secrets[" not in source, "must not index into the secrets"
     assert "keys" in source or "for k in st.secrets" in source
+
+# --- the connection string people actually paste -----------------------------
+
+def test_a_connection_string_that_lost_its_scheme_is_repaired():
+    """The real failure: a Supabase DSN selected from the username onward.
+
+    The string is complete and correct apart from thirteen missing characters,
+    and without this it fails the scheme check and falls back to an empty local
+    SQLite file - which looks exactly like a database that lost all its data.
+    """
+    from src.storage import _clean, is_postgres_url
+
+    pasted = "postgres.abcdefgh:pw@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+    assert not pasted.startswith("postgres://")
+    assert is_postgres_url(_clean(pasted))
+    assert _clean(pasted) == "postgresql://" + pasted
+
+
+def test_a_scheme_that_is_already_there_is_left_alone():
+    from src.storage import _clean
+
+    for url in (
+        "postgresql://u:p@h:5432/db",
+        "postgres://u:p@h:5432/db",
+        "postgresql+psycopg://u:p@h:5432/db",
+    ):
+        assert _clean(url) == url
+
+
+def test_a_bare_password_is_still_rejected():
+    """Repair must not become "assume anything is a URL".
+
+    A lone password was the previous wrong secret, and turning it into
+    `postgresql://hunter2` would trade a clear failure for a baffling one.
+    """
+    from src.storage import _clean, is_postgres_url
+
+    for junk in ("hunter2hunter2hu", "DATABASE_URL=postgresql://u:p@h/db",
+                 "postgres.abcdefgh:pw@host", "", "   "):
+        assert not is_postgres_url(_clean(junk)), junk
+
+
+def test_the_diagnosis_never_reveals_any_part_of_the_secret():
+    """The leak regression, pinned.
+
+    An earlier diagnostic printed the first 13 characters of the value to help
+    identify it, and put part of a live credential into a chat transcript. No
+    branch of the diagnosis may return any substring of the secret - length and
+    character classes are enough to tell a password from a URL, and reveal
+    nothing usable.
+    """
+    import os
+
+    from src.storage import diagnose_database_url
+
+    secret = "postgres.zzzqqq:S3cretPassw0rd@db.example.com:6543/postgres"
+    os.environ["DATABASE_URL"] = secret
+    try:
+        message = diagnose_database_url()
+    finally:
+        del os.environ["DATABASE_URL"]
+
+    # every run of 4+ characters from the secret must be absent from the message
+    for size in (4, 6, 8):
+        for i in range(len(secret) - size):
+            fragment = secret[i:i + size]
+            assert fragment not in message, (
+                f"the diagnosis leaked {fragment!r} from the connection string"
+            )
+
+
+def test_the_diagnosis_names_the_missing_scheme_problem():
+    import os
+
+    from src.storage import diagnose_database_url
+
+    os.environ["DATABASE_URL"] = "just-a-password-16"
+    try:
+        message = diagnose_database_url()
+    finally:
+        del os.environ["DATABASE_URL"]
+    assert "postgresql://" in message

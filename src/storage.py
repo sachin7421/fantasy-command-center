@@ -31,39 +31,6 @@ log = logging.getLogger(__name__)
 POSTGRES_SCHEMES = ("postgres://", "postgresql://", "postgresql+psycopg://")
 
 
-def describe_url_problem() -> str:
-    """Why the configured DATABASE_URL was not usable, without revealing it.
-
-    Deliberately reports SHAPE only: whether the variable is set, how long it
-    is, and the leading scheme characters - which are never secret, and which
-    identify the two mistakes that actually happen. A secret pasted together
-    with its own key name starts "DATABASE_URL", and a truncated one is short.
-    Nothing after the scheme is ever printed.
-    """
-    for key in DB_URL_KEYS:
-        raw = os.environ.get(key)
-        if raw is None:
-            continue
-        cleaned = _clean(raw)
-        if not cleaned:
-            return f"{key} is set but empty after trimming."
-        if is_postgres_url(cleaned):
-            return f"{key} looks valid; the failure is elsewhere."
-        head = cleaned[:13]
-        safe = "".join(c if c.isprintable() else "?" for c in head)
-        hint = ""
-        if cleaned.upper().startswith(tuple(k + "=" for k in DB_URL_KEYS)):
-            hint = (" - the KEY NAME was pasted into the value. Paste only the "
-                    "part after the '='.")
-        elif "://" not in cleaned:
-            hint = " - no scheme separator '://' found; the value looks truncated."
-        return (
-            f"{key} is set ({len(cleaned)} chars) but does not start with "
-            f"postgres:// or postgresql://. It begins: {safe!r}{hint}"
-        )
-    return "No DATABASE_URL is set in the environment or in Streamlit secrets."
-
-
 def is_postgres_url(url: str | None) -> bool:
     return bool(url) and str(url).startswith(POSTGRES_SCHEMES)
 
@@ -154,6 +121,94 @@ def secret_key_names() -> list[str]:
         return []
 
 
+def diagnose_database_url() -> str:
+    """One sentence naming why there is no Postgres connection.
+
+    This exists because of how the diagnosis was actually consumed. The details
+    were being printed as small grey captions UNDER a red error box, and the
+    person reading it did the obvious thing - copied the red line - so three
+    rounds of debugging happened without the decisive fact ever leaving their
+    screen. A diagnostic that is not in the part people copy is not a
+    diagnostic. This goes in the headline.
+
+    Names only, never values: a connection string is a database superuser
+    password and must not be rendered into a page or pasted into a chat.
+    """
+    for key in DB_URL_KEYS:
+        raw = os.environ.get(key)
+        if raw and raw.strip():
+            cleaned = _clean(raw)
+            if is_postgres_url(cleaned):
+                return f"{key} is set in the environment and looks valid."
+            return (
+                f"{key} is set in the environment but is not a Postgres URL "
+                f"({_shape(cleaned)}). It must start with postgresql://"
+            )
+
+    names = secret_key_names()
+    if not names:
+        return (
+            "This app can read NO secrets at all. Either none are saved for "
+            "this app, or the secrets are not valid TOML - every value needs "
+            "to be quoted, like DATABASE_URL = \"postgresql://...\""
+        )
+
+    visible = [k for k in DB_URL_KEYS if k in names]
+    if not visible:
+        return (
+            "DATABASE_URL is NOT among the secrets this app can see. It can "
+            "see: " + ", ".join(names) + ". Add DATABASE_URL to this app's "
+            "secrets - and check you are editing the right app if more than "
+            "one is deployed."
+        )
+
+    key = visible[0]
+    try:
+        import streamlit as st
+
+        raw = _clean(str(st.secrets[key]))
+    except Exception as exc:
+        log.info("Could not read %s from secrets: %s", key, exc)
+        return f"{key} is present but could not be read back from secrets."
+
+    if not raw:
+        return f"{key} is present but empty."
+    if is_postgres_url(raw):
+        return (
+            f"{key} is present and looks like a valid Postgres URL "
+            f"({_shape(raw)}) - yet this app is still on SQLite. Reboot the "
+            "app from Manage app to clear the cached connection."
+        )
+    return (
+        f"{key} is present but is not a Postgres URL ({_shape(raw)}). It must "
+        "be the FULL connection string, starting postgresql:// and ending "
+        "/postgres - a common mistake is pasting only the password."
+    )
+
+
+def _shape(value: str) -> str:
+    """Describe a secret without revealing it.
+
+    Length and character classes are enough to tell a password from a URL, and
+    reveal nothing usable. An earlier version of this printed the first 13
+    characters of the value, which put a live database password into a chat
+    transcript. Never again: no branch of this function may return any
+    substring of `value`.
+    """
+    if not value:
+        return "empty"
+    kinds = []
+    if "://" in value:
+        kinds.append("has a scheme")
+    else:
+        kinds.append("no :// scheme")
+    if "@" in value:
+        kinds.append("has @")
+    if any(c.isspace() for c in value):
+        kinds.append("contains whitespace")
+    return f"{len(value)} chars, " + ", ".join(kinds)
+
+
 def _clean(url: str) -> str:
     """Strip whitespace and stray quotes from a pasted connection string.
 
@@ -162,7 +217,42 @@ def _clean(url: str) -> str:
     and refuses the connection with `database "postgres\\n" does not exist` -
     a failure that only appears in the deployment, never locally.
     """
-    return url.strip().strip('"').strip("'").strip()
+    return _repair_missing_scheme(url.strip().strip('"').strip("'").strip())
+
+
+#: `user:password@host:port/database` - a complete DSN with only the scheme
+#: missing. Anchored at both ends, and every part required, so this can only
+#: match something that is already a connection string.
+_SCHEMELESS_DSN = re.compile(
+    r"^[^\s:/@]+:[^\s@]+@[^\s:/@]+(?::\d+)?/[^\s/@]+$"
+)
+
+
+def _repair_missing_scheme(url: str) -> str:
+    """Add `postgresql://` to a connection string that lost it in the paste.
+
+    This is the single most common way the secret gets set wrong, and it is
+    worth repairing rather than rejecting. A Supabase connection string is
+    shown as
+
+        postgresql://postgres.abcdefgh:PASSWORD@aws-0-x.pooler.supabase.com:6543/postgres
+
+    and the natural thing to select by eye is the part that looks like an
+    address - starting at the username. The result is a value that is complete
+    and correct except for thirteen missing characters, which then fails the
+    scheme check and falls back to an empty local SQLite file. Somebody then
+    spends an evening looking for a bug in the database layer.
+
+    The pattern is anchored and demands a password, a host and a database name,
+    so it cannot match a bare password or a truncated fragment - those still
+    fail loudly, which is what should happen to them.
+    """
+    if not url or "://" in url:
+        return url
+    if _SCHEMELESS_DSN.match(url):
+        log.info("connection string was missing its scheme; assuming postgresql://")
+        return "postgresql://" + url
+    return url
 
 
 # --- placeholder translation -------------------------------------------------

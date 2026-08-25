@@ -190,30 +190,28 @@ def draft_view(cfg, conn, league_key):
         # hosted deployment is always empty. Syncing would not fix it, and the
         # message sent people to do exactly that.
         if conn.dialect == "sqlite" and _hosted():
-            st.error("This app is reading a local SQLite file, not your league database.")
-            st.markdown(
-                "Everything here will look empty because that file is empty.\n\n"
-                "**Fix:** set `DATABASE_URL` in this app's secrets to the full "
-                "connection string - it starts `postgresql://` and ends "
-                "`/postgres`. A common mistake is pasting only the password."
-            )
-            from src.storage import describe_url_problem, secret_key_names
+            from src.storage import diagnose_database_url
 
-            st.caption(describe_url_problem())
-            names = secret_key_names()
-            if names:
-                st.caption(
-                    'Secrets this app can see (names only): '
-                    + ', '.join(f'`{n}`' for n in names)
-                    + '. DATABASE_URL must be one of them, at the TOP level - '
-                    'anything under a [section] header is not reachable by that '
-                    'name.'
-                )
-            else:
-                st.caption(
-                    'This app cannot read ANY secrets. That usually means the '
-                    'secrets file is not valid TOML - every value needs quotes.'
-                )
+            # The CAUSE goes in the error box, not in a caption underneath it.
+            # Three rounds of debugging were spent with the decisive fact sitting
+            # in small grey text below a red banner, because the natural thing to
+            # copy is the red banner. Whatever is most worth knowing has to be in
+            # the part people actually paste.
+            verdict = diagnose_database_url()
+            st.error(
+                "This app is reading a local SQLite file, not your league "
+                f"database.\n\n**Why:** {verdict}"
+            )
+            st.markdown(
+                "Everything here looks empty because that file is empty. "
+                "Syncing will not help - the sync would write to the same empty "
+                "file."
+            )
+            st.caption(
+                "Secrets are named but never shown here. If you have just "
+                "changed them, use **Manage app -> Reboot app**: a cached "
+                "connection survives a redeploy."
+            )
         else:
             st.warning("No projections stored for this season.")
             # Say what the app can actually SEE. "Run fcc sync" is a guess, and
