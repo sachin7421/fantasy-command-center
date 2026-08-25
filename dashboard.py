@@ -183,7 +183,50 @@ def draft_view(cfg, conn, league_key):
 
             st.caption(describe_url_problem())
         else:
-            st.warning("No projections stored. Run `python fcc.py sync` first.")
+            st.warning("No projections stored for this season.")
+            # Say what the app can actually SEE. "Run fcc sync" is a guess, and
+            # when it is wrong the user runs a sync that changes nothing. These
+            # four numbers separate every cause: wrong database, wrong season,
+            # sync never ran, or a board filter that excluded everything.
+            try:
+                players = conn.scalar("SELECT COUNT(*) FROM players") or 0
+                blended = conn.scalar(
+                    "SELECT COUNT(*) FROM projections_blended WHERE season=?",
+                    (season,),
+                ) or 0
+                seasons = [
+                    str(r["season"]) for r in conn.fetchall(
+                        "SELECT DISTINCT season FROM projections_blended "
+                        "ORDER BY season"
+                    )
+                ]
+                st.markdown(
+                    f"- database: `{db.describe_backend()}`
+"
+                    f"- looking for season: **{season}**
+"
+                    f"- players stored: **{players:,}**
+"
+                    f"- blended projections for {season}: **{blended:,}**
+"
+                    f"- seasons that DO have projections: "
+                    f"**{', '.join(seasons) if seasons else 'none'}**"
+                )
+                if players and not blended and seasons:
+                    st.info(
+                        f"There are projections, but not for {season}. Either "
+                        f"`league.season` in config.yaml is wrong, or the sync "
+                        f"has not run for {season} yet."
+                    )
+                elif not players:
+                    st.info(
+                        "This database is empty. If it is not the one you sync "
+                        "to, check DATABASE_URL in this app's secrets - a valid "
+                        "connection string pointing at a DIFFERENT project "
+                        "looks exactly like this."
+                    )
+            except Exception as exc:
+                st.caption(f"Could not inspect the database: {exc}")
         return
 
     tracker = DraftTracker(conn, league_key, teams, rounds, None)

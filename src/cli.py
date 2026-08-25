@@ -676,38 +676,38 @@ def cmd_job(ctx: Context, args) -> int:
         # was guaranteed to find nothing.
         if not _require_team(ctx):
             return EXIT_FAIL
-        injury_report = report = injuries.run(
+        injury_report = injuries.run(
             ctx.conn, ctx.league_key, team_key, season, week
         )
-        if report.first_run:
+        if injury_report.first_run:
             print("Injury baseline established; changes will be reported from the next run.")
         else:
-            print(f"{len(report.changes)} relevant status change(s) out of {report.checked} tracked.")
-        notification = injuries.to_notification(report, week, season)
+            print(f"{len(injury_report.changes)} relevant status change(s) out of {injury_report.checked} tracked.")
+        notification = injuries.to_notification(injury_report, week, season)
 
     elif args.job == "lineup":
         if not _require_team(ctx):
             return EXIT_FAIL
-        report = lineup.run(
+        lineup_report = lineup.run(
             ctx.conn, ctx.league_key, team_key, season, week, slots,
             risk_mode=str(ctx.cfg.get("season.risk_mode", "auto")),
             min_gap=float(ctx.cfg.get("season.lineup_swap_min_gap", 1.5)),
         )
-        if not report.has_data:
+        if not lineup_report.has_data:
             print(f"No week {week} projections for your roster "
-                  f"({report.roster_size} player(s) rostered, "
-                  f"{report.projected} projected) - nothing to compare.")
+                  f"({lineup_report.roster_size} player(s) rostered, "
+                  f"{lineup_report.projected} projected) - nothing to compare.")
         else:
-            print(f"Optimal {report.optimal_points:.1f} vs current "
-                  f"{report.current_points:.1f} "
-                  f"(+{report.gain:.1f}); {len(report.swaps)} change(s).")
-        notification = lineup.to_notification(report, season)
+            print(f"Optimal {lineup_report.optimal_points:.1f} vs current "
+                  f"{lineup_report.current_points:.1f} "
+                  f"(+{lineup_report.gain:.1f}); {len(lineup_report.swaps)} change(s).")
+        notification = lineup.to_notification(lineup_report, season)
 
     elif args.job == "waivers":
         if not _require_team(ctx):
             return EXIT_FAIL
         settings = ctx.settings()
-        report = waivers.run(
+        waiver_report = waivers.run(
             ctx.conn, ctx.league_key, team_key, season, week,
             uses_faab=str(settings.get("uses_faab", "1")) in ("1", "true", "True"),
             budget_left=int(args.budget if args.budget is not None
@@ -715,32 +715,32 @@ def cmd_job(ctx: Context, args) -> int:
             value_margin=float(ctx.cfg.get("season.waiver_value_margin", 25.0)),
             starting_slots=slots,
         )
-        print(f"{len(report.claims)} claim(s), {len(report.stashes)} stash(es), "
-              f"{len(report.handcuffs)} open handcuff(s).")
-        notification = waivers.to_notification(report, season)
+        print(f"{len(waiver_report.claims)} claim(s), {len(waiver_report.stashes)} stash(es), "
+              f"{len(waiver_report.handcuffs)} open handcuff(s).")
+        notification = waivers.to_notification(waiver_report, season)
 
     elif args.job == "byes":
         if not _require_team(ctx):
             return EXIT_FAIL
-        report = byes.run(ctx.conn, ctx.league_key, team_key, season, week, slots,
+        bye_outlook = byes.run(ctx.conn, ctx.league_key, team_key, season, week, slots,
                           playoff_weeks=tuple(ctx.cfg.get("season.playoff_weeks", [15, 16, 17])))
-        if not report.has_data:
+        if not bye_outlook.has_data:
             print("No roster stored for your team - nothing to plan around.")
         else:
-            print(f"{len(report.problem_weeks)} problem week(s) in the next 4.")
-        notification = byes.to_notification(report, season)
+            print(f"{len(bye_outlook.problem_weeks)} problem week(s) in the next 4.")
+        notification = byes.to_notification(bye_outlook, season)
 
     elif args.job == "recap":
         if not _require_team(ctx):
             return EXIT_FAIL
-        report = recap.run(ctx.conn, ctx.league_key, team_key, season, max(1, week - 1), slots)
-        if not report.has_data:
-            print(f"No week {report.week} scores stored "
-                  f"({report.roster_size} player(s) rostered) - no recap.")
+        recap_report = recap.run(ctx.conn, ctx.league_key, team_key, season, max(1, week - 1), slots)
+        if not recap_report.has_data:
+            print(f"No week {recap_report.week} scores stored "
+                  f"({recap_report.roster_size} player(s) rostered) - no recap.")
         else:
-            print(f"Week {report.week}: {report.actual_points:.1f} scored, "
-                  f"{report.points_left_on_bench:.1f} left on bench.")
-        notification = recap.to_notification(report, season)
+            print(f"Week {recap_report.week}: {recap_report.actual_points:.1f} scored, "
+                  f"{recap_report.points_left_on_bench:.1f} left on bench.")
+        notification = recap.to_notification(recap_report, season)
 
     elif args.job == "reminders":
         from datetime import datetime
