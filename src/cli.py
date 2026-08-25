@@ -1658,14 +1658,21 @@ def main(argv: list[str] | None = None) -> int:
     started = db.utcnow()
     began = time.monotonic()
     code = EXIT_FAIL
+    # Why it failed, not just that it failed. `doctor` was reporting "1 failed"
+    # with no detail at all, which tells you a job is broken and nothing about
+    # how - so the next step was always to re-run it by hand and hope it broke
+    # the same way.
+    detail: str | None = None
     try:
         code = handler(ctx, args)
         return code
     except KeyboardInterrupt:
         code = EXIT_OK
+        detail = "interrupted"
         return code
-    except Exception:
+    except Exception as exc:
         traceback.print_exc()
+        detail = f"{type(exc).__name__}: {exc}"
         code = EXIT_FAIL
         return code
     finally:
@@ -1676,6 +1683,7 @@ def main(argv: list[str] | None = None) -> int:
                 status="ok" if code == EXIT_OK else "failed",
                 season=ctx.cfg.get("league.season"),
                 week=getattr(args, "week", None),
+                detail=detail,
                 exit_code=code,
                 duration_ms=int((time.monotonic() - began) * 1000),
                 started_at=started,

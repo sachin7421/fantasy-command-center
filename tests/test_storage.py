@@ -477,3 +477,29 @@ def test_the_diagnosis_names_the_missing_scheme_problem():
     finally:
         del os.environ["DATABASE_URL"]
     assert "postgresql://" in message
+
+
+def test_a_job_failure_never_stores_a_password():
+    """Job details are rendered by `doctor`, so they must not carry credentials.
+
+    The most likely failure to record is a database connection error, and those
+    messages routinely quote the whole DSN.
+    """
+    from src.db import redact
+
+    message = ("connection to postgresql://postgres.abc:S3cretPassw0rd@"
+               "db.host.com:6543/postgres failed: timeout expired")
+    cleaned = redact(message)
+    assert "S3cretPassw0rd" not in cleaned
+    assert "postgres.abc" not in cleaned
+    # the useful part survives
+    assert "db.host.com:6543" in cleaned
+    assert "timeout expired" in cleaned
+
+
+def test_redaction_leaves_an_ordinary_error_alone():
+    from src.db import redact
+
+    assert redact("KeyError: 'injuries'") == "KeyError: 'injuries'"
+    assert redact(None) is None
+    assert redact("") == ""

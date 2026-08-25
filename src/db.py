@@ -21,6 +21,8 @@ Two classes of table:
 """
 from __future__ import annotations
 
+import re
+
 import json
 from contextlib import contextmanager
 from datetime import datetime, UTC
@@ -473,6 +475,25 @@ def describe_backend() -> str:
     return f"sqlite ({DEFAULT_DB_PATH})"
 
 
+_CREDENTIAL_IN_URL = re.compile(r"(?<=://)[^/\s:@]+:[^/\s@]+(?=@)")
+
+
+def redact(text: str | None) -> str | None:
+    """Remove credentials from a message before it is stored.
+
+    Job failures are recorded so somebody can read them later, and the single
+    most likely failure to record is a database connection error - whose message
+    routinely contains the whole DSN, password included. Writing that into a
+    table that the dashboard renders would put a live credential on screen.
+
+    Only the `user:password@` span of a URL is removed; the host and the rest of
+    the message are what make the error useful.
+    """
+    if not text:
+        return text
+    return _CREDENTIAL_IN_URL.sub("***:***", text)
+
+
 def record_job_run(
     conn: Database,
     job: str,
@@ -493,6 +514,7 @@ def record_job_run(
     not crashes, so every run records one row regardless of outcome.
     """
     now = utcnow()
+    detail = redact(detail)
     conn.execute(
         "INSERT INTO job_runs(job, season, week, status, detail, exit_code, "
         "duration_ms, started_at, finished_at) VALUES (?,?,?,?,?,?,?,?,?)",
