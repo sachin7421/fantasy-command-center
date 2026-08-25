@@ -64,12 +64,44 @@ def split_sections(lines: list[str]) -> list[Section]:
         if heading:
             if current.lines or current.title:
                 sections.append(current)
-            current = Section(heading.group(1).title(), [])
+            # NOT .title(): it turned "__CLAIMS (FAAB left: $73)__" into
+            # "Claims (Faab Left: $73)". The builders write the heading the way
+            # it should appear.
+            current = Section(_heading_case(heading.group(1)), [])
         else:
             current.lines.append(raw)
     if current.lines or current.title:
         sections.append(current)
     return [s for s in sections if any(line.strip() for line in s.lines) or s.title]
+
+
+def _heading_case(raw: str) -> str:
+    """Sentence-case a section heading, leaving acronyms alone.
+
+    Headings are written upper case in the builders (`__CLAIMS__`), so they
+    need softening - but only the words that are ordinary words. Anything that
+    is all-consonants or already mixed case is left exactly as written.
+    """
+    vowels = set("AEIOU")
+
+    def fix(word: str) -> str:
+        core = "".join(ch for ch in word if ch.isalpha())
+        if not core:
+            return word
+        if not core.isupper():
+            return word  # already deliberate
+        if len(core) <= 4 and not (set(core) & vowels):
+            return word  # PPR, TD, FAAB-like consonant clusters
+        if core in ACRONYMS:
+            return word
+        return word.capitalize()
+
+    return " ".join(fix(w) for w in raw.split(" "))
+
+
+#: Heading words that must never be down-cased.
+ACRONYMS = {"FAAB", "ROS", "ADP", "VORP", "PPR", "TD", "IR", "QB", "RB", "WR",
+            "TE", "DEF", "K", "NFL", "SOS", "ECR"}
 
 
 def _line_html(line: str) -> str:
@@ -116,7 +148,15 @@ def render(
                 f"font-family:{FONT};'>{html.escape(section.title)}</div>"
                 f"<div style='height:1px;background:{RULE};margin-bottom:10px;'></div>"
             )
-        body_blocks.extend(_line_html(line) for line in section.lines)
+        # Split on embedded newlines first. `Claim.describe()` returns a
+        # multi-line string, and HTML collapses whitespace - so the phone
+        # rendering of a waiver claim ran together into
+        # "...+18.4 ROS pts bid: $6-$14, recommend $9 trending 41,000 adds",
+        # while the plain-text fallback rendered it correctly on three indented
+        # lines. The one channel designed to be read at 7am was the one that
+        # mangled it.
+        for line in section.lines:
+            body_blocks.extend(_line_html(part) for part in line.splitlines() or [""])
 
     button = ""
     if dashboard_url:

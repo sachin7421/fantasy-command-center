@@ -400,6 +400,25 @@ def cmd_rank(ctx: Context, args) -> int:
             f"{p.overall_rank:>4} {p.name[:24]:<24} {p.position}{p.position_rank:<5} "
             f"T{p.tier:<4} {p.team:<5} {p.points:>7.1f} {p.vorp:>7.1f} {adp} {bye}{flag}"
         )
+    # State where the board and the draft room systematically disagree. A
+    # one-sided split by position is the signature of a bias, and it is not
+    # settleable from pre-season data - so it is reported, not hidden.
+    disagreement = vorp.market_disagreement(board.players)
+    lopsided = {
+        pos: stats for pos, stats in disagreement.items()
+        if stats["share_ahead_of_adp"] >= 0.85 or stats["share_ahead_of_adp"] <= 0.15
+    }
+    if lopsided:
+        print("")
+        print("  WHERE THIS BOARD DISAGREES WITH THE ROOM (top 60)")
+        for pos, stats in sorted(lopsided.items()):
+            direction = ("higher" if stats["share_ahead_of_adp"] >= 0.5 else "lower")
+            print(f"    {pos:<4} {int(stats['n']):>2} players, "
+                  f"{stats['share_ahead_of_adp']:.0%} ranked {direction} than ADP "
+                  f"(median {stats['median_delta']:+.0f} places)")
+        print("    A one-sided split is a bias, not an edge. Which side is right")
+        print("    needs a season of graded projections - see `fcc accuracy`.")
+
     flagged = sum(1 for p in players if p.prior_verdict)
     if flagged:
         print("")

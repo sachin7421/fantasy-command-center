@@ -258,6 +258,18 @@ def run(
     )
 
 
+def _lineup_title(report: LineupReport) -> str:
+    """Lead with the single biggest change and what it is worth."""
+    if not report.swaps:
+        return f"Lineup is already optimal (wk {report.week})"
+    best = max(report.swaps, key=lambda s: s.gain)
+    out = best.starter_out.name if best.starter_out else "an empty slot"
+    head = f"Start {best.bench_in.name} over {out} (+{best.gain:.1f})"
+    if len(report.swaps) > 1:
+        head += f" and {len(report.swaps) - 1} more"
+    return f"{head} — wk {report.week}"
+
+
 def to_notification(report: LineupReport, season: int) -> Notification | None:
     # Silence beats a confident wrong answer. With no roster or no projections
     # every player scores zero, the optimal lineup equals the current one, and
@@ -294,7 +306,7 @@ def to_notification(report: LineupReport, season: int) -> Notification | None:
     lines.append("Set these in Yahoo: My Team -> drag into the listed slot.")
 
     return Notification(
-        title=f"Week {report.week} lineup: {len(report.swaps)} change(s) suggested",
+        title=_lineup_title(report),
         lines=lines,
         job="lineup",
         urgency="high" if report.gain >= 8 else "normal",

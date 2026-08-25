@@ -243,11 +243,27 @@ class DraftRecommender:
         same_tier = tier_index.get((player.position, player.tier), [])
         next_tier = tier_index.get((player.position, player.tier + 1), [])
 
+        # The size of the drop to the next tier, measured against the BOARD's
+        # scale rather than against the player's own value.
+        #
+        # Dividing by `player.vorp` made urgency scale inversely with quality:
+        # the same 10-point drop is 13% of an elite quarterback's VORP and 70%
+        # of a mediocre one's, so the worse player got the bigger boost. Across
+        # three mock drafts the recommender took QB8, QB9 and QB11 and never an
+        # elite quarterback - about four points a week conceded to an artifact
+        # rather than to a strategy.
+        #
+        # The denominator is now the best available player's VORP, which is the
+        # same for every candidate at a given pick, so a cliff is comparable
+        # across positions and a bigger drop always means more urgency.
         cliff = 0.0
         if next_tier:
             best_next = max(next_tier, key=lambda p: p.vorp)
-            if player.vorp > 0:
-                cliff = max(0.0, (player.vorp - best_next.vorp) / abs(player.vorp))
+            scale = max(
+                (p.vorp for p in available if p.vorp > 0), default=0.0
+            )
+            if scale > 0 and player.vorp > best_next.vorp:
+                cliff = max(0.0, (player.vorp - best_next.vorp) / scale)
 
         remaining_in_tier = len(same_tier)
         if remaining_in_tier <= 2 and cliff > 0:

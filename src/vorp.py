@@ -216,18 +216,48 @@ def compute_replacement_levels(
 
 # --- tiers -------------------------------------------------------------------
 
+#: A tier break needs a gap this many times the position's own typical step.
+TIER_BREAK_MULTIPLE = 1.6
+#: ...and at least this many players before another break can start.
+MIN_TIER_SIZE = 2
+
+
 def assign_tiers(
-    players: Sequence[PlayerValue], gap_pct: float = 0.08, min_gap_points: float = 3.0
+    players: Sequence[PlayerValue],
+    gap_pct: float = 0.08,
+    min_gap_points: float = 3.0,
+    break_multiple: float = TIER_BREAK_MULTIPLE,
 ) -> list[list[PlayerValue]]:
     """Group a position into tiers at projection drop-offs (spec 5.1).
 
-    A new tier starts when the gap to the next player is both a meaningful
-    fraction of his value and a meaningful absolute number of points, so that
-    the deep end of a position does not shatter into noise tiers.
+    A break is measured against the position's OWN median step, not against
+    absolute thresholds. The absolute rule - a gap of at least 3.0 points AND
+    at least 8% of the player's value - essentially never fired on smoothed
+    season projections, where consecutive gaps run 2 to 5 points on totals of
+    150 to 300. Every running back from the RB1 down to the RB30 came back as
+    Tier 1, and every receiver likewise.
+
+    That was not a cosmetic problem. Tiers exist to answer one question - "if I
+    wait a round, do I fall off a cliff?" - and a board with one tier answers
+    "no cliff, ever". It also silently disabled `tier_urgency` in the
+    recommender, which is the only mechanism that would tell you to take the
+    last elite tight end before the drop.
+
+    The absolute floor is kept as a secondary guard so the deep end of a
+    position does not shatter into noise tiers.
     """
     ordered = sorted(players, key=lambda p: p.points, reverse=True)
     if not ordered:
         return []
+
+    gaps = [
+        ordered[i].points - ordered[i + 1].points for i in range(len(ordered) - 1)
+    ]
+    positive = sorted(g for g in gaps if g > 0)
+    typical = positive[len(positive) // 2] if positive else 0.0
+    # Relative to the position's own step, with the old absolute rule as a
+    # floor so a flat, low-scoring tail does not fragment.
+    threshold = max(typical * break_multiple, min_gap_points * 0.5)
 
     tiers: list[list[PlayerValue]] = [[]]
     tier_number = 1
@@ -236,12 +266,60 @@ def assign_tiers(
         tiers[-1].append(player)
         if i + 1 >= len(ordered):
             break
-        gap = player.points - ordered[i + 1].points
-        reference = abs(player.points) or 1.0
-        if gap >= min_gap_points and (gap / reference) >= gap_pct:
+        gap = gaps[i]
+        big_enough = gap >= threshold
+        # The original relative rule still forces a break on a genuine cliff
+        # even where the position's steps are large.
+        cliff = gap >= min_gap_points and (gap / (abs(player.points) or 1.0)) >= gap_pct
+        if (big_enough or cliff) and len(tiers[-1]) >= MIN_TIER_SIZE:
             tier_number += 1
             tiers.append([])
     return [t for t in tiers if t]
+
+
+def market_disagreement(
+    players: Sequence[PlayerValue], depth: int = 60
+) -> dict[str, dict[str, float]]:
+    """Where this board systematically disagrees with the draft room, by position.
+
+    Worth stating plainly because it is the board's biggest open question. On
+    the 2026 pre-season data every one of the top 25 running backs ranks AHEAD
+    of its half-PPR ADP and only 2 of 25 receivers do - a perfectly one-sided
+    split, which is the signature of a bias rather than an edge.
+
+    What it is NOT: a scoring-format mismatch. The ADP variant is selected from
+    the league's own PPR value, and this league takes the half-PPR one.
+
+    What it might be: the projection sources genuinely differ at running back
+    (ESPN runs about 10% above Sleeper there and level everywhere else), or the
+    market prices injury and role risk that a point estimate does not. Which of
+    those is right cannot be settled from pre-season data alone - it needs a
+    season of stored projections graded against what happened, which is what
+    `fcc accuracy` accumulates.
+
+    Until then this reports the disagreement rather than silently presenting one
+    side as fact, so a human can apply judgment at the pick.
+    """
+    from statistics import median
+
+    by_position: dict[str, list[float]] = {}
+    for player in players[:depth]:
+        if player.adp and player.overall_rank:
+            by_position.setdefault(player.position, []).append(
+                player.adp - player.overall_rank
+            )
+
+    out: dict[str, dict[str, float]] = {}
+    for position, deltas in by_position.items():
+        if len(deltas) < 5:
+            continue
+        ahead = sum(1 for d in deltas if d > 0)
+        out[position] = {
+            "n": float(len(deltas)),
+            "median_delta": round(median(deltas), 1),
+            "share_ahead_of_adp": round(ahead / len(deltas), 2),
+        }
+    return out
 
 
 # --- scarcity ----------------------------------------------------------------

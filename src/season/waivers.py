@@ -594,6 +594,23 @@ def run(
     return report
 
 
+def _waiver_title(report: WaiverReport) -> str:
+    """Lead with the top claim and the bid, which is the whole decision."""
+    if not report.claims:
+        extras = len(report.stashes) + len(report.handcuffs)
+        if extras:
+            return f"No claims worth making, {extras} to watch (wk {report.week})"
+        return f"Nothing worth claiming (wk {report.week})"
+
+    top = report.claims[0]
+    head = f"Claim {top.add.name}"
+    if report.uses_faab and top.bid_rec:
+        head += f", bid ${top.bid_rec}"
+    if len(report.claims) > 1:
+        head += f" (+{len(report.claims) - 1} more)"
+    return f"{head} — wk {report.week} waivers"
+
+
 def to_notification(report: WaiverReport, season: int) -> Notification | None:
     if not (report.claims or report.stashes or report.handcuffs):
         return None
@@ -635,7 +652,7 @@ def to_notification(report: WaiverReport, season: int) -> Notification | None:
     lines.append("Submit in Yahoo before waivers process (Tue game time).")
 
     return Notification(
-        title=f"Week {report.week} waivers: {len(report.claims)} claim(s)",
+        title=_waiver_title(report),
         lines=lines,
         job="waivers",
         urgency="normal",

@@ -221,7 +221,11 @@ def to_notification(ideas: list[TradeIdea], season: int, week: int) -> Notificat
     lines.append("")
     lines.append("Advisory only - nothing has been sent to anyone.")
     return Notification(
-        title=f"Trade scout: {len(ideas)} mutually-beneficial idea(s)",
+        title=(
+            f"Trade idea: {ideas[0].i_give[0].name} for "
+            f"{ideas[0].i_get[0].name} (+{ideas[0].my_gain:.0f})"
+            + (f" and {len(ideas) - 1} more" if len(ideas) > 1 else "")
+        ),
         lines=lines,
         job="trades",
         urgency="low",

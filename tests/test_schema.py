@@ -7,7 +7,6 @@ surfacing as `column "x" does not exist` inside a scheduled job at 07:00.
 """
 from __future__ import annotations
 
-import pytest
 
 from src import db, schema
 
