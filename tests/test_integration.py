@@ -1133,3 +1133,43 @@ def test_doctor_fails_when_a_hosted_run_lands_on_sqlite(tmp_path, monkeypatch, c
     code = cli.main(["--config", config, "--db", str(database), "doctor"])
     capsys.readouterr()
     assert code == 0
+
+
+# --- yfpy shapes, read from the installed package ----------------------------
+
+def test_a_yahoo_team_name_survives_serialisation():
+    """yfpy returns Team.name as BYTES, not str.
+
+    Read off the installed package: `models.py` declares `self.name: bytes` on
+    Team. serialize() had no bytes branch, so the value fell through every
+    isinstance check to the final `str(obj)` and became the literal text
+    "b'Butt Fumblers'" - prefix, quotes and all - in the database, the
+    dashboard, every FAAB manager profile and every notification.
+
+    Nothing caught it because no test ever fed serialize() a bytes value, and
+    the live API that produces them is not reachable yet.
+    """
+    from src.yahoo_client import serialize
+
+    assert serialize(b"Butt Fumblers") == "Butt Fumblers"
+    assert serialize({"name": b"Galloping Gandhi"}) == {"name": "Galloping Gandhi"}
+    assert serialize([b"NUB", b"Dirties"]) == ["NUB", "Dirties"]
+
+
+def test_a_team_name_with_an_accent_survives_serialisation():
+    """Yahoo team names are user-entered, so they are not all ASCII."""
+    from src.yahoo_client import serialize
+
+    assert serialize(b"Ehcanadiantuxedo") == "Ehcanadiantuxedo"
+    assert serialize("Café Deluxe".encode()) == "Café Deluxe"
+
+
+def test_undecodable_bytes_do_not_crash_the_sync():
+    """A byte sequence that is not UTF-8 must not take down the whole sync.
+
+    One unlucky team name should cost that name, not the league.
+    """
+    from src.yahoo_client import serialize
+
+    result = serialize(b"\xff\xfe bad")
+    assert isinstance(result, str)

@@ -553,8 +553,8 @@ def test_profiles_shrink_toward_the_league_while_history_is_thin():
 
     records = [
         # One wild bid from a newcomer, plenty of ordinary ones from others.
-        BidRecord(1, "new", "p1", "P1", bid=60, value=10.0),
-        *[BidRecord(w, "reg", f"p{w}", "P", bid=10, value=10.0) for w in range(1, 9)],
+        BidRecord("new", "p1", "P1", bid=60, value=10.0),
+        *[BidRecord("reg", f"p{w}", "P", bid=10, value=10.0) for w in range(1, 9)],
     ]
     profiles = learn_profiles(records, {"new": "Newcomer", "reg": "Regular"})
     newcomer = profiles["new"]
@@ -567,7 +567,7 @@ def test_profiles_shrink_toward_the_league_while_history_is_thin():
 def test_a_manager_with_no_history_gets_the_league_profile():
     from src.analytics.faab import BidRecord, learn_profiles
 
-    records = [BidRecord(1, "a", "p", "P", bid=12, value=10.0)]
+    records = [BidRecord("a", "p", "P", bid=12, value=10.0)]
     profiles = learn_profiles(records, {"a": "A", "silent": "Silent"})
     assert "silent" in profiles
     assert profiles["silent"].observations == 0
@@ -717,3 +717,111 @@ def test_a_manager_who_never_bids_is_barely_a_threat():
     assert faab.win_probability(20.0, [quiet], 20.0) > faab.win_probability(
         20.0, [busy], 20.0
     )
+
+
+# --- FAAB bid parsing, against yfpy's real Transaction shape ------------------
+
+def _txn(conn, league_key, txn_id, *, bid, status="successful",
+         source_type="waivers", team="3", player_id="1001"):
+    """One stored transaction, shaped as yfpy serialises a Transaction.
+
+    Field names read off the installed package (yfpy/models.py): Transaction
+    carries faab_bid, status, type and players; each player carries
+    transaction_data with type and destination_team_key, and source_type says
+    whether the player came off waivers or was a free agent.
+    """
+    import json
+
+    from src import db
+
+    payload = {
+        "transaction_id": txn_id,
+        "type": "add/drop",
+        "status": status,
+        "faab_bid": bid,
+        "players": [
+            {
+                "player_id": player_id,
+                "full_name": "Waiver Target",
+                "transaction_data": {
+                    "type": "add",
+                    "source_type": source_type,
+                    "destination_team_key": f"nfl.l.796511.t.{team}",
+                    "destination_type": "team",
+                },
+            }
+        ],
+    }
+    conn.execute(
+        "INSERT INTO transactions(league_key, txn_id, type, timestamp, payload_json) "
+        "VALUES (?,?,?,?,?)",
+        (league_key, str(txn_id), "add/drop", db.utcnow(), json.dumps(payload)),
+    )
+    conn.commit()
+
+
+def test_only_successful_claims_are_learned_from(tmp_path):
+    """A claim that did not go through is not evidence of what wins.
+
+    yfpy's own docstring for Transaction.status says "successful", etc. - so
+    other values exist, and a pending or failed waiver claim carries a
+    faab_bid just like a winning one. Learning from those teaches the model
+    that a LOSING bid won, which drags every predicted rival bid downward and
+    makes it far too optimistic about winning a player.
+    """
+    from src import db
+    from src.analytics import faab
+
+    conn = db.init_db(tmp_path / "bids.db", force_sqlite=True)
+    key = "nfl.l.796511"
+    _txn(conn, key, 1, bid=44, status="successful")
+    _txn(conn, key, 2, bid=3, status="pending")
+    _txn(conn, key, 3, bid=1, status="failed")
+
+    bids = faab.parse_bids(conn, key)
+    conn.close()
+
+    assert [b.bid for b in bids] == [44], (
+        f"learned from {[(b.bid) for b in bids]} - a claim that did not "
+        "succeed is not evidence of what a winning bid costs"
+    )
+
+
+def test_a_zero_dollar_waiver_claim_is_real_evidence(tmp_path):
+    """$0 off waivers means nobody else bid, which is worth knowing.
+
+    Skipping every zero threw that away and left the model learning only from
+    claims somebody paid for - so it believed the league always pays.
+    """
+    from src import db
+    from src.analytics import faab
+
+    conn = db.init_db(tmp_path / "zero.db", force_sqlite=True)
+    key = "nfl.l.796511"
+    _txn(conn, key, 1, bid=0, source_type="waivers")
+
+    bids = faab.parse_bids(conn, key)
+    conn.close()
+
+    assert [b.bid for b in bids] == [0], "a $0 winning waiver claim is evidence"
+
+
+def test_a_free_agent_pickup_is_not_a_bid(tmp_path):
+    """No auction happened, so there is nothing to learn.
+
+    source_type separates the two: "waivers" went through the claim process,
+    "freeagents" was a straight pickup with no bidding at all. Counting the
+    second as a $0 bid would invent evidence that nobody competes.
+    """
+    from src import db
+    from src.analytics import faab
+
+    conn = db.init_db(tmp_path / "fa.db", force_sqlite=True)
+    key = "nfl.l.796511"
+    _txn(conn, key, 1, bid=0, source_type="freeagents")
+    _txn(conn, key, 2, bid=None, source_type="freeagents")
+
+    bids = faab.parse_bids(conn, key)
+    conn.close()
+
+    assert bids == [], f"invented {len(bids)} bid(s) from free-agent pickups"

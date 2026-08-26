@@ -93,9 +93,15 @@ DEFAULT_PARTICIPATION = 0.25
 
 @dataclass
 class BidRecord:
-    """One observed winning bid."""
+    """One observed winning bid.
 
-    week: int
+    There is deliberately no `week`. It used to be read from payload["week"],
+    which yfpy's Transaction does not have - the model carries a `timestamp`
+    and no week at all - so the field was always 0, and nothing ever read it.
+    A field that is always wrong and never used is worse than a missing one:
+    it invites a future caller to trust it.
+    """
+
     team_key: str
     player_key: str | None
     player_name: str
@@ -204,20 +210,42 @@ def parse_bids(conn: Database, league_key: str) -> list[BidRecord]:
         except (TypeError, ValueError):
             continue
 
-        bid = payload.get("faab_bid")
-        if bid in (None, "", 0):
-            continue
-        try:
-            bid = int(bid)
-        except (TypeError, ValueError):
+        # A claim that did not go through is not evidence of what wins.
+        # yfpy's own docstring for Transaction.status says "successful", etc.,
+        # so other values exist - and a pending or failed waiver claim carries
+        # a faab_bid exactly like a winning one. Learning from those teaches
+        # the model that a LOSING bid won, which drags every predicted rival
+        # bid downward and makes it far too optimistic about winning a player.
+        status = str(payload.get("status") or "").lower()
+        if status and status != "successful":
             continue
 
-        team_key, player_key, player_name = _extract_add(payload)
+        team_key, player_key, player_name, source_type = _extract_add(payload)
         if not team_key:
             continue
+
+        # Only waiver claims were auctions. A straight free-agent pickup had no
+        # bidding at all, so counting it as a $0 bid would invent evidence that
+        # nobody in this league competes. `source_type` is the discriminator
+        # Yahoo provides for exactly this ("waivers" vs "freeagents").
+        if source_type and source_type != "waivers":
+            continue
+
+        raw = payload.get("faab_bid")
+        if raw in (None, ""):
+            continue
+        try:
+            bid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        # $0 off waivers is kept: it means nobody else bid, which is worth
+        # knowing. Dropping every zero left the model learning only from claims
+        # somebody paid for, so it believed the league always pays.
+        if bid < 0:
+            continue
+
         out.append(
             BidRecord(
-                week=int(payload.get("week") or 0),
                 team_key=str(team_key),
                 player_key=player_key,
                 player_name=player_name or "",
@@ -227,11 +255,17 @@ def parse_bids(conn: Database, league_key: str) -> list[BidRecord]:
     return out
 
 
-def _extract_add(payload: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
-    """Find the team that added, and the player added, in a transaction blob.
+def _extract_add(
+    payload: dict[str, Any],
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Find the team that added, the player added, and where he came from.
 
     Yahoo nests this differently depending on whether the transaction was a
     straight add or an add/drop pair, so both shapes are handled.
+
+    The fourth value is `source_type` - "waivers" or "freeagents" - which is
+    the only reliable way to tell a contested claim from an uncontested
+    pickup, and therefore whether a bid of $0 means anything.
     """
     players = payload.get("players")
     if isinstance(players, dict):
@@ -252,8 +286,9 @@ def _extract_add(payload: dict[str, Any]) -> tuple[str | None, str | None, str |
             _bare_team_id(team),
             str(player.get("player_id")) if player.get("player_id") else None,
             name,
+            str(data.get("source_type") or "") or None,
         )
-    return None, None, None
+    return None, None, None, None
 
 
 def _bare_team_id(team_key: Any) -> str | None:

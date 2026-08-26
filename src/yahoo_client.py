@@ -44,6 +44,15 @@ def serialize(obj: Any) -> Any:
     """Convert a yfpy model (or nested structure of them) into plain data."""
     if obj is None or isinstance(obj, (str, int, float, bool)):
         return obj
+    # yfpy declares Team.name as `bytes` (models.py), and Yahoo team names are
+    # user-entered, so they are not all ASCII. Without this branch a name fell
+    # through every check below to the final `str(obj)` and was stored as the
+    # literal text "b'Butt Fumblers'" - prefix, quotes and all.
+    #
+    # `errors="replace"` because one team with an undecodable name should cost
+    # that name, not the entire league sync.
+    if isinstance(obj, (bytes, bytearray)):
+        return bytes(obj).decode("utf-8", errors="replace")
     if isinstance(obj, dict):
         return {k: serialize(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
