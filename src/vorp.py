@@ -409,7 +409,6 @@ def build_board(
     num_teams: int,
     *,
     week: int = 0,
-    source: str = "blended",
     tier_gap_pct: float = 0.08,
     positions: Iterable[str] | None = None,
     limit_per_position: int | None = None,
@@ -425,7 +424,7 @@ def build_board(
     for pos in positions:
         rows = conn.execute(
             _BOARD_QUERY,
-            {"season": season, "week": week, "source": source, "position": pos},
+            {"season": season, "week": week, "position": pos},
         ).fetchall()
         pool = [
             PlayerValue(
@@ -506,6 +505,12 @@ SELECT
 FROM players p
 LEFT JOIN projections_blended b
        ON b.player_key = p.player_key AND b.season = :season AND b.week = :week
+-- Source preference is FIXED, not a parameter. `build_board` used to accept a
+-- `source` argument, bind it, and never reference it - so build_board(source=
+-- "espn") silently returned Sleeper numbers. The blend is the answer whenever
+-- it exists; raw Sleeper is the fallback for a player the blender has not
+-- reached yet. Anything else would be reading one source in isolation, which
+-- is what the blend exists to stop.
 LEFT JOIN projections j
        ON j.player_key = p.player_key AND j.season = :season AND j.week = :week
       AND j.source = 'sleeper'
