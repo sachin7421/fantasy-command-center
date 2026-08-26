@@ -358,3 +358,54 @@ def test_bidding_more_never_lowers_your_chance_of_winning():
         p = faab.win_probability(bid, rivals=_rivals(), value=40.0)
         assert p >= previous - 1e-9, f"raising the bid to ${bid} lowered win probability"
         previous = p
+
+
+# --- advice must agree with ranking ------------------------------------------
+
+def test_a_player_who_will_last_is_worth_less_now_than_one_who_will_not(recommender, board):
+    """Urgency must fall for a safe player, not merely stop rising.
+
+    It only ever went up: a player certain to be gone got a boost, a player
+    certain to REMAIN got 1.0 - the same as a coin flip. So the recommender
+    would print "likely available at 118 (98%) - can wait" among its reasons
+    and rank him first on the same line. In a real draft the top defence beat a
+    starting tight end by 0.01 points of score on exactly that tie.
+    """
+    from src.draft.survival import survival_probability
+
+    available = board.available(set())
+    tier_index = None
+    safe = doomed = None
+    for player in available:
+        if player.adp is None:
+            continue
+        s = survival_probability(player.adp, 60, player.adp_stdev, current_pick=40)
+        if s > 0.95 and safe is None:
+            safe = player
+        if s < 0.10 and doomed is None:
+            doomed = player
+        if safe and doomed:
+            break
+
+    assert safe and doomed, "the fixture no longer contains both cases"
+
+    safe_urgency, safe_s, _ = recommender.tier_urgency(
+        safe, available, next_pick=60, tier_index=tier_index, current_pick=40
+    )
+    doomed_urgency, _, _ = recommender.tier_urgency(
+        doomed, available, next_pick=60, tier_index=tier_index, current_pick=40
+    )
+
+    assert safe_urgency < 1.0, (
+        f"a player with {safe_s:.0%} survival got urgency {safe_urgency:.3f} - "
+        "being certain to remain must cost him something, or the advice "
+        '"can wait" contradicts the ranking that follows it'
+    )
+    assert safe_urgency < doomed_urgency, (
+        "the player who will still be there ranks above the one who will not"
+    )
+    # ...but bounded: this is a tiebreaker, not a reordering of the board.
+    assert safe_urgency >= 0.8, (
+        f"urgency fell to {safe_urgency:.3f}; a 20% discount is the cap, "
+        "otherwise a good unpopular player loses to a worse urgent one"
+    )

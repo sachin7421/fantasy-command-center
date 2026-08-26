@@ -54,9 +54,9 @@
         "need": 0.98,
         "pos": "WR",
         "reasons": [],
-        "score": 139.58,
+        "score": 127.85,
         "survival": 0.77,
-        "urgency": 1.21,
+        "urgency": 1.11,
         "vorp": 117.6,
         "warnings": []
       },
@@ -65,9 +65,9 @@
         "need": 0.98,
         "pos": "WR",
         "reasons": [],
-        "score": 129.26,
+        "score": 115.16,
         "survival": 0.82,
-        "urgency": 1.16,
+        "urgency": 1.03,
         "vorp": 113.4,
         "warnings": []
       },
@@ -78,9 +78,9 @@
         "reasons": [
           "fills a starting RB need"
         ],
-        "score": 121.15,
+        "score": 110.69,
         "survival": 0.77,
-        "urgency": 1.0,
+        "urgency": 0.91,
         "vorp": 102.38,
         "warnings": []
       }
@@ -142,9 +142,9 @@
         "reasons": [
           "fills a starting RB need"
         ],
-        "score": 83.99,
+        "score": 77.48,
         "survival": 0.76,
-        "urgency": 1.0,
+        "urgency": 0.92,
         "vorp": 64.44,
         "warnings": []
       },
@@ -155,9 +155,9 @@
         "reasons": [
           "fills a starting RB need"
         ],
-        "score": 78.27,
+        "score": 70.62,
         "survival": 0.8,
-        "urgency": 1.0,
+        "urgency": 0.9,
         "vorp": 60.05,
         "warnings": []
       },
@@ -166,9 +166,9 @@
         "need": 1.02,
         "pos": "TE",
         "reasons": [],
-        "score": 76.93,
+        "score": 69.99,
         "survival": 0.78,
-        "urgency": 1.12,
+        "urgency": 1.02,
         "vorp": 67.02,
         "warnings": []
       }
@@ -233,9 +233,9 @@
         "reasons": [
           "fills a starting TE need"
         ],
-        "score": 36.95,
+        "score": 33.01,
         "survival": 0.81,
-        "urgency": 1.1,
+        "urgency": 0.98,
         "vorp": 30.02,
         "warnings": []
       },
@@ -246,9 +246,9 @@
         "reasons": [
           "fills a starting RB need"
         ],
-        "score": 34.46,
+        "score": 31.72,
         "survival": 0.76,
-        "urgency": 1.0,
+        "urgency": 0.92,
         "vorp": 30.86,
         "warnings": []
       },
@@ -260,9 +260,9 @@
           "value falling to you: ADP 70, board rank 58",
           "WR already deep"
         ],
-        "score": 31.89,
+        "score": 29.55,
         "survival": 0.75,
-        "urgency": 1.38,
+        "urgency": 1.28,
         "vorp": 46.2,
         "warnings": []
       }
@@ -328,9 +328,9 @@
         "reasons": [
           "WR already deep"
         ],
-        "score": 10.15,
+        "score": 9.42,
         "survival": 0.74,
-        "urgency": 1.61,
+        "urgency": 1.5,
         "vorp": 12.6,
         "warnings": []
       },
@@ -341,9 +341,9 @@
         "reasons": [
           "WR already deep"
         ],
-        "score": 6.43,
+        "score": 5.89,
         "survival": 0.77,
-        "urgency": 1.53,
+        "urgency": 1.4,
         "vorp": 8.4,
         "warnings": []
       },
@@ -354,9 +354,9 @@
         "reasons": [
           "WR already deep"
         ],
-        "score": 3.06,
+        "score": 2.77,
         "survival": 0.79,
-        "urgency": 1.46,
+        "urgency": 1.32,
         "vorp": 4.2,
         "warnings": []
       }
@@ -387,9 +387,9 @@
         "reasons": [
           "value falling to you: ADP 131, board rank 78"
         ],
-        "score": 1.1,
+        "score": 1.0,
         "survival": 0.78,
-        "urgency": 1.0,
+        "urgency": 0.91,
         "vorp": 22.0,
         "warnings": []
       },
@@ -400,9 +400,9 @@
         "reasons": [
           "value falling to you: ADP 132, board rank 81"
         ],
-        "score": 1.0,
+        "score": 0.91,
         "survival": 0.79,
-        "urgency": 1.0,
+        "urgency": 0.91,
         "vorp": 20.0,
         "warnings": []
       }
@@ -420,9 +420,9 @@
           "likely available at 123 (89%) - can wait",
           "value falling to you: ADP 131, board rank 78"
         ],
-        "score": 1.1,
+        "score": 0.94,
         "survival": 0.89,
-        "urgency": 1.0,
+        "urgency": 0.85,
         "vorp": 22.0,
         "warnings": []
       },
@@ -434,9 +434,9 @@
           "likely available at 123 (90%) - can wait",
           "value falling to you: ADP 132, board rank 81"
         ],
-        "score": 1.0,
+        "score": 0.85,
         "survival": 0.9,
-        "urgency": 1.0,
+        "urgency": 0.85,
         "vorp": 20.0,
         "warnings": []
       },
@@ -448,9 +448,9 @@
           "likely available at 123 (90%) - can wait",
           "value falling to you: ADP 133, board rank 84"
         ],
-        "score": 0.9,
+        "score": 0.76,
         "survival": 0.9,
-        "urgency": 1.0,
+        "urgency": 0.85,
         "vorp": 18.0,
         "warnings": []
       }
@@ -517,9 +517,9 @@
         "reasons": [
           "QB already deep"
         ],
-        "score": -155.0,
+        "score": -139.87,
         "survival": 0.8,
-        "urgency": 1.0,
+        "urgency": 0.9,
         "vorp": -31.0,
         "warnings": []
       },
@@ -530,9 +530,9 @@
         "reasons": [
           "QB already deep"
         ],
-        "score": -170.5,
+        "score": -151.56,
         "survival": 0.82,
-        "urgency": 1.0,
+        "urgency": 0.89,
         "vorp": -34.1,
         "warnings": []
       },
@@ -544,9 +544,9 @@
           "last 1 in TE tier 4; next tier drops 30%",
           "TE already deep"
         ],
-        "score": -171.51,
+        "score": -156.72,
         "survival": 0.77,
-        "urgency": 1.07,
+        "urgency": 0.97,
         "vorp": -32.14,
         "warnings": [
           "reach vs ADP 130 (board rank 142)"

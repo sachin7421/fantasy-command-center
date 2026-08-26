@@ -283,6 +283,25 @@ class DraftRecommender:
         tier_thinness = 1.0 / max(1, remaining_in_tier)
         urgency = 1.0 + scarcity_pressure * (0.5 + 0.5 * tier_thinness)
 
+        # ...and falls when he will still be sitting there next turn.
+        #
+        # Until now urgency only ever went UP. A player certain to be gone got a
+        # boost; a player certain to REMAIN got 1.0 - exactly the same treatment
+        # as a coin-flip player with no cliff. So the model would print "likely
+        # available at 118 (98%) - can wait" in its own reasons and then rank him
+        # first, advice contradicting ranking on the same line.
+        #
+        # A full draft turns on this: the top defence (98% survival) beat a
+        # starting tight end by 0.01 points of score. In a tie that close,
+        # "which of these will still be here in nineteen picks" is the whole
+        # answer, and it was the one input being ignored.
+        #
+        # Deliberately bounded at 20%. This is a tiebreaker between comparable
+        # players, not a licence to reorder the board: a genuinely better player
+        # who happens to be unpopular must still outrank a worse urgent one.
+        patience = max(0.0, survival - 0.6) / 0.4
+        urgency *= 1.0 - 0.20 * min(1.0, patience)
+
         if survival < 0.35:
             reasons.append(f"{survival:.0%} chance he lasts to pick {next_pick}")
         elif survival > 0.85 and player.vorp > 0:

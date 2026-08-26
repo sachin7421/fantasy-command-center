@@ -142,6 +142,25 @@ class DraftTracker:
         rnd = (pick_number - 1) // self.state.num_teams + 1
         if team_key is None:
             team_key = str(self.state.team_key_for_pick(pick_number))
+
+        # One player, one pick. Recording someone who is already recorded
+        # elsewhere used to leave him holding both slots: the drafted set counts
+        # him once, so the board showed one MORE player available than really
+        # was, and the pick that his duplicate overwrote vanished silently. That
+        # is a corrupt draft, and the way it happens is a mis-tap followed by a
+        # correction - which is exactly what a live draft is full of.
+        #
+        # The earlier entry is dropped rather than the new one refused, because
+        # the new one is the correction.
+        if player_key:
+            for existing, held in list(self.state.picks.items()):
+                if existing != pick_number and held.player_key == player_key:
+                    del self.state.picks[existing]
+                    self.conn.execute(
+                        "DELETE FROM draft_picks WHERE league_key=? AND pick=?",
+                        (self.league_key, existing),
+                    )
+
         entry = Pick(pick_number, rnd, team_key, player_key, source)
         self.state.picks[pick_number] = entry
         self._store(entry)
