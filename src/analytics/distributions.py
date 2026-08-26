@@ -209,12 +209,17 @@ def win_probability(
 
 # --- choosing a lineup -------------------------------------------------------
 
+#: Risk appetites swept to trace the efficient frontier: -0.8 (play the safe
+#: floor) through +1.2 (chase the ceiling), in tenths.
+RISK_LEVELS: tuple[float, ...] = tuple(i / 10 for i in range(-8, 13))
+
+
 def optimise(
     roster: Sequence[PlayerForecast],
     starting_slots: dict[str, int],
     opponent_mean: float,
     opponent_sd: float,
-    risk_levels: Sequence[float] = tuple(x / 10 for x in range(-8, 13)),
+    risk_levels: Sequence[float] = RISK_LEVELS,
 ) -> LineupOutcome:
     """The lineup with the highest chance of winning this specific matchup.
 
@@ -226,10 +231,17 @@ def optimise(
     best: LineupOutcome | None = None
 
     for risk in risk_levels:
+        # A named closure rather than a lambda with a default argument. The
+        # default was there to capture `risk` per iteration, which works, but
+        # it also erases the parameter type - and this callback is the one
+        # place the whole optimiser is parameterised.
+        def scorer(player: PlayerForecast, level: float = risk) -> float:
+            return player.risk_adjusted(level)
+
         lineup = best_lineup(
             roster,
             starting_slots,
-            points_of=lambda p, r=risk: p.risk_adjusted(r),
+            points_of=scorer,
             position_of=lambda p: p.position,
         )
         chosen = [s.player for s in lineup.slots if s.player is not None]

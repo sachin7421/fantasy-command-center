@@ -190,7 +190,7 @@ class LeagueScoring:
             if position_type and cat.position_type not in ("*", position_type):
                 continue
 
-            if cat.is_bucket:
+            if cat.is_bucket and cat.bucket_base:
                 base_value = line.get(cat.bucket_base)
                 if base_value is not None and cat.matches_bucket(base_value):
                     out[cat.display_name] = cat.modifier
@@ -290,8 +290,9 @@ def _fg_distance_key(name: str) -> str | None:
     n = _norm(name)
     if not n.startswith(("fg", "field goal")):
         return None
-    if _PLUS_RE.search(n):
-        low = int(_PLUS_RE.search(n).group(1))
+    plus = _PLUS_RE.search(n)
+    if plus:
+        low = int(plus.group(1))
         return "fg_50p" if low >= 50 else f"fg_{low}p"
     m = _RANGE_RE.search(n)
     if m:
@@ -365,7 +366,7 @@ def build_from_yahoo(settings: dict[str, Any]) -> LeagueScoring:
                 modifier=modifiers.get(sid, 0.0),
                 enabled=sid in modifiers,
                 display_only=_as_bool(stat.get("is_only_display_stat")),
-                bucket_base=BUCKET_BASES.get(base) if bucket else None,
+                bucket_base=BUCKET_BASES.get(base) if (bucket and base) else None,
                 bucket_low=bucket[0] if bucket else None,
                 bucket_high=bucket[1] if bucket else None,
             )

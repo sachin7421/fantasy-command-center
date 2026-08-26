@@ -6,6 +6,8 @@ source that is merely down degrades to cache and warns; it never crashes a job.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import argparse
 import json
 import logging
@@ -241,21 +243,21 @@ def cmd_doctor(ctx: Context, args) -> int:
         print("     DATABASE_URL is missing, or its value is not recognised as")
         print("     a postgres:// or postgresql:// URL.")
         print("")
-        from src.storage import describe_url_problem
+        from src.storage import diagnose_database_url
 
-        print(f"     {describe_url_problem()}")
+        print(f"     {diagnose_database_url()}")
 
-    health = db.job_health(ctx.conn, days=10)
+    runs = db.job_health(ctx.conn, days=10)
     print("")
     print("  job runs (last 10 days):")
-    if not health:
+    if not runs:
         print("    none recorded - either nothing has run, or this database")
         print("    predates run tracking. `fcc daily` will start filling it.")
     else:
-        for row in health:
-            failed = f", {row['failed']} failed" if row.get("failed") else ""
-            print(f"    {row['job']:<16} {row['runs']:>3} run(s), "
-                  f"last {row['last_run'][:16]}{failed}")
+        for entry in runs:
+            failed = f", {entry['failed']} failed" if entry.get("failed") else ""
+            print(f"    {entry['job']:<16} {entry['runs']:>3} run(s), "
+                  f"last {entry['last_run'][:16]}{failed}")
 
     counts = {
         table: ctx.conn.execute(f"SELECT COUNT(*) c FROM {table}").fetchone()["c"]
@@ -532,17 +534,17 @@ def cmd_mockdraft(ctx: Context, args) -> int:
         return EXIT_OK if result.beats_baseline else EXIT_FAIL
 
     slot = args.slot or 1
-    result = simulate_draft(
+    mock = simulate_draft(
         board, slots, teams, rounds, my_slot=slot, seed=args.seed,
         defer_positions=defer, defer_until_round=defer_round,
         bye_stack_threshold=int(ctx.cfg.get("draft.bye_stack_warn_threshold", 3)),
         te_flex_credit=int(ctx.cfg.get("draft.te_flex_credit", 0)),
     )
     print(f"\nMock draft from slot {slot} ({teams} teams, {rounds} rounds)")
-    print(f"  your projected starting lineup : {result.my_points:.1f}")
-    print(f"  league average                 : {result.opponent_mean:.1f}")
-    print(f"  finish                         : {result.my_rank} of {teams}\n")
-    for i, p in enumerate(result.my_roster, 1):
+    print(f"  your projected starting lineup : {mock.my_points:.1f}")
+    print(f"  league average                 : {mock.opponent_mean:.1f}")
+    print(f"  finish                         : {mock.my_rank} of {teams}\n")
+    for i, p in enumerate(mock.my_roster, 1):
         print(f"  R{i:<3d} {p.name[:26]:<26} {p.position}{p.position_rank:<4} {p.points:>7.1f}")
     return EXIT_OK
 
@@ -637,6 +639,23 @@ def _my_faab_left(ctx: Context, season: int, settings: dict) -> int:
     return default
 
 
+@dataclass
+class _JobArgs:
+    """What one job invocation needs, for the runner that fans out to many.
+
+    This was an empty class with attributes attached after construction, which
+    is uncheckable by definition: nothing declares what a job invocation
+    consists of, so a job reading `args.season` would fail only when that job
+    next ran - on a schedule, at 6am, into an empty inbox.
+    """
+
+    job: str
+    week: int | None = None
+    dry_run: bool = False
+    budget: int | None = None
+    season: int | None = None
+
+
 def _require_team(ctx: Context) -> str | None:
     """The configured team id, or None after printing why the job cannot run.
 
@@ -674,7 +693,8 @@ def cmd_job(ctx: Context, args) -> int:
         # Not exempt from needing a team: with no roster key every status change
         # falls through the "not my problem" branch, so this job ran daily and
         # was guaranteed to find nothing.
-        if not _require_team(ctx):
+        team_key = _require_team(ctx)
+        if team_key is None:
             return EXIT_FAIL
         injury_report = injuries.run(
             ctx.conn, ctx.league_key, team_key, season, week
@@ -686,7 +706,8 @@ def cmd_job(ctx: Context, args) -> int:
         notification = injuries.to_notification(injury_report, week, season)
 
     elif args.job == "lineup":
-        if not _require_team(ctx):
+        team_key = _require_team(ctx)
+        if team_key is None:
             return EXIT_FAIL
         lineup_report = lineup.run(
             ctx.conn, ctx.league_key, team_key, season, week, slots,
@@ -704,7 +725,8 @@ def cmd_job(ctx: Context, args) -> int:
         notification = lineup.to_notification(lineup_report, season)
 
     elif args.job == "waivers":
-        if not _require_team(ctx):
+        team_key = _require_team(ctx)
+        if team_key is None:
             return EXIT_FAIL
         settings = ctx.settings()
         waiver_report = waivers.run(
@@ -720,7 +742,8 @@ def cmd_job(ctx: Context, args) -> int:
         notification = waivers.to_notification(waiver_report, season)
 
     elif args.job == "byes":
-        if not _require_team(ctx):
+        team_key = _require_team(ctx)
+        if team_key is None:
             return EXIT_FAIL
         bye_outlook = byes.run(ctx.conn, ctx.league_key, team_key, season, week, slots,
                           playoff_weeks=tuple(ctx.cfg.get("season.playoff_weeks", [15, 16, 17])))
@@ -731,7 +754,8 @@ def cmd_job(ctx: Context, args) -> int:
         notification = byes.to_notification(bye_outlook, season)
 
     elif args.job == "recap":
-        if not _require_team(ctx):
+        team_key = _require_team(ctx)
+        if team_key is None:
             return EXIT_FAIL
         recap_report = recap.run(ctx.conn, ctx.league_key, team_key, season, max(1, week - 1), slots)
         if not recap_report.has_data:
@@ -769,7 +793,8 @@ def cmd_job(ctx: Context, args) -> int:
         notification = reminders.to_notification(found, season, week)
 
     elif args.job == "trades":
-        if not _require_team(ctx):
+        team_key = _require_team(ctx)
+        if team_key is None:
             return EXIT_FAIL
         ideas = trades.run(ctx.conn, ctx.league_key, team_key, season, week, slots)
         print(f"{len(ideas)} mutually-beneficial trade idea(s).")
@@ -848,14 +873,9 @@ def cmd_daily(ctx: Context, args) -> int:
     for job in jobs:
         print(f"\n=== {job} ===")
 
-        class _J:
-            pass
-
-        job_args = _J()
-        job_args.job = job
-        job_args.week = args.week
-        job_args.dry_run = args.dry_run
-        job_args.budget = None
+        job_args = _JobArgs(
+            job=job, week=args.week, dry_run=args.dry_run, budget=None,
+        )
         try:
             cmd_job(ctx, job_args)
         except Exception:

@@ -266,7 +266,9 @@ class YahooClient:
         try:
             for team in self.fetch_teams():
                 if str(team.get("is_owned_by_current_login", "0")) in ("1", "true"):
-                    return int(team.get("team_id"))
+                    team_id = team.get("team_id")
+                    if team_id is not None:
+                        return int(team_id)
         except Exception as exc:
             log.warning("Could not auto-detect your team id: %s", exc)
         return None

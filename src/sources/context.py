@@ -322,8 +322,11 @@ def _consensus(game: dict[str, Any]) -> tuple[dict[str, float], float | None]:
             return ordered[mid]
         return (ordered[mid - 1] + ordered[mid]) / 2
 
+    # Computed once per team rather than twice - the filter and the value were
+    # separate calls, so they could in principle disagree.
+    by_team = {team: median(v) for team, v in spreads.items()}
     return (
-        {team: median(v) for team, v in spreads.items() if median(v) is not None},
+        {team: m for team, m in by_team.items() if m is not None},
         median(totals),
     )
 

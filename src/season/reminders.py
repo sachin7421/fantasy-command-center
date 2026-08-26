@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, tzinfo
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -30,7 +30,7 @@ class Reminder:
     subtitle: str = ""
 
 
-def _parse_draft_time(raw: Any, tz: ZoneInfo) -> datetime | None:
+def _parse_draft_time(raw: Any, tz: tzinfo) -> datetime | None:
     """Parse the league draft time.
 
     Yahoo gives this either as a unix timestamp or as the human string shown on

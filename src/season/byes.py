@@ -271,9 +271,11 @@ def to_notification(report: ByeReport, season: int) -> Notification | None:
     if report.playoff:
         lines.append("")
         lines.append("__PLAYOFF WEEKS (15-17)__")
-        for outlook in report.playoff[:10]:
-            matchups = ", ".join(f"W{w} vs {o}" for w, o in sorted(outlook.opponents.items()))
-            lines.append(f"  {outlook.player} ({outlook.team}): {matchups}")
+        for playoff in report.playoff[:10]:
+            matchups = ", ".join(
+                f"W{w} vs {o}" for w, o in sorted(playoff.opponents.items())
+            )
+            lines.append(f"  {playoff.player} ({playoff.team}): {matchups}")
     elif not report.playoff_available:
         lines.append("")
         # There is no `fcc sync-schedule`; the schedule arrives with the

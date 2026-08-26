@@ -235,6 +235,10 @@ class Notifier:
             subtype="html",
         )
 
+        if not username or not password:
+            log.warning("SMTP username or password is missing; not sending")
+            return False
+
         port = int(self.cfg.get("notifications.email.smtp_port", 587))
         if port == 465:
             with smtplib.SMTP_SSL(host, port, timeout=30) as server:

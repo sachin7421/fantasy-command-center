@@ -119,12 +119,12 @@ def usage_trend(weeks: Sequence[UsageWeek]) -> float:
     Distinguishes "unlucky" from "losing his job", which look identical if you
     only read the residual.
     """
-    with_snaps = [w for w in weeks if w.snap_pct is not None]
-    if len(with_snaps) < 4:
+    snaps = [w.snap_pct for w in weeks if w.snap_pct is not None]
+    if len(snaps) < 4:
         return 0.0
-    midpoint = len(with_snaps) // 2
-    earlier = fmean(w.snap_pct for w in with_snaps[:midpoint])
-    recent = fmean(w.snap_pct for w in with_snaps[midpoint:])
+    midpoint = len(snaps) // 2
+    earlier = fmean(snaps[:midpoint])
+    recent = fmean(snaps[midpoint:])
     return round(recent - earlier, 4)
 
 

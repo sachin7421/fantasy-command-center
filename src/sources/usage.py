@@ -100,7 +100,7 @@ class UsageSource(Source):
         for row in opportunity:
             stats["rows"] += 1
             gsis = row.get("player_id")
-            key = by_gsis.get(gsis)
+            key = by_gsis.get(gsis) if gsis else None
             if not key:
                 match = idmap.resolve(
                     source="nflverse", source_id=gsis, name=row.get("full_name") or "",
@@ -250,7 +250,8 @@ class UsageSource(Source):
         stored = 0
 
         for row in rows:
-            key = by_gsis.get(row.get("gsis_id"))
+            gsis_id = row.get("gsis_id")
+            key = by_gsis.get(gsis_id) if gsis_id else None
             if not key:
                 match = idmap.resolve(
                     source="nflverse", source_id=row.get("gsis_id"),
@@ -315,7 +316,8 @@ class UsageSource(Source):
         stored = 0
         target_week = week or 0
         for (team, position, rank), row in latest.items():
-            key = by_gsis.get(row.get("gsis_id"))
+            gsis_id = row.get("gsis_id")
+            key = by_gsis.get(gsis_id) if gsis_id else None
             name = row.get("player_name") or ""
             if not key and name:
                 key = idmap.resolve(

@@ -169,7 +169,7 @@ class EspnSource(Source):
                 source=self.name,
                 source_id=str(player.get("id") or ""),
                 name=name,
-                position=POSITION_IDS.get(position_id),
+                position=POSITION_IDS.get(position_id) if position_id else None,
                 team=None,   # ESPN uses numeric team ids; the name+pos match suffices
             )
             if not match.player_key:

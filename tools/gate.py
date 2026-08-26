@@ -30,6 +30,11 @@ CHECKS: list[tuple[str, list[str], str]] = [
         "style and obvious bugs",
     ),
     (
+        "types",
+        PY + ["-m", "mypy", "src", "dashboard.py", "fcc.py"],
+        "a caller and the thing it calls have drifted apart",
+    ),
+    (
         "tests",
         PY + ["-m", "pytest", "tests", "-q"],
         "behaviour, invariants and the golden snapshots",
@@ -51,7 +56,7 @@ CHECKS: list[tuple[str, list[str], str]] = [
     ),
 ]
 
-FAST = {"lint", "tests"}
+FAST = {"lint", "types", "tests"}
 
 
 def run(label: str, argv: list[str]) -> tuple[bool, float, str]:

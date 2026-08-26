@@ -7,9 +7,10 @@
 # without its callers - are inside the competence of the tools below, and both
 # shipped anyway because nothing ran them.
 #
-# mypy is not gated yet: it currently reports errors, most of them cascades from
-# a single variable-rebinding pattern. It runs in report-only mode until that is
-# cleaned up, then `continue-on-error` comes off and it becomes a real gate.
+# mypy gates. It reached zero by fixing the errors, not by loosening the
+# configuration, and it caught a live ImportError on the way: `fcc doctor`
+# imported a function that had been deleted an hour earlier, reachable only on
+# a hosted run with a SQLite fallback - a branch no test enters.
 #
 # Everything here is also runnable in one command locally - `python tools/gate.py`
 # - and the pre-push hook in .githooks runs it automatically. CI and the hook
@@ -58,9 +59,8 @@ jobs:
       - name: Lint
         run: python -m ruff check src dashboard.py fcc.py tests
 
-      - name: Types (report only, not yet gating)
+      - name: Types
         run: python -m mypy src dashboard.py fcc.py
-        continue-on-error: true
 
       - name: Silent degradation
         run: python tools/check_degradation.py

@@ -87,7 +87,7 @@ def best_lineup(
     # DP small when handed a full free-agent pool.
     candidates = sorted(players, key=points_of, reverse=True)[: max(24, n_slots * 4)]
 
-    def positions_for(player: object) -> set[str]:
+    def positions_for(player: P) -> set[str]:
         if eligible_of is not None:
             got = {str(p).upper() for p in eligible_of(player) if p}
             if got:
@@ -139,8 +139,9 @@ def best_lineup(
     mask = best_mask
     for idx in range(len(candidates) - 1, -1, -1):
         step = choice[idx]
-        if mask in step and step[mask] is not None:
-            prev, slot_index = step[mask]
+        entry = step.get(mask)
+        if entry is not None:
+            prev, slot_index = entry
             assignment[slot_index] = candidates[idx]
             mask = prev
 

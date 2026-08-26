@@ -23,7 +23,7 @@ import os
 import re
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 from collections.abc import Callable, Sequence
 
 log = logging.getLogger(__name__)
@@ -31,7 +31,13 @@ log = logging.getLogger(__name__)
 POSTGRES_SCHEMES = ("postgres://", "postgresql://", "postgresql+psycopg://")
 
 
-def is_postgres_url(url: str | None) -> bool:
+def is_postgres_url(url: str | None) -> TypeGuard[str]:
+    """True when this is a Postgres connection string - and it is not None.
+
+    A TypeGuard rather than a plain bool because that is what the function has
+    always MEANT: every caller immediately uses the value as a string, and the
+    checker could not see that the check made it safe.
+    """
     return bool(url) and str(url).startswith(POSTGRES_SCHEMES)
 
 
