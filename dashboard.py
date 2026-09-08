@@ -35,6 +35,37 @@ st.set_page_config(
 )
 
 
+def pick_to_apply(
+    widget: int, db_next: int, last_applied: int | None
+) -> int | None:
+    """The pick to skip forward to, or None to write nothing.
+
+    Phantom picks appeared in the live league twice, from nobody's action. The
+    pick-number box carries a Streamlit `key`, so session state overrides the
+    `value=` argument on every rerun. When that remembered number disagreed
+    with the database - after a reboot, a cache clear, or a resumed session -
+    the widget reported the OLD number, the code saw it differ from
+    `next_pick`, and called skip_to(), silently recording that opponents had
+    drafted. On draft night Streamlit reruns on every button press.
+
+    So the trigger is a PERSON CHANGING THE BOX, never the box merely
+    disagreeing with the draft:
+
+      * nothing applied yet -> the box is only reporting its remembered value,
+        which is not an instruction
+      * already applied this number -> obeyed once; later reruns still read it
+      * lower than the draft has reached -> skip_to only moves forward, so this
+        is a display correction, not a request to delete picks (that is undo)
+    """
+    if last_applied is None:
+        return None
+    if widget == last_applied:
+        return None
+    if widget <= db_next:
+        return None
+    return widget
+
+
 def _hosted() -> bool:
     """Whether this is the deployed app rather than someone running it locally.
 
@@ -307,11 +338,26 @@ def draft_view(cfg, conn, league_key):
             help="Set this if the app has fallen behind the real draft.",
         )
         st.caption(f"Round {position.current_round(int(chosen_pick))}")
-    if int(chosen_pick) != current_pick:
-        written = tracker.skip_to(int(chosen_pick))
+    # `_fcc_pick_applied` records the last value a PERSON set, which is what
+    # separates an instruction from the widget merely echoing session state.
+    # It is seeded on first render so the opening rerun can never write picks.
+    if "_fcc_pick_applied" not in st.session_state:
+        st.session_state["_fcc_pick_applied"] = int(chosen_pick)
+
+    target = pick_to_apply(
+        widget=int(chosen_pick),
+        db_next=tracker.state.next_pick,
+        last_applied=st.session_state.get("_fcc_pick_applied"),
+    )
+    if target is not None:
+        written = tracker.skip_to(target)
+        st.session_state["_fcc_pick_applied"] = target
         if written:
+            st.caption(f"Marked {written} pick(s) as made by other teams.")
             st.cache_data.clear()
             st.rerun()
+    if int(chosen_pick) != current_pick:
+        st.session_state["_fcc_pick_applied"] = int(chosen_pick)
         current_pick = int(chosen_pick)
         on_the_clock = tracker.state.team_key_for_pick(current_pick)
         is_mine = on_the_clock == int(my_slot)

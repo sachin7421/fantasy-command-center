@@ -282,3 +282,52 @@ def test_tier_index_groups_by_position_and_tier(board):
         for (pos, tier), players in index.items()
         for p in players
     )
+
+
+# --- the pick box must not write picks by itself -----------------------------
+
+def test_the_pick_box_only_writes_when_a_person_changes_it():
+    """Phantom picks appeared in the live league twice, from nobody's action.
+
+    The dashboard's pick-number box carries `key="pick_number"`, so Streamlit's
+    session state overrides the `value=` argument on every rerun. When that
+    remembered number disagreed with the database - after a reboot, a cache
+    clear, or a resumed session - the widget reported the OLD number, the code
+    saw it differ from `next_pick`, and called skip_to(). That silently wrote
+    placeholder picks saying opponents had already drafted.
+
+    On draft night Streamlit reruns on every button press, so this fires
+    repeatedly, and the draft board starts the evening believing picks are
+    gone that nobody made.
+
+    The rule: act on a person changing the box, never on the box merely
+    disagreeing with the database.
+    """
+    from dashboard import pick_to_apply
+
+    # Before anything is seeded, the box is only reporting its remembered
+    # value. Nothing is written, whatever it says - and "whatever it says" is
+    # the point: widget=3 against an empty draft is the exact case that wrote
+    # the phantom picks into the live league twice.
+    assert pick_to_apply(widget=1, db_next=1, last_applied=None) is None
+    assert pick_to_apply(widget=3, db_next=1, last_applied=None) is None
+
+    # Once seeded, a person moving the box IS an instruction, and is obeyed.
+    assert pick_to_apply(widget=12, db_next=1, last_applied=1) == 12
+
+    # ...but only once. Later reruns still read 12 out of session state.
+    assert pick_to_apply(widget=12, db_next=12, last_applied=12) is None
+
+    # Moving it again is another instruction.
+    assert pick_to_apply(widget=15, db_next=12, last_applied=12) == 15
+
+
+def test_the_pick_box_never_rewinds_the_draft():
+    """Typing a smaller number must not silently erase recorded picks.
+
+    skip_to only ever moves forward, so a lower number is a correction to the
+    DISPLAY, not an instruction to delete picks. Undo is the way to remove one.
+    """
+    from dashboard import pick_to_apply
+
+    assert pick_to_apply(widget=4, db_next=20, last_applied=20) is None
