@@ -613,12 +613,40 @@ def _pane_board(board, drafted, phone_layout, tracker, my_slot, is_mine,
                 on_the_clock, current_pick):
     st.markdown("<div class='fcc-section'>Best available</div>", unsafe_allow_html=True)
     positions = ["ALL"] + sorted({p.position for p in board.players})
-    chosen = st.radio("Position", positions, horizontal=True, label_visibility="collapsed")
-    pool = [p for p in board.available(drafted)
-            if chosen == "ALL" or p.position == chosen][:60]
+    filters, sizer = st.columns([3, 1])
+    with filters:
+        # index=0 and an explicit key: without them the radio kept whatever
+        # position was last clicked, so a board that looked stuck on one
+        # position was indistinguishable from a broken board.
+        chosen = st.radio(
+            "Position", positions, horizontal=True, index=0,
+            label_visibility="collapsed", key="board_position",
+        )
+    with sizer:
+        # 60 was an arbitrary cap that hid four fifths of a draftable board.
+        # Rounds 10-15 are drafted from names in the 120-200 range, and the
+        # table simply ended before them.
+        show = st.selectbox(
+            "Show", [50, 100, 200, 400], index=2,
+            label_visibility="collapsed", key="board_size",
+            help="How many players to list.",
+        )
+
+    available = board.available(drafted)
+    pool = [p for p in available
+            if chosen == "ALL" or p.position == chosen][: int(show)]
     if not pool:
         st.caption("Nothing available at that position.")
         return
+
+    if chosen == "ALL":
+        from collections import Counter
+
+        mix = Counter(p.position for p in pool)
+        st.caption(
+            f"Top {len(pool)} by value over replacement - "
+            + ", ".join(f"{n} {pos}" for pos, n in sorted(mix.items()))
+        )
 
     rows = []
     for p in pool:
