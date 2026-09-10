@@ -437,3 +437,101 @@ def test_a_roster_becomes_player_keys_not_rows(tmp_path):
         assert conn.scalar("SELECT COUNT(*) FROM rosters") == 0
     finally:
         conn.close()
+
+
+# --- obligation 5: purge -----------------------------------------------------
+
+YAHOO_TABLES = ("rosters", "free_agents", "team_budgets", "transactions")
+
+
+def test_purge_removes_every_yahoo_row_and_keeps_ours(tmp_path):
+    """Obligation 5: if the agreement ends, everything Yahoo goes.
+
+    The hard half is what it must NOT delete. Our projections, our blends, our
+    draft picks and our players are not Yahoo's, and a purge that took them
+    would destroy the application to satisfy a clause about someone else's
+    data.
+    """
+    from src.compliance import purge_yahoo
+
+    conn = db.init_db(tmp_path / "p.db", force_sqlite=True)
+    try:
+        ours = _players(conn)
+        now = db.utcnow()
+        conn.execute(
+            "INSERT INTO projections(player_key, source, season, week, stats_json, "
+            "points, fetched_at) VALUES (?,?,?,?,?,?,?)",
+            (ours["Jahmyr Gibbs"], "sleeper", 2026, 0, "{}", 310.0, now),
+        )
+        conn.execute(
+            "INSERT INTO draft_picks(league_key, pick, round, team_key, player_key, "
+            "source, recorded_at) VALUES (?,?,?,?,?,?,?)",
+            ("nfl.l.796511", 3, 1, "4", ours["Jahmyr Gibbs"], "manual", now),
+        )
+        conn.execute(
+            "INSERT INTO rosters(league_key, team_key, team_name, player_key, "
+            "selected_pos, week, fetched_at) VALUES (?,?,?,?,?,?,?)",
+            ("nfl.l.796511", "4", "Butt Fumblers", ours["Puka Nacua"], "WR", 2, now),
+        )
+        conn.execute(
+            "INSERT INTO team_budgets(league_key, season, team_key, team_name, "
+            "faab_balance, waiver_priority, fetched_at) VALUES (?,?,?,?,?,?,?)",
+            ("nfl.l.796511", 2026, "4", "Butt Fumblers", 50, 3, now),
+        )
+        conn.commit()
+
+        removed = purge_yahoo(conn)
+
+        for table in YAHOO_TABLES:
+            assert conn.scalar(f"SELECT COUNT(*) FROM {table}") == 0, table
+        assert removed["rosters"] == 1
+        assert removed["team_budgets"] == 1
+
+        # ...and everything of ours survives.
+        assert conn.scalar("SELECT COUNT(*) FROM players") == 3
+        assert conn.scalar("SELECT COUNT(*) FROM projections") == 1
+        assert conn.scalar("SELECT COUNT(*) FROM draft_picks") == 1, (
+            "the purge deleted draft picks we typed in ourselves"
+        )
+    finally:
+        conn.close()
+
+
+def test_purge_clears_yahoo_identifiers_contributed_by_yahoo(tmp_path):
+    """Yahoo ids sourced from Sleeper stay; the purge is about Yahoo's grant.
+
+    On termination the safe reading is that any Yahoo identifier goes, even one
+    Sleeper published - so the purge clears the columns. That costs an exact
+    join and falls back to name matching, which is a real cost, and is the
+    correct trade when the agreement has ended.
+    """
+    from src.compliance import purge_yahoo
+    from src.idmap import IdMapper
+
+    conn = db.init_db(tmp_path / "p.db", force_sqlite=True)
+    try:
+        key = IdMapper(conn).upsert_player(
+            full_name="Marquise Brown", position="WR", team="KC", yahoo_id="32180",
+        )
+        purge_yahoo(conn)
+        row = conn.fetchone(
+            "SELECT yahoo_id, yahoo_key, full_name FROM players WHERE player_key=?",
+            (key,),
+        )
+        assert row["yahoo_id"] is None and row["yahoo_key"] is None
+        assert row["full_name"] == "Marquise Brown", "the player himself was deleted"
+    finally:
+        conn.close()
+
+
+def test_purge_reports_what_it_did(tmp_path):
+    """A compliance action nobody can evidence is not much use."""
+    from src.compliance import purge_yahoo
+
+    conn = db.init_db(tmp_path / "p.db", force_sqlite=True)
+    try:
+        removed = purge_yahoo(conn)
+        assert set(removed) >= set(YAHOO_TABLES)
+        assert all(isinstance(v, int) for v in removed.values())
+    finally:
+        conn.close()

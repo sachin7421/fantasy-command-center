@@ -1431,6 +1431,33 @@ def cmd_faab(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+def cmd_purge_yahoo(ctx: Context, args) -> int:
+    """Delete everything Yahoo-derived (API agreement, obligation 5).
+
+    Requires --confirm. This is irreversible and, if run while the agreement is
+    still in force, throws away a season of learned bid behaviour along with
+    the data it was learned from. The flag is the difference between a
+    compliance action and a mistake.
+    """
+    from src.compliance import describe_purge, purge_yahoo
+
+    if not getattr(args, "confirm", False):
+        print("This deletes ALL Yahoo-derived data: rosters, free agents, team")
+        print("budgets, the transaction log, and every Yahoo identifier.")
+        print("")
+        print("Your own data is untouched - players, projections, the draft")
+        print("board, your draft picks and learned bid coefficients all stay.")
+        print("")
+        print("Re-run with --confirm to proceed.")
+        return EXIT_FAIL
+
+    removed = purge_yahoo(ctx.conn)
+    print("Yahoo data purged:")
+    for line in describe_purge(removed):
+        print(line)
+    return EXIT_OK
+
+
 def cmd_check(ctx: Context, args) -> int:
     """Run the static analysers over the source tree.
 
@@ -1636,6 +1663,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_faab.add_argument("--curve", action="store_true",
                         help="show win probability at every bid")
 
+    p_purge = sub.add_parser(
+        "purge-yahoo",
+        help="delete all Yahoo-derived data (if the API agreement ends)",
+    )
+    p_purge.add_argument(
+        "--confirm", action="store_true",
+        help="required; without it the command explains and exits non-zero",
+    )
+
     p_check = sub.add_parser("check", help="run the static analysers")
     p_check.add_argument("--only", help="comma-separated subset, e.g. ruff,mypy")
 
@@ -1664,6 +1700,7 @@ HANDLERS = {
     "playoffs": cmd_playoffs,
     "faab": cmd_faab,
     "check": cmd_check,
+    "purge-yahoo": cmd_purge_yahoo,
     "test-notify": cmd_test_notify,
     "migrate": cmd_migrate,
     "dashboard": cmd_dashboard,
