@@ -445,22 +445,32 @@ def test_a_claim_gain_is_the_lineup_improvement(lineup_league):
 
 # --- the lineup job must not report a confident zero ------------------------
 
-def test_lineup_says_so_when_the_week_has_no_projections(lineup_league):
-    """Silence beats "0 changes suggested" when every projection is missing."""
-    from src.season import lineup
+def test_lineup_says_so_when_yahoo_is_not_connected(tmp_path, capsys):
+    """No roster, no lineup - and it must say which, not go quiet.
 
-    conn = db.init_db(lineup_league)
-    report = lineup.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS)
-    assert report.has_data is False
-    assert report.roster_size == 10 and report.projected == 0
-
-    notification = lineup.to_notification(report, SEASON)
-    assert notification is not None
-    assert "no data" in notification.title
-    assert "change(s) suggested" not in notification.title
-
-
-# --- features that were written, tested, and connected to nothing -----------
+    This used to check the "no projections this week" path. That path is still
+    there and still tested through lineup.run directly; what the CLI can now
+    hit first is having no roster at all, because the roster is fetched per run
+    rather than read from a table.
+    """
+    config = tmp_path / "c.yaml"
+    config.write_text(
+        "league:\n"
+        '  league_id: "796511"\n'
+        "  season: 2026\n"
+        "  my_team_id: 3\n"
+        "paths:\n"
+        f'  env_dir: "{tmp_path.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    code = cli.main([
+        "--config", str(config), "--db", str(tmp_path / "x.db"),
+        "lineup", "--week", "3", "--dry-run",
+    ])
+    out = capsys.readouterr().out
+    assert code == cli.EXIT_FAIL
+    assert "Yahoo" in out
+    assert "Traceback" not in out
 
 def test_prior_season_flags_reach_the_board(tmp_path):
     """priors.py was imported by no production module at all.
@@ -600,10 +610,21 @@ def test_no_command_raises_against_an_empty_database(tmp_path, capsys):
         ["playoffs", "--week", "3", "--trials", "50"],
         ["faab", "--week", "3"],
     ]
+    # A roster-dependent job with no Yahoo connection now exits FAIL, on
+    # purpose. Every other source in this project falls back to stored data
+    # when it is unreachable; the API agreement forbids storing Yahoo's, so
+    # there is nothing to fall back to. Exiting 0 with a polite note is what
+    # left six of seven scheduled jobs silently doing nothing behind a green
+    # workflow run, and this is the same mistake in a new disguise.
+    #
+    # What must still hold for every command is the part this test is actually
+    # about: no traceback, and a sentence saying what it needs.
     for argv in commands:
         code = cli.main(["--config", str(config), "--db", str(database)] + argv)
         out = capsys.readouterr().out
-        assert code == 0, f"fcc {' '.join(argv)} exited {code}: {out}"
+        assert code in (0, cli.EXIT_FAIL), (
+            f"fcc {' '.join(argv)} exited {code}: {out}"
+        )
         assert "Traceback" not in out, f"fcc {' '.join(argv)}:\n{out}"
         assert out.strip(), f"fcc {' '.join(argv)} said nothing at all"
 
@@ -802,10 +823,40 @@ def test_a_roster_less_job_fails_rather_than_reporting_success(tmp_path, capsys)
 
 # --- lineup advice must be executable in Yahoo ------------------------------
 
+def _snapshot(players, team_key=None, week=None):
+    """A LeagueSnapshot standing in for what Yahoo returned this run.
+
+    The roster used to be rows in a `rosters` table; the API agreement forbids
+    storing it, so tests build the same thing in memory.
+
+    `players` accepts either the seven-tuple used by _roster_db or bare
+    (player_key, selected_pos) pairs.
+    """
+    from src.yahoo_snapshot import LeagueSnapshot, RosterSpot
+
+    snap = LeagueSnapshot(
+        league_key=LEAGUE, season=SEASON, week=WEEK if week is None else week,
+    )
+    for entry in players:
+        if len(entry) >= 7:
+            key, _label, _pos, _pts, slot, _inj, _bye = entry[:7]
+        else:
+            key, slot = entry[0], (entry[1] if len(entry) > 1 else None)
+        snap.rosters.append(RosterSpot(
+            team_key=str(MY_TEAM if team_key is None else team_key),
+            team_name="Butt Fumblers", player_key=key, selected_pos=slot,
+        ))
+    return snap
+
+
 def _roster_db(tmp_path, name, players, slots_week=WEEK):
-    """players: (key, name, position, points, selected_pos, injury, bye)."""
+    """players: (key, name, position, points, selected_pos, injury, bye).
+
+    Returns (conn, snapshot). The roster half is a snapshot now, because
+    storing Yahoo league state to disk is no longer permitted.
+    """
     conn = db.init_db(tmp_path / name)
-    for key, label, pos, pts, slot, injury, bye in players:
+    for key, label, pos, pts, _slot, injury, bye in players:
         conn.execute(
             "INSERT INTO players(player_key, full_name, position, team, bye_week, "
             "updated_at) VALUES (?,?,?,?,?,?)",
@@ -816,11 +867,6 @@ def _roster_db(tmp_path, name, players, slots_week=WEEK):
             "computed_at) VALUES (?,?,?,?,?)",
             (key, SEASON, slots_week, pts, db.utcnow()),
         )
-        conn.execute(
-            "INSERT INTO rosters(league_key, team_key, player_key, selected_pos, "
-            "week, fetched_at) VALUES (?,?,?,?,?,?)",
-            (LEAGUE, MY_TEAM, key, slot, slots_week, db.utcnow()),
-        )
         if injury:
             conn.execute(
                 "INSERT INTO injuries(player_key, status, source, observed_at) "
@@ -828,7 +874,7 @@ def _roster_db(tmp_path, name, players, slots_week=WEEK):
                 (key, injury, "sleeper", "2026-10-01T00:00:00+00:00"),
             )
     conn.commit()
-    return conn
+    return conn, _snapshot(players, week=slots_week)
 
 
 def test_a_swap_names_a_player_who_could_hold_that_slot(tmp_path):
@@ -839,13 +885,13 @@ def test_a_swap_names_a_player_who_could_hold_that_slot(tmp_path):
     """
     from src.season import lineup
 
-    conn = _roster_db(tmp_path, "swaps.db", [
+    conn, snap = _roster_db(tmp_path, "swaps.db", [
         ("qbbad|QB", "QBBad", "QB", 5.0, "QB", None, None),
         ("wrbad|WR", "WRBad", "WR", 9.0, "WR", None, None),
         ("qbgood|QB", "QBGood", "QB", 25.0, "BN", None, None),
         ("wrgood|WR", "WRGood", "WR", 22.0, "BN", None, None),
     ])
-    report = lineup.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, {"WR": 1, "QB": 1})
+    report = lineup.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, {"WR": 1, "QB": 1}, snapshot=snap)
     by_slot = {s.slot: s for s in report.swaps}
     assert by_slot["QB"].starter_out.position == "QB", by_slot["QB"].describe()
     assert by_slot["WR"].starter_out.position == "WR", by_slot["WR"].describe()
@@ -857,11 +903,11 @@ def test_an_unfillable_week_is_reported_not_hidden(tmp_path):
     """An Out player used to be assigned anyway, so is_complete stayed True."""
     from src.season import lineup
 
-    conn = _roster_db(tmp_path, "short.db", [
+    conn, snap = _roster_db(tmp_path, "short.db", [
         ("sq|QB", "Starter QB", "QB", 20.0, "QB", None, None),
         ("it|TE", "Injured TE", "TE", 8.0, "TE", "Out", None),
     ])
-    report = lineup.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, {"QB": 1, "TE": 1})
+    report = lineup.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, {"QB": 1, "TE": 1}, snapshot=snap)
     assert report.optimal.is_complete is False
     assert report.optimal.empty_slots == ["TE"]
     assert any("Cannot fill TE" in w for w in report.warnings), report.warnings
@@ -871,11 +917,11 @@ def test_a_bye_player_parked_on_ir_plus_is_not_called_a_starter(tmp_path):
     """Two different bench-slot lists disagreed about IR+ and NA."""
     from src.season import lineup
 
-    conn = _roster_db(tmp_path, "irplus.db", [
+    conn, snap = _roster_db(tmp_path, "irplus.db", [
         ("ok|QB", "Fine QB", "QB", 20.0, "QB", None, None),
         ("bye|WR", "Bye Guy", "WR", 15.0, "IR+", None, WEEK),
     ])
-    report = lineup.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, {"QB": 1, "WR": 1})
+    report = lineup.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, {"QB": 1, "WR": 1}, snapshot=snap)
     assert not any("Bye Guy is starting" in w for w in report.warnings), report.warnings
 
 

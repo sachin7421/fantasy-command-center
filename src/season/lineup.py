@@ -15,6 +15,7 @@ from src.lineup_solver import Lineup, best_lineup, slot_accepts
 from src.notify import Notification
 from src.projections import resolve_risk_mode, risk_adjusted_points
 from src.storage import Database
+from src.yahoo_snapshot import key_clause
 from src.vorp import BENCH_SLOTS
 
 #: Statuses that make a player unstartable regardless of projection.
@@ -106,36 +107,38 @@ class LineupReport:
 
 def load_roster(
     conn: Database,
-    league_key: str,
-    team_key: str,
     season: int,
     week: int,
+    roster_spots,
 ) -> list[RosterPlayer]:
+    # The inverted join. Yahoo's side of this - who is on the roster, and in
+    # which slot - arrives as keys held in memory for the run; ours is selected
+    # by them. The `rosters` table this used to read is gone: the API agreement
+    # forbids storing it.
+    clause, params = key_clause([s.player_key for s in roster_spots])
+    slot_of = {s.player_key: s.selected_pos for s in roster_spots}
+
     rows = conn.execute(
-        """
-        SELECT r.player_key, r.selected_pos, p.full_name, p.position, p.team, p.bye_week,
+        f"""
+        SELECT p.player_key, p.full_name, p.position, p.team, p.bye_week,
                COALESCE(b.points, j.points, 0)  AS points,
                COALESCE(b.floor,  j.points, 0)  AS floor,
                COALESCE(b.ceiling,j.points, 0)  AS ceiling,
                i.status                         AS injury_status
-        FROM rosters r
-        JOIN players p USING(player_key)
+        FROM players p
         LEFT JOIN projections_blended b
-               ON b.player_key=r.player_key AND b.season=:season AND b.week=:week
+               ON b.player_key=p.player_key AND b.season=? AND b.week=?
         LEFT JOIN projections j
-               ON j.player_key=r.player_key AND j.season=:season AND j.week=:week
+               ON j.player_key=p.player_key AND j.season=? AND j.week=?
               AND j.source='sleeper'
         LEFT JOIN (
             SELECT player_key, status,
                    ROW_NUMBER() OVER (PARTITION BY player_key ORDER BY observed_at DESC) rn
             FROM injuries
-        ) i ON i.player_key=r.player_key AND i.rn=1
-        WHERE r.league_key=:league AND r.team_key=:team AND r.week=:roster_week
+        ) i ON i.player_key=p.player_key AND i.rn=1
+        WHERE p.player_key IN ({clause})
         """,
-        {
-            "season": season, "week": week, "league": league_key,
-            "team": str(team_key), "roster_week": week,
-        },
+        [season, week, season, week, *params],
     ).fetchall()
 
     out = []
@@ -146,7 +149,7 @@ def load_roster(
                 name=r["full_name"],
                 position=r["position"],
                 team=r["team"] or "",
-                selected_pos=r["selected_pos"],
+                selected_pos=slot_of.get(r["player_key"]),
                 points=float(r["points"] or 0),
                 floor=float(r["floor"] or 0),
                 ceiling=float(r["ceiling"] or 0),
@@ -165,11 +168,18 @@ def run(
     season: int,
     week: int,
     starting_slots: dict[str, int],
+    snapshot,
     risk_mode: str = "auto",
     projected_margin: float | None = None,
     min_gap: float = 1.5,
 ) -> LineupReport:
-    roster = load_roster(conn, league_key, team_key, season, week)
+    """Best legal lineup for the week, against what is currently set.
+
+    `snapshot` carries the roster: the API agreement forbids storing Yahoo
+    league state, so it is fetched once per run and passed in rather than read
+    back out of a table.
+    """
+    roster = load_roster(conn, season, week, snapshot.roster_spots_for(team_key))
     mode = resolve_risk_mode(risk_mode, projected_margin)
     projected = sum(1 for p in roster if p.points > 0)
 

@@ -44,6 +44,7 @@ class Context:
         )
         self.idmap = IdMapper(self.conn, self.cfg.get("paths.manual_id_overrides"))
         self._yahoo: YahooClient | None = None
+        self._snapshot: Any = None
         self._settings: dict[str, Any] | None = None
 
     @property
@@ -112,6 +113,40 @@ class Context:
         state = SleeperSource(self.conn).state()
         week = int(state.get("week") or 1)
         return week if str(state.get("season_type")) == "regular" else 1
+
+    def league_snapshot(self, season: int, week: int):
+        """Yahoo league state for this run, fetched once and held in memory.
+
+        Returns None when Yahoo is not configured, and the caller must treat
+        that as a failure rather than carrying on with an empty roster.
+
+        There is deliberately no cached fallback. Every other source in this
+        project falls back to stored data when it is unreachable (engineering
+        standard 4); the API agreement forbids storing Yahoo's, so a job that
+        cannot reach Yahoo has nothing to work from. That is the right outcome
+        anyway - a stale roster produces confident advice about players who are
+        no longer on it, which is worse than an error.
+
+        Memoised per Context, so `doctor`, the job itself and any follow-on
+        step share one fetch instead of paying for three.
+        """
+        if not self.yahoo_configured():
+            return None
+        cached = getattr(self, "_snapshot", None)
+        if cached is not None and cached.week == int(week):
+            return cached
+        snapshot = self.yahoo.collect_snapshot(season, week)
+        teams = list(snapshot.budgets)
+        for team_id in teams:
+            try:
+                players = self.yahoo.fetch_roster(int(team_id), week)
+                self.yahoo.collect_roster(
+                    snapshot, team_id, players, snapshot.team_name(team_id)
+                )
+            except Exception as exc:
+                log.warning("Roster fetch failed for team %s: %s", team_id, exc)
+        self._snapshot = snapshot
+        return snapshot
 
     def yahoo_configured(self) -> bool:
         """Whether Yahoo credentials are present, without authenticating.
@@ -729,8 +764,15 @@ def cmd_job(ctx: Context, args) -> int:
         team_key = _require_team(ctx)
         if team_key is None:
             return EXIT_FAIL
+        snapshot = ctx.league_snapshot(season, week)
+        if snapshot is None:
+            print("Yahoo is not configured, so there is no roster to optimise.")
+            print("The API agreement forbids storing one, so there is no cached")
+            print("copy to fall back to. Run `fcc setup` to connect Yahoo.")
+            return EXIT_FAIL
         lineup_report = lineup.run(
             ctx.conn, ctx.league_key, team_key, season, week, slots,
+            snapshot=snapshot,
             risk_mode=str(ctx.cfg.get("season.risk_mode", "auto")),
             min_gap=float(ctx.cfg.get("season.lineup_swap_min_gap", 1.5)),
         )

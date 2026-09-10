@@ -535,3 +535,50 @@ def test_purge_reports_what_it_did(tmp_path):
         assert all(isinstance(v, int) for v in removed.values())
     finally:
         conn.close()
+
+
+# --- the inverted join -------------------------------------------------------
+
+def test_roster_selection_by_key_needs_no_yahoo_table(tmp_path):
+    """The shape every season module is converted to.
+
+    Yahoo's side is a list of keys in memory; ours stays in SQL and is selected
+    by them. That removes the cross-source join entirely, which is what made
+    the old design need a `rosters` table in the first place.
+    """
+    from src.yahoo_snapshot import key_clause
+
+    conn = db.init_db(tmp_path / "j.db", force_sqlite=True)
+    try:
+        ours = _players(conn)
+        keys = [ours["Jahmyr Gibbs"], ours["Puka Nacua"]]
+        clause, params = key_clause(keys)
+        rows = conn.fetchall(
+            f"SELECT full_name FROM players WHERE player_key IN ({clause}) "
+            "ORDER BY full_name",
+            params,
+        )
+        assert [r["full_name"] for r in rows] == ["Jahmyr Gibbs", "Puka Nacua"]
+    finally:
+        conn.close()
+
+
+def test_an_empty_roster_selects_nobody_rather_than_everybody(tmp_path):
+    """`IN ()` is a syntax error, and `WHERE 1=1` would return the league.
+
+    The dangerous version of this bug is silent: an empty key list that
+    degrades to "match everything" hands the lineup optimiser all 3,297
+    players and produces a confident, entirely fictional lineup.
+    """
+    from src.yahoo_snapshot import key_clause
+
+    conn = db.init_db(tmp_path / "j.db", force_sqlite=True)
+    try:
+        _players(conn)
+        clause, params = key_clause([])
+        rows = conn.fetchall(
+            f"SELECT full_name FROM players WHERE player_key IN ({clause})", params
+        )
+        assert rows == []
+    finally:
+        conn.close()

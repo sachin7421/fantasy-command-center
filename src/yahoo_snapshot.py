@@ -77,6 +77,15 @@ class LeagueSnapshot:
         """Our player keys for one team, in the order Yahoo listed them."""
         return [r.player_key for r in self.rosters if r.team_key == str(team_key)]
 
+    def roster_spots_for(self, team_key: str) -> list[RosterSpot]:
+        """One team's spots, keeping the slot each player currently occupies.
+
+        `roster_keys` is enough for most queries; the lineup optimiser also
+        needs to know what is CURRENTLY started, because its whole output is
+        the difference between that and the best legal arrangement.
+        """
+        return [r for r in self.rosters if r.team_key == str(team_key)]
+
     def all_rostered(self) -> set[str]:
         """Everyone owned by anybody - i.e. everyone NOT on the wire."""
         return {r.player_key for r in self.rosters}
@@ -193,3 +202,25 @@ def _dig(payload: Any, path: list[str]) -> Any:
             return None
         payload = payload.get(step)
     return payload
+
+
+def key_clause(keys) -> tuple[str, list]:
+    """An `IN (...)` clause and its parameters, for a list of player keys.
+
+    The one shared piece of the inverted join. Yahoo's side of every season
+    query is now a list of keys held in memory, and our side is selected by
+    them - so this appears in six modules and should behave identically in all
+    of them.
+
+    An empty list returns a clause that matches NOTHING. That is the whole
+    reason this is a function rather than an f-string at each site: `IN ()` is
+    a syntax error, and the obvious workaround of dropping the clause turns
+    "this team has no players" into "select the entire league". That failure is
+    silent and confident - it would hand the lineup optimiser all 3,297 players
+    and produce a fictional lineup - which is exactly the class of bug this
+    project keeps having to dig out.
+    """
+    keys = [str(k) for k in keys if k]
+    if not keys:
+        return "NULL", []
+    return ",".join("?" for _ in keys), keys
