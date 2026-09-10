@@ -81,6 +81,10 @@ class YahooClient:
         self.conn = conn or db.init_db(cfg.db_path)
         self._query = None
         self._league_key: str | None = None
+        #: Yahoo responses for THIS RUN only. Never written to disk, never
+        #: shared between runs - a second YahooClient starts empty, which is
+        #: what makes "for the duration of a run" true rather than aspirational.
+        self._memo: dict[str, Any] = {}
         self.idmap = IdMapper(self.conn, cfg.get("paths.manual_id_overrides"))
 
     # -- auth / connection ---------------------------------------------------
@@ -135,27 +139,57 @@ class YahooClient:
     # -- generic cached fetch ------------------------------------------------
 
     def _cached(self, cache_key: str, fetch, force: bool = False) -> tuple[Any, bool]:
-        """Run `fetch`, caching the result. Returns (payload, from_cache).
+        """Run `fetch` once per run, holding the result in memory.
 
-        The cache here is a *failure fallback*, not a TTL: Yahoo is the source of
-        truth for the league, so we always try the network first and only serve
-        a stored copy when the call fails. That way a job never crashes because
-        Yahoo blipped (spec 10, last acceptance test). `force` is accepted for
-        call-site symmetry with the other sources.
+        Returns (payload, from_memory).
+
+        This used to write every Yahoo response to `source_cache` and serve the
+        stored copy whenever a later call failed. The API agreement signed
+        2026-09-10 forbids that: Yahoo Fantasy data lives in memory for the
+        duration of a run and never reaches disk. `db.cache_put` now refuses
+        the source outright, so the old path cannot be restored by accident.
+
+        Two consequences worth stating plainly.
+
+        The memo is not an optimisation, it is the cost control. With disk
+        caching gone, an unmemoised client would re-fetch on every caller -
+        `doctor`, `sync` and the job itself each ask for settings - multiplying
+        API calls by however many places happen to want the same thing.
+
+        And a Yahoo outage is now fatal to the run rather than survivable. This
+        REVERSES this project's own engineering standard 4, which says an
+        external source that fails should fall back to cached data with a
+        warning. There is no longer anything to fall back to, and that is the
+        correct outcome anyway: a stale roster produces confident, wrong advice
+        about players who are no longer on it, which is worse than an error.
+        `force` re-fetches, discarding the memo.
         """
+        if not force and cache_key in self._memo:
+            return self._memo[cache_key], True
         try:
             payload = serialize(fetch())
-            db.cache_put(self.conn, cache_key, "yahoo", payload)
-            return payload, False
         except Exception as exc:
-            cached = db.cache_get(self.conn, cache_key)
-            if cached is None:
-                raise
-            payload, fetched_at = cached
-            log.warning(
-                "Yahoo fetch failed for %s (%s); using cache from %s", cache_key, exc, fetched_at
+            log.error(
+                "Yahoo fetch failed for %s (%s). There is no cached copy - the "
+                "API agreement forbids storing one - so this run cannot "
+                "continue on stale data.",
+                cache_key, exc,
             )
-            return payload, True
+            raise
+        self._memo[cache_key] = payload
+        return payload, False
+
+    def forget_yahoo_data(self) -> int:
+        """Drop every Yahoo response this run is holding. Returns how many.
+
+        Called at the end of a run, and by `fcc purge-yahoo`. Not strictly
+        required - the process exiting achieves the same thing - but a
+        long-lived process (the dashboard) can otherwise hold a roster in
+        memory for hours after it was last needed.
+        """
+        held = len(self._memo)
+        self._memo.clear()
+        return held
 
     # -- league settings -----------------------------------------------------
 

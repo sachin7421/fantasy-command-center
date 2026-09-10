@@ -541,7 +541,34 @@ def job_health(conn: Database, days: int = 10) -> list[dict]:
 
 # --- cache helpers -----------------------------------------------------------
 
+#: Sources whose payloads may never be written to disk, per the Yahoo API
+#: agreement signed 2026-09-10. Matched as a substring, case-insensitively, so
+#: "Yahoo", "yahoo_fantasy" and "yahoo-proj" are all refused - a guard that a
+#: different spelling walks past is not a guard.
+FORBIDDEN_CACHE_SOURCES = ("yahoo",)
+
+
 def cache_put(conn: Database, cache_key: str, source: str, payload: Any) -> None:
+    """Store a source response for reuse.
+
+    Raises for Yahoo. The agreement requires Yahoo Fantasy data to live in
+    memory for the duration of a run and never reach disk, and every Yahoo
+    fetch in the client funnels through here. Refusing at this one point makes
+    persistence impossible rather than merely discouraged: a future caller who
+    has never read the agreement still cannot write Yahoo data to disk.
+
+    Deliberately a raise and not a silent skip. A silent skip would leave the
+    caller believing it had a cache, and this project has already shipped three
+    bugs whose whole shape was "carried on in a degraded state without saying
+    so".
+    """
+    lowered = str(source).lower()
+    if any(bad in lowered for bad in FORBIDDEN_CACHE_SOURCES):
+        raise ValueError(
+            f"refusing to cache '{source}' to disk: Yahoo Fantasy data must "
+            "stay in memory for the duration of a run (API agreement, "
+            "obligation 1). Hold it on the YahooSession instead."
+        )
     conn.execute(
         "INSERT INTO source_cache(cache_key, source, payload_json, fetched_at) "
         "VALUES (?,?,?,?) ON CONFLICT(cache_key) DO UPDATE SET "
