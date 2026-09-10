@@ -15,6 +15,7 @@ from itertools import product
 from src.lineup_solver import best_lineup
 from src.notify import Notification
 from src.storage import Database
+from src.yahoo_snapshot import key_clause
 
 
 @dataclass
@@ -53,22 +54,22 @@ class TradeIdea:
 
 
 def _load_team(
-    conn: Database, league_key: str, team_key: str, season: int, week: int
+    conn: Database, season: int, roster_keys
 ) -> list[TradePlayer]:
+    clause, params = key_clause(roster_keys)
     rows = conn.execute(
-        """
-        SELECT r.player_key, p.full_name, p.position, p.team,
+        f"""
+        SELECT p.player_key, p.full_name, p.position, p.team,
                COALESCE(b.points, j.points, 0) AS pts
-        FROM rosters r
-        JOIN players p USING(player_key)
+        FROM players p
         LEFT JOIN projections_blended b
-               ON b.player_key=r.player_key AND b.season=? AND b.week=0
+               ON b.player_key=p.player_key AND b.season=? AND b.week=0
         LEFT JOIN projections j
-               ON j.player_key=r.player_key AND j.season=? AND j.week=0
+               ON j.player_key=p.player_key AND j.season=? AND j.week=0
               AND j.source='sleeper'
-        WHERE r.league_key=? AND r.team_key=? AND r.week=?
+        WHERE p.player_key IN ({clause})
         """,
-        (season, season, league_key, str(team_key), week),
+        (season, season, *params),
     ).fetchall()
     return [
         TradePlayer(r["player_key"], r["full_name"], r["position"], r["team"] or "",
@@ -77,12 +78,18 @@ def _load_team(
     ]
 
 
-def _teams_in_league(conn: Database, league_key: str, week: int) -> list[tuple[str, str]]:
-    rows = conn.execute(
-        "SELECT DISTINCT team_key, team_name FROM rosters WHERE league_key=? AND week=?",
-        (league_key, week),
-    ).fetchall()
-    return [(r["team_key"], r["team_name"] or f"Team {r['team_key']}") for r in rows]
+def _teams_in_league(snapshot) -> list[tuple[str, str]]:
+    """Every team in the league, from the snapshot rather than a table.
+
+    Ordered by team key so the trade scout considers partners in a stable
+    order - an unordered scan made its "best idea" depend on row order.
+    """
+    seen: dict[str, str] = {}
+    for spot in snapshot.rosters:
+        seen.setdefault(spot.team_key, spot.team_name or f"Team {spot.team_key}")
+    for key, budget in snapshot.budgets.items():
+        seen.setdefault(key, budget.team_name or f"Team {key}")
+    return sorted(seen.items())
 
 
 def positional_profile(
@@ -148,17 +155,28 @@ def run(
     starting_slots: dict[str, int],
     max_ideas: int = 3,
     min_mutual_gain: float = 3.0,
+    snapshot=None,
 ) -> list[TradeIdea]:
-    mine = _load_team(conn, league_key, my_team_key, season, week)
+    """One-for-one trades that plausibly help both sides.
+
+    `snapshot` carries every roster in the league - the scout compares yours
+    against each rival's, and none of that may be stored.
+    """
+    if snapshot is None:
+        raise ValueError(
+            "the trade scout needs a league snapshot: it compares your roster "
+            "against every rival's, and those come from Yahoo"
+        )
+    mine = _load_team(conn, season, snapshot.roster_keys(my_team_key))
     if not mine:
         return []
     my_baseline = best_lineup(mine, starting_slots).total
 
     ideas: list[TradeIdea] = []
-    for team_key, team_name in _teams_in_league(conn, league_key, week):
+    for team_key, team_name in _teams_in_league(snapshot):
         if str(team_key) == str(my_team_key):
             continue
-        theirs = _load_team(conn, league_key, team_key, season, week)
+        theirs = _load_team(conn, season, snapshot.roster_keys(team_key))
         if not theirs:
             continue
         their_baseline = best_lineup(theirs, starting_slots).total

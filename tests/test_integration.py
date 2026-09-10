@@ -634,7 +634,7 @@ def test_the_bye_planner_does_not_alarm_about_an_empty_roster(tmp_path):
     from src.season import byes
 
     conn = db.init_db(tmp_path / "nobody.db")
-    report = byes.run(conn, LEAGUE, MY_TEAM, SEASON, 3, SLOTS)
+    report = byes.run(conn, LEAGUE, MY_TEAM, SEASON, 3, SLOTS, snapshot=_snapshot_from_tables(conn))
     assert report.has_data is False
     assert report.roster_size == 0
 
@@ -647,7 +647,7 @@ def test_the_recap_of_an_unplayed_week_is_not_a_zero_point_recap(tmp_path):
     from src.season import recap
 
     conn = db.init_db(tmp_path / "unplayed.db")
-    report = recap.run(conn, LEAGUE, MY_TEAM, SEASON, 3, SLOTS)
+    report = recap.run(conn, LEAGUE, MY_TEAM, SEASON, 3, SLOTS, snapshot=_snapshot_from_tables(conn))
     assert report.has_data is False
     notification = recap.to_notification(report, SEASON)
     assert notification is not None
@@ -743,7 +743,7 @@ def test_the_trade_scout_finds_an_obvious_swap(lopsided_league):
     from src.season import trades
 
     conn = db.init_db(lopsided_league)
-    ideas = trades.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS)
+    ideas = trades.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS, snapshot=_snapshot_from_tables(conn))
     assert ideas, "an RB-rich team and a WR-rich team should have a trade"
     idea = ideas[0]
     assert idea.i_give[0].position == "RB"
@@ -760,7 +760,7 @@ def test_a_trade_rationale_is_checked_against_the_rosters(lopsided_league):
     from src.season import trades
 
     conn = db.init_db(lopsided_league)
-    idea = trades.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS)[0]
+    idea = trades.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS, snapshot=_snapshot_from_tables(conn))[0]
     text = " ".join(idea.rationale)
     assert "pts of RB" in text, text
     assert "lineup effect" in text
@@ -771,7 +771,7 @@ def test_a_balanced_league_yields_no_trades(lineup_league):
     from src.season import trades
 
     conn = db.init_db(lineup_league)
-    assert trades.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS) == []
+    assert trades.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS, snapshot=_snapshot_from_tables(conn)) == []
 
 
 # --- the draft has to know whose pick each one was --------------------------
@@ -856,24 +856,24 @@ def test_an_injury_report_survives_a_failed_delivery(tmp_path):
         conn.commit()
 
     record("Questionable", "2026-10-01T12:00:00+00:00")
-    baseline = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK)
+    baseline = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, snapshot=_snapshot_from_tables(conn))
     assert baseline.first_run is True
     injuries.commit(conn, baseline)
 
     record("Out", "2026-10-02T12:00:00+00:00")
 
     # Read it twice without committing: the delta must still be there.
-    first = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK)
+    first = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, snapshot=_snapshot_from_tables(conn))
     assert [c.player_key for c in first.actionable] == ["hurt|RB"]
 
-    second = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK)
+    second = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, snapshot=_snapshot_from_tables(conn))
     assert [c.player_key for c in second.actionable] == ["hurt|RB"], (
         "reading the report must not consume it"
     )
 
     # Only after an explicit commit does it stop being news.
     injuries.commit(conn, second)
-    third = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK)
+    third = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, snapshot=_snapshot_from_tables(conn))
     assert third.actionable == []
 
 

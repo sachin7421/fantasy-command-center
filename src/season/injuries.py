@@ -17,6 +17,7 @@ from src import db
 from src.notify import Notification
 from src.sources.sleeper import is_escalation, severity_of
 from src.storage import Database
+from src.yahoo_snapshot import key_clause
 
 SNAPSHOT_KIND = "injuries"
 
@@ -97,41 +98,35 @@ def current_statuses(conn: Database) -> dict[str, dict[str, Any]]:
     }
 
 
-def my_roster_keys(conn: Database, league_key: str, team_key: str) -> set[str]:
+def my_roster_keys(roster_keys) -> set[str]:
     # The latest week THIS TEAM has a roster for, not the latest any team has.
     # Scoped league-wide, a partial sync - another team's fetch succeeding while
     # yours failed - moved MAX(week) forward and returned an EMPTY set for you,
     # which every job then rendered as "no roster stored" rather than falling
     # back to the week that did sync.
-    rows = conn.execute(
-        "SELECT DISTINCT player_key FROM rosters WHERE league_key=? AND team_key=? "
-        "AND week=(SELECT MAX(week) FROM rosters WHERE league_key=? AND team_key=?)",
-        (league_key, str(team_key), league_key, str(team_key)),
-    ).fetchall()
-    return {r["player_key"] for r in rows}
+    return set(roster_keys)
 
 
-def opponent_roster_keys(
-    conn: Database, league_key: str, opponent_team_key: str | None
-) -> set[str]:
-    if not opponent_team_key:
+def opponent_roster_keys(snapshot, opponent_team_key: str | None) -> set[str]:
+    if not opponent_team_key or snapshot is None:
         return set()
-    return my_roster_keys(conn, league_key, opponent_team_key)
+    return set(snapshot.roster_keys(opponent_team_key))
 
 
 def top_free_agent_keys(
-    conn: Database, league_key: str, limit: int = 60
+    conn: Database, free_agent_keys, limit: int = 60
 ) -> set[str]:
+    clause, params = key_clause(free_agent_keys)
     rows = conn.execute(
-        """
-        SELECT f.player_key
-        FROM free_agents f
-        LEFT JOIN projections_blended b ON b.player_key = f.player_key
-        WHERE f.league_key = ?
-        ORDER BY COALESCE(b.points, f.pct_owned, 0) DESC
+        f"""
+        SELECT p.player_key
+        FROM players p
+        LEFT JOIN projections_blended b ON b.player_key = p.player_key
+        WHERE p.player_key IN ({clause})
+        ORDER BY COALESCE(b.points, 0) DESC
         LIMIT ?
         """,
-        (league_key, limit),
+        (*params, limit),
     ).fetchall()
     return {r["player_key"] for r in rows}
 
@@ -163,25 +158,24 @@ def practice_note(conn, player_key: str, season: int, week: int) -> str | None:
 
 def best_bench_replacement(
     conn: Database,
-    league_key: str,
-    team_key: str,
+    roster_keys,
     position: str,
     season: int,
     week: int,
     exclude: str,
 ) -> str | None:
     """The best same-position player already on my bench."""
+    clause, params = key_clause(roster_keys)
     row = conn.execute(
-        """
+        f"""
         SELECT p.full_name, COALESCE(b.points, 0) AS pts
-        FROM rosters r
-        JOIN players p USING(player_key)
+        FROM players p
         LEFT JOIN projections_blended b
-               ON b.player_key = r.player_key AND b.season=? AND b.week=?
-        WHERE r.league_key=? AND r.team_key=? AND p.position=? AND r.player_key<>?
+               ON b.player_key = p.player_key AND b.season=? AND b.week=?
+        WHERE p.player_key IN ({clause}) AND p.position=? AND p.player_key<>?
         ORDER BY pts DESC LIMIT 1
         """,
-        (season, week, league_key, str(team_key), position, exclude),
+        (season, week, *params, position, exclude),
     ).fetchone()
     return f"{row['full_name']} ({row['pts']:.1f} proj)" if row else None
 
@@ -194,7 +188,14 @@ def run(
     week: int,
     opponent_team_key: str | None = None,
     watch_keys: Iterable[str] = (),
+    snapshot=None,
 ) -> InjuryReport:
+    """Status changes that matter to you, your opponent, or the top of the wire.
+
+    `snapshot` carries the rosters and the wire. Without it the monitor still
+    runs against `watch_keys` alone, which is a narrower net rather than a
+    broken one - so this one degrades instead of refusing.
+    """
     """Snapshot, diff against yesterday, and classify every change.
 
     The new snapshot is NOT written here. Advancing it before the notification
@@ -215,9 +216,12 @@ def run(
         # than firing an alert for every currently-injured player in the NFL.
         return report
 
-    roster = my_roster_keys(conn, league_key, my_team_key) if my_team_key else set()
-    opponents = opponent_roster_keys(conn, league_key, opponent_team_key)
-    free_agents = top_free_agent_keys(conn, league_key)
+    my_keys = snapshot.roster_keys(my_team_key) if (snapshot and my_team_key) else []
+    roster = my_roster_keys(my_keys)
+    opponents = opponent_roster_keys(snapshot, opponent_team_key)
+    free_agents = top_free_agent_keys(
+        conn, snapshot.free_agents if snapshot else []
+    )
     watching = set(watch_keys)
 
     considered = set(previous) | set(statuses)
@@ -261,7 +265,7 @@ def run(
         )
         if context == "roster" and change.is_escalation and my_team_key:
             change.replacement = best_bench_replacement(
-                conn, league_key, my_team_key, change.position, season, week, player_key
+                conn, my_keys, change.position, season, week, player_key
             )
         change.practice = practice_note(conn, player_key, season, week)
         report.changes.append(change)

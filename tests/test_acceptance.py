@@ -179,6 +179,25 @@ def injury_league(tmp_path):
     return conn, key
 
 
+def _roster_snapshot(conn, league_key="nfl.l.1", team_key="1", week=5):
+    """The seeded roster as a snapshot.
+
+    The injury monitor takes the roster as an argument now - Yahoo league state
+    is fetched per run rather than stored - so the fixture's rows are read back
+    into that shape.
+    """
+    from src.yahoo_snapshot import LeagueSnapshot, RosterSpot
+
+    snap = LeagueSnapshot(league_key=league_key, season=2026, week=week)
+    for r in conn.fetchall(
+        "SELECT team_key, team_name, player_key, selected_pos FROM rosters"
+    ):
+        snap.rosters.append(RosterSpot(
+            str(r["team_key"]), r["team_name"], r["player_key"], r["selected_pos"],
+        ))
+    return snap
+
+
 def _record_injury(conn, player_key, status, stamp):
     conn.execute(
         "INSERT INTO injuries(player_key, status, practice, body_part, note, source, "
@@ -200,7 +219,7 @@ def test_manufactured_status_change_fires_exactly_one_notification(injury_league
     # First run establishes the baseline and must stay silent, rather than
     # alerting on every already-injured player in the league.
     _record_injury(conn, key, "Questionable", "2026-10-01T12:00:00+00:00")
-    first = injuries.run(conn, "nfl.l.1", "1", 2026, 5)
+    first = injuries.run(conn, "nfl.l.1", "1", 2026, 5, snapshot=_roster_snapshot(conn))
     assert first.first_run is True
     assert injuries.to_notification(first, 5, 2026) is None
     # `run` no longer advances the baseline by itself; the caller commits once
@@ -209,7 +228,7 @@ def test_manufactured_status_change_fires_exactly_one_notification(injury_league
 
     # Manufacture the change.
     _record_injury(conn, key, "Out", "2026-10-02T12:00:00+00:00")
-    report = injuries.run(conn, "nfl.l.1", "1", 2026, 5)
+    report = injuries.run(conn, "nfl.l.1", "1", 2026, 5, snapshot=_roster_snapshot(conn))
 
     changes = [c for c in report.actionable if c.player_key == key]
     assert len(changes) == 1, f"expected one change, got {len(changes)}"
@@ -232,11 +251,11 @@ def test_an_unchanged_status_produces_no_notification(injury_league):
 
     conn, key = injury_league
     _record_injury(conn, key, "Questionable", "2026-10-01T12:00:00+00:00")
-    injuries.run(conn, "nfl.l.1", "1", 2026, 5)
+    injuries.run(conn, "nfl.l.1", "1", 2026, 5, snapshot=_roster_snapshot(conn))
 
     # Same status observed again later.
     _record_injury(conn, key, "Questionable", "2026-10-02T12:00:00+00:00")
-    report = injuries.run(conn, "nfl.l.1", "1", 2026, 5)
+    report = injuries.run(conn, "nfl.l.1", "1", 2026, 5, snapshot=_roster_snapshot(conn))
     assert injuries.to_notification(report, 5, 2026) is None
 
 
@@ -250,10 +269,10 @@ def test_a_change_to_an_irrelevant_player_is_ignored(injury_league):
     conn.commit()
 
     _record_injury(conn, key, "Questionable", "2026-10-01T12:00:00+00:00")
-    injuries.run(conn, "nfl.l.1", "1", 2026, 5)
+    injuries.run(conn, "nfl.l.1", "1", 2026, 5, snapshot=_roster_snapshot(conn))
 
     _record_injury(conn, stranger, "Out", "2026-10-02T12:00:00+00:00")
-    report = injuries.run(conn, "nfl.l.1", "1", 2026, 5)
+    report = injuries.run(conn, "nfl.l.1", "1", 2026, 5, snapshot=_roster_snapshot(conn))
     assert injuries.to_notification(report, 5, 2026) is None
 
 

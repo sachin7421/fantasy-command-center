@@ -752,7 +752,8 @@ def cmd_job(ctx: Context, args) -> int:
         if team_key is None:
             return EXIT_FAIL
         injury_report = injuries.run(
-            ctx.conn, ctx.league_key, team_key, season, week
+            ctx.conn, ctx.league_key, team_key, season, week,
+            snapshot=ctx.league_snapshot(season, week),
         )
         if injury_report.first_run:
             print("Injury baseline established; changes will be reported from the next run.")
@@ -814,8 +815,17 @@ def cmd_job(ctx: Context, args) -> int:
         team_key = _require_team(ctx)
         if team_key is None:
             return EXIT_FAIL
-        bye_outlook = byes.run(ctx.conn, ctx.league_key, team_key, season, week, slots,
-                          playoff_weeks=tuple(ctx.cfg.get("season.playoff_weeks", [15, 16, 17])))
+        snapshot = ctx.league_snapshot(season, week)
+        if snapshot is None:
+            print("Yahoo is not connected, so there is no roster to work from.")
+            print("The API agreement forbids storing one, so there is no cached")
+            print("copy either. Run `fcc setup` to connect Yahoo.")
+            return EXIT_FAIL
+        bye_outlook = byes.run(
+            ctx.conn, ctx.league_key, team_key, season, week, slots,
+            playoff_weeks=tuple(ctx.cfg.get("season.playoff_weeks", [15, 16, 17])),
+            snapshot=snapshot,
+        )
         if not bye_outlook.has_data:
             print("No roster stored for your team - nothing to plan around.")
         else:
@@ -826,7 +836,16 @@ def cmd_job(ctx: Context, args) -> int:
         team_key = _require_team(ctx)
         if team_key is None:
             return EXIT_FAIL
-        recap_report = recap.run(ctx.conn, ctx.league_key, team_key, season, max(1, week - 1), slots)
+        snapshot = ctx.league_snapshot(season, week)
+        if snapshot is None:
+            print("Yahoo is not connected, so there is no roster to work from.")
+            print("The API agreement forbids storing one, so there is no cached")
+            print("copy either. Run `fcc setup` to connect Yahoo.")
+            return EXIT_FAIL
+        recap_report = recap.run(
+            ctx.conn, ctx.league_key, team_key, season, max(1, week - 1), slots,
+            snapshot=snapshot,
+        )
         if not recap_report.has_data:
             print(f"No week {recap_report.week} scores stored "
                   f"({recap_report.roster_size} player(s) rostered) - no recap.")
@@ -845,7 +864,8 @@ def cmd_job(ctx: Context, args) -> int:
         if team_key:
             try:
                 bye_report = byes.run(
-                    ctx.conn, ctx.league_key, team_key, season, week, slots, horizon=1
+                    ctx.conn, ctx.league_key, team_key, season, week, slots,
+                    horizon=1, snapshot=ctx.league_snapshot(season, week),
                 )
                 gaps = [
                     f"Week {w.week}: cannot fill {', '.join(w.empty_slots)}"
@@ -865,7 +885,16 @@ def cmd_job(ctx: Context, args) -> int:
         team_key = _require_team(ctx)
         if team_key is None:
             return EXIT_FAIL
-        ideas = trades.run(ctx.conn, ctx.league_key, team_key, season, week, slots)
+        snapshot = ctx.league_snapshot(season, week)
+        if snapshot is None:
+            print("Yahoo is not connected, so there is no roster to work from.")
+            print("The API agreement forbids storing one, so there is no cached")
+            print("copy either. Run `fcc setup` to connect Yahoo.")
+            return EXIT_FAIL
+        ideas = trades.run(
+            ctx.conn, ctx.league_key, team_key, season, week, slots,
+            snapshot=snapshot,
+        )
         print(f"{len(ideas)} mutually-beneficial trade idea(s).")
         notification = trades.to_notification(ideas, season, week)
 

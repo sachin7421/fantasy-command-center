@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from src.lineup_solver import best_lineup
 from src.notify import Notification
 from src.storage import Database
+from src.yahoo_snapshot import key_clause
 
 
 @dataclass
@@ -65,7 +66,7 @@ class _Scored:
 
 
 def _actual_week_scores(
-    conn: Database, league_key: str, team_key: str, season: int, week: int
+    conn: Database, season: int, week: int, roster_spots
 ) -> list[_Scored]:
     """Actual scored points for my roster that week.
 
@@ -80,20 +81,21 @@ def _actual_week_scores(
     # player was expected to score as what he actually scored - including the
     # "points left on your bench" figure, which was therefore a comparison of
     # two projections.
+    clause, params = key_clause([s.player_key for s in roster_spots])
+    slot_of = {s.player_key: s.selected_pos for s in roster_spots}
     rows = conn.execute(
-        """
-        SELECT r.player_key, r.selected_pos, p.full_name, p.position,
+        f"""
+        SELECT p.player_key, p.full_name, p.position,
                a.points AS actual_pts,
                b.points AS projected_pts
-        FROM rosters r
-        JOIN players p USING(player_key)
+        FROM players p
         LEFT JOIN player_week_actuals a
-               ON a.player_key=r.player_key AND a.season=? AND a.week=?
+               ON a.player_key=p.player_key AND a.season=? AND a.week=?
         LEFT JOIN projections_blended b
-               ON b.player_key=r.player_key AND b.season=? AND b.week=?
-        WHERE r.league_key=? AND r.team_key=? AND r.week=?
+               ON b.player_key=p.player_key AND b.season=? AND b.week=?
+        WHERE p.player_key IN ({clause})
         """,
-        (season, week, season, week, league_key, str(team_key), week),
+        (season, week, season, week, *params),
     ).fetchall()
     return [
         _Scored(
@@ -106,7 +108,7 @@ def _actual_week_scores(
             points=float(r["actual_pts"]) if r["actual_pts"] is not None else 0.0,
             scored=r["actual_pts"] is not None,
             started=bool(
-                r["selected_pos"] and r["selected_pos"].upper() not in ("BN", "IR", "IR+", "NA")
+                slot_of.get(r["player_key"]) and r["selected_pos"].upper() not in ("BN", "IR", "IR+", "NA")
             ),
         )
         for r in rows
@@ -120,8 +122,19 @@ def run(
     season: int,
     week: int,
     starting_slots: dict[str, int],
+    snapshot=None,
 ) -> RecapReport:
-    roster = _actual_week_scores(conn, league_key, team_key, season, week)
+    """Last week, scored - what you started, what you should have.
+
+    `snapshot` carries the roster. Yahoo league state is fetched once per run
+    and passed in rather than read from a table, which the agreement no longer
+    permits.
+    """
+    if snapshot is None:
+        raise ValueError("recap needs a league snapshot: the roster comes from Yahoo")
+    roster = _actual_week_scores(
+        conn, season, week, snapshot.roster_spots_for(team_key)
+    )
     report = RecapReport(
         week=week,
         roster_size=len(roster),

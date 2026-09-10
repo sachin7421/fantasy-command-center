@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from src.lineup_solver import best_lineup
 from src.notify import Notification
 from src.storage import Database
+from src.yahoo_snapshot import key_clause
 
 
 @dataclass
@@ -65,29 +66,27 @@ class _P:
     points: float
 
 
-def _roster_rows(
-    conn: Database, league_key: str, team_key: str, season: int, week: int
-):
+def _roster_rows(conn: Database, season: int, roster_keys):
+    clause, params = key_clause(roster_keys)
     return conn.execute(
-        """
-        SELECT r.player_key, p.full_name, p.position, p.team, p.bye_week,
+        f"""
+        SELECT p.player_key, p.full_name, p.position, p.team, p.bye_week,
                COALESCE(b.points, j.points, 0) AS pts,
                i.status AS injury_status
-        FROM rosters r
-        JOIN players p USING(player_key)
+        FROM players p
         LEFT JOIN projections_blended b
-               ON b.player_key=r.player_key AND b.season=:season AND b.week=0
+               ON b.player_key=p.player_key AND b.season=? AND b.week=0
         LEFT JOIN projections j
-               ON j.player_key=r.player_key AND j.season=:season AND j.week=0
+               ON j.player_key=p.player_key AND j.season=? AND j.week=0
               AND j.source='sleeper'
         LEFT JOIN (
             SELECT player_key, status,
                    ROW_NUMBER() OVER (PARTITION BY player_key ORDER BY observed_at DESC) rn
             FROM injuries
-        ) i ON i.player_key=r.player_key AND i.rn=1
-        WHERE r.league_key=:league AND r.team_key=:team AND r.week=:week
+        ) i ON i.player_key=p.player_key AND i.rn=1
+        WHERE p.player_key IN ({clause})
         """,
-        {"season": season, "league": league_key, "team": str(team_key), "week": week},
+        (season, season, *params),
     ).fetchall()
 
 
@@ -100,8 +99,15 @@ def run(
     starting_slots: dict[str, int],
     horizon: int = 4,
     playoff_weeks: tuple[int, ...] = (15, 16, 17),
+    snapshot=None,
 ) -> ByeReport:
-    rows = _roster_rows(conn, league_key, team_key, season, week)
+    """Bye-week gaps over the next few weeks, and who is free to plug them.
+
+    `snapshot` carries the roster and the wire; neither may be stored.
+    """
+    if snapshot is None:
+        raise ValueError("byes needs a league snapshot: the roster comes from Yahoo")
+    rows = _roster_rows(conn, season, snapshot.roster_keys(team_key))
     report = ByeReport(current_week=week, roster_size=len(rows))
     if not report.has_data:
         return report
@@ -135,7 +141,9 @@ def run(
         )
         if not lineup.is_complete:
             for slot in set(lineup.empty_slots):
-                fix = _best_available_for_slot(conn, league_key, season, slot, target)
+                fix = _best_available_for_slot(
+                    conn, season, slot, target, snapshot.free_agents
+                )
                 if fix:
                     outlook.suggestions.append(f"{slot}: add {fix}")
         report.weeks.append(outlook)
@@ -147,28 +155,26 @@ def run(
 
 
 def _best_available_for_slot(
-    conn: Database, league_key: str, season: int, slot: str, week: int
+    conn: Database, season: int, slot: str, week: int, free_agent_keys
 ) -> str | None:
     """The best free agent who can fill an empty slot that week."""
     from src.lineup_solver import slot_accepts
 
+    fa_clause, fa_params = key_clause(free_agent_keys)
     rows = conn.execute(
-        """
+        f"""
         SELECT p.full_name, p.position, p.bye_week,
                COALESCE(b.points, j.points, 0) AS pts
-        FROM free_agents f
-        JOIN players p USING(player_key)
+        FROM players p
         LEFT JOIN projections_blended b
-               ON b.player_key=f.player_key AND b.season=? AND b.week=0
+               ON b.player_key=p.player_key AND b.season=? AND b.week=0
         LEFT JOIN projections j
-               ON j.player_key=f.player_key AND j.season=? AND j.week=0
+               ON j.player_key=p.player_key AND j.season=? AND j.week=0
               AND j.source='sleeper'
-        WHERE f.league_key=? AND f.week=(
-                  SELECT MAX(week) FROM free_agents WHERE league_key=?
-              )
+        WHERE p.player_key IN ({fa_clause})
         ORDER BY pts DESC LIMIT 100
         """,
-        (season, season, league_key, league_key),
+        (season, season, *fa_params),
     ).fetchall()
     for r in rows:
         if r["bye_week"] and int(r["bye_week"]) == week:
