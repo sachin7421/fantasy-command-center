@@ -19,6 +19,7 @@ from typing import Any
 
 from src import db, league_bootstrap, projections as proj, scoring, vorp
 from src.yahoo_client import YahooClient
+from src.yahoo_snapshot import key_clause
 from src.config import Config
 from src.idmap import IdMapper
 from src.notify import Notification, Notifier
@@ -674,7 +675,7 @@ def _print_recommendations(tracker, recommender, board, slots, my_slot, position
         print(f"\nStarting slots still open: {gaps or 'none'}")
 
 
-def _my_faab_left(ctx: Context, season: int, settings: dict) -> int:
+def _my_faab_left(ctx: Context, season: int, week: int, settings: dict) -> int:
     """Your remaining FAAB, falling back to the full budget before any sync.
 
     Recommending bids against the season-opening budget in week 11 is not a
@@ -682,16 +683,11 @@ def _my_faab_left(ctx: Context, season: int, settings: dict) -> int:
     cannot.
     """
     default = int(settings.get("faab_budget") or 100)
-    if not ctx.conn.table_exists("team_budgets"):
+    snapshot = ctx.league_snapshot(season, week)
+    if snapshot is None:
         return default
-    row = ctx.conn.fetchone(
-        "SELECT faab_balance FROM team_budgets "
-        "WHERE league_key=? AND season=? AND team_key=?",
-        (ctx.league_key, season, str(ctx.team_key() or "")),
-    )
-    if row and row["faab_balance"] is not None:
-        return int(row["faab_balance"])
-    return default
+    balance = snapshot.budget_of(str(ctx.team_key() or ""))
+    return int(balance) if balance is not None else default
 
 
 @dataclass
@@ -803,7 +799,7 @@ def cmd_job(ctx: Context, args) -> int:
             snapshot=snapshot,
             uses_faab=str(settings.get("uses_faab", "1")) in ("1", "true", "True"),
             budget_left=int(args.budget if args.budget is not None
-                            else _my_faab_left(ctx, season, settings)),
+                            else _my_faab_left(ctx, season, week, settings)),
             value_margin=float(ctx.cfg.get("season.waiver_value_margin", 25.0)),
             starting_slots=slots,
         )
@@ -1194,24 +1190,29 @@ def cmd_startsit(ctx: Context, args) -> int:
         _require_team(ctx)
         return EXIT_FAIL
 
+    snapshot = ctx.league_snapshot(season, week)
+    if snapshot is None:
+        print("Yahoo is not connected, so there is no roster to simulate.")
+        print("The API agreement forbids storing one. Run `fcc setup`.")
+        return EXIT_FAIL
+    clause, params = key_clause(snapshot.roster_keys(team_key))
     rows = ctx.conn.fetchall(
-        """
-        SELECT r.player_key, p.full_name, p.position, p.team,
+        f"""
+        SELECT p.player_key, p.full_name, p.position, p.team,
                COALESCE(b.points, j.points, 0) AS mean,
                COALESCE(b.stdev, 0)            AS sd
-        FROM rosters r
-        JOIN players p USING(player_key)
+        FROM players p
         LEFT JOIN projections_blended b
-               ON b.player_key=r.player_key AND b.season=? AND b.week=?
+               ON b.player_key=p.player_key AND b.season=? AND b.week=?
         LEFT JOIN projections j
-               ON j.player_key=r.player_key AND j.season=? AND j.week=?
+               ON j.player_key=p.player_key AND j.season=? AND j.week=?
               AND j.source='sleeper'
-        WHERE r.league_key=? AND r.team_key=? AND r.week=?
+        WHERE p.player_key IN ({clause})
         """,
-        (season, week, season, week, ctx.league_key, team_key, week),
+        (season, week, season, week, *params),
     )
     if not rows:
-        print(f"No roster stored for week {week}. Yahoo sync is needed for this.")
+        print(f"No projections for any player on your week {week} roster.")
         return EXIT_OK
 
     # A roster with no projections produces a lineup of zeroes and a confident
@@ -1357,27 +1358,33 @@ def cmd_faab(ctx: Context, args) -> int:
         print("from the field. Set it in config.yaml for an accurate read.")
         print("")
 
+    # Unlike lineup and waivers, this one still works without Yahoo. It answers
+    # "what is he worth to me and what will he cost", and the value half comes
+    # from our own projections. Only the rival half - who bids how hard - is
+    # learned from the transaction log, and without it every manager falls back
+    # to the league-average profile. That is a WEAKER answer, not a wrong one,
+    # so it degrades and says which rather than refusing.
+    snapshot = ctx.league_snapshot(season, week)
+    if snapshot is None:
+        print("Yahoo is not connected, so rival bidding habits cannot be")
+        print("learned. Every manager is treated as league-average; the value")
+        print("and the ceiling below are still yours.")
+        print("")
+
     # Team names and remaining budgets, when Yahoo has been synced.
-    teams = {
-        str(r["team_key"]): (r["team_name"] or f"Team {r['team_key']}")
-        for r in ctx.conn.fetchall(
-            "SELECT DISTINCT team_key, team_name FROM rosters WHERE league_key=?",
-            (ctx.league_key,),
-        )
+    teams: dict[str, str] = {
+        key: (budget.team_name or f"Team {key}")
+        for key, budget in (snapshot.budgets.items() if snapshot else {}.items())
     }
     # Synced balances first; --budgets then overrides individual teams, so the
     # flag stays useful for what-ifs without being the only way to supply them.
     # Left unsupplied, every hard-ceiling branch in the model is skipped and the
     # headline "who can actually afford him" constraint does nothing at all.
     budgets: dict[str, int] = {
-        str(r["team_key"]): int(r["faab_balance"])
-        for r in ctx.conn.fetchall(
-            "SELECT team_key, faab_balance FROM team_budgets "
-            "WHERE league_key=? AND season=?",
-            (ctx.league_key, season),
-        )
-        if r["faab_balance"] is not None
-    } if ctx.conn.table_exists("team_budgets") else {}
+        key: int(budget.faab_balance)
+        for key, budget in (snapshot.budgets.items() if snapshot else {}.items())
+        if budget.faab_balance is not None
+    }
 
     my_budget = args.budget
     if my_budget is None:
@@ -1392,19 +1399,6 @@ def cmd_faab(ctx: Context, args) -> int:
             except ValueError:
                 print(f"Ignoring unreadable budget entry {pair.strip()!r} "
                       "(expected team:amount, e.g. 3:40).")
-
-    # Unlike lineup and waivers, this one still works without Yahoo. It answers
-    # "what is he worth to me and what will he cost", and the value half comes
-    # from our own projections. Only the rival half - who bids how hard - is
-    # learned from the transaction log, and without it every manager falls back
-    # to the league-average profile. That is a WEAKER answer, not a wrong one,
-    # so it degrades and says which rather than refusing.
-    snapshot = ctx.league_snapshot(season, week)
-    if snapshot is None:
-        print("Yahoo is not connected, so rival bidding habits cannot be")
-        print("learned. Every manager is treated as league-average; the value")
-        print("and the ceiling below are still yours.")
-        print("")
 
     records = faab.parse_bids(snapshot.transactions if snapshot else [])
     if records:
@@ -1482,13 +1476,16 @@ def cmd_faab(ctx: Context, args) -> int:
             # Only players who actually HAVE a projection can define the
             # baseline. Coalescing a missing projection to zero made the worst
             # roster spot look like a zero-point player, which it is not.
+            mine_clause, mine_params = key_clause(
+                snapshot.roster_keys(my_key) if snapshot else []
+            )
             worst = ctx.conn.fetchone(
-                "SELECT MIN(b.points) AS pts FROM rosters r "
+                "SELECT MIN(b.points) AS pts FROM players p "
                 "JOIN projections_blended b "
-                "  ON b.player_key=r.player_key AND b.season=? AND b.week=0 "
-                "WHERE r.league_key=? AND r.team_key=? AND r.week=? "
+                "  ON b.player_key=p.player_key AND b.season=? AND b.week=0 "
+                f"WHERE p.player_key IN ({mine_clause}) "
                 "  AND b.points IS NOT NULL",
-                (season, ctx.league_key, my_key, week),
+                (season, *mine_params),
             )
             baseline = float(worst["pts"]) if worst and worst["pts"] is not None else 0.0
         value = max(0.0, float(row["points"] or 0) - baseline)

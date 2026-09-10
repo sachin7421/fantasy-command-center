@@ -276,13 +276,32 @@ def _config(tmp_path):
     return str(path)
 
 
-def test_faab_uses_the_synced_budget_when_no_flag_is_given(league_db, tmp_path, capsys):
-    """team_budgets is the point of the sync; the command must actually read it."""
+def test_faab_falls_back_to_the_league_budget_without_yahoo(league_db, tmp_path, capsys):
+    """Remaining FAAB comes from Yahoo per run, so without it there is a default.
+
+    This used to assert that the command read a stored `team_budgets` row. That
+    table is gone - the API agreement forbids keeping Yahoo league state - so
+    the balance now arrives on the snapshot, and with no connection the command
+    falls back to the league's full budget rather than inventing a number.
+
+    Getting this wrong is not a small error: recommending bids against the
+    season-opening budget in week 11 is the difference between a bid you can
+    make and one Yahoo rejects outright. `--budget` remains the way to say what
+    you actually have.
+    """
     cli.main(["--config", _config(tmp_path), "--db", str(league_db),
               "faab", "Waiver Add", "--week", str(WEEK)])
     out = capsys.readouterr().out
-    assert "your budget" in out and "$73" in out, out
+    assert "your budget" in out, out
+    assert "Yahoo is not connected" in out, out
 
+
+def test_faab_honours_an_explicit_budget(league_db, tmp_path, capsys):
+    """--budget is how you supply what the snapshot would otherwise carry."""
+    cli.main(["--config", _config(tmp_path), "--db", str(league_db),
+              "faab", "Waiver Add", "--week", str(WEEK), "--budget", "41"])
+    out = capsys.readouterr().out
+    assert "$41" in out, out
 
 def test_faab_never_lists_you_among_your_own_rivals(league_db, tmp_path, capsys):
     """With my_team_id set, your own profile must be out of the field.
