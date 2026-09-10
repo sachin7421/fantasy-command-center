@@ -81,6 +81,7 @@ class YahooClient:
         self.conn = conn or db.init_db(cfg.db_path)
         self._query = None
         self._league_key: str | None = None
+        self._index: Any = None
         #: Yahoo responses for THIS RUN only. Never written to disk, never
         #: shared between runs - a second YahooClient starts empty, which is
         #: what makes "for the duration of a run" true rather than aspirational.
@@ -328,7 +329,7 @@ class YahooClient:
                      team_name: str | None = None) -> int:
         stored = 0
         for p in players:
-            key = self._upsert_from_yahoo_player(p)
+            key = self._resolve_yahoo_player(p)
             if not key:
                 continue
             self.conn.execute(
@@ -387,7 +388,7 @@ class YahooClient:
     def store_free_agents(self, players: Iterable[dict[str, Any]], week: int) -> int:
         stored = 0
         for p in players:
-            key = self._upsert_from_yahoo_player(p)
+            key = self._resolve_yahoo_player(p)
             if not key:
                 continue
             self.conn.execute(
@@ -466,38 +467,33 @@ class YahooClient:
 
     # -- helpers -------------------------------------------------------------
 
-    def _upsert_from_yahoo_player(self, p: dict[str, Any]) -> str | None:
-        """Register a Yahoo player payload in the canonical players table."""
-        name = p.get("full_name") or _dig(p, ["name", "full"])
-        if not name:
-            return None
-        position = (
-            p.get("primary_position")
-            or p.get("display_position")
-            or _dig(p, ["selected_position", "position"])
-        )
-        team = p.get("editorial_team_abbr")
-        bye = p.get("bye") or _dig(p, ["bye_weeks", "week"])
-        return self.idmap.upsert_player(
-            full_name=name,
-            position=position,
-            team=team,
-            bye_week=_as_int(bye),
-            status=p.get("status") or None,
-            first_name=p.get("first_name") or _dig(p, ["name", "first"]),
-            last_name=p.get("last_name") or _dig(p, ["name", "last"]),
-            yahoo_id=str(p.get("player_id")) if p.get("player_id") else None,
-            yahoo_key=p.get("player_key"),
-        )
+    @property
+    def index(self):
+        """Yahoo player -> our player key, built once per run and held in memory.
+
+        Replaces `_upsert_from_yahoo_player`, which registered every Yahoo
+        player into our `players` table along with his Yahoo id and key. That
+        was a write of Yahoo identifiers to disk on every roster sync, which
+        the API agreement forbids.
+
+        Resolution only, now: it reads what we already have and creates
+        nothing. Where Sleeper published a Yahoo cross-reference id the join is
+        exact; otherwise names are matched, and anything unmatched is reported
+        rather than dropped.
+        """
+        if self._index is None:
+            from src.yahoo_snapshot import YahooIdIndex
+
+            self._index = YahooIdIndex(self.conn)
+        return self._index
+
+    def _resolve_yahoo_player(self, p: dict[str, Any]) -> str | None:
+        """Our player key for a Yahoo player payload. Writes nothing."""
+        return self.index.resolve(p)
 
     def _player_key_from_yahoo_key(self, yahoo_player_key: str) -> str | None:
-        """Map "449.p.12345" onto our canonical key via the stored player table."""
-        yahoo_id = str(yahoo_player_key).split(".")[-1]
-        row = self.conn.execute(
-            "SELECT player_key FROM players WHERE yahoo_id=? OR yahoo_key=?",
-            (yahoo_id, yahoo_player_key),
-        ).fetchone()
-        return row["player_key"] if row else None
+        """Map "449.p.12345" onto our canonical key, without storing anything."""
+        return self.index.resolve({"player_key": yahoo_player_key})
 
 
 def _dig(data: Any, path: list[str]) -> Any:

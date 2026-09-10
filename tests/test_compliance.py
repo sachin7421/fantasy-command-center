@@ -176,3 +176,142 @@ def test_when_yahoo_is_down_the_job_says_so_instead_of_using_stale_data(tmp_path
         assert conn.scalar("SELECT COUNT(*) FROM source_cache") == 0
     finally:
         conn.close()
+
+
+# --- obligation 1: rosters and budgets are a snapshot, not tables ------------
+
+def _players(conn):
+    """A handful of our own (non-Yahoo) player records to resolve against."""
+    from src.idmap import IdMapper
+
+    idmap = IdMapper(conn)
+    return {
+        name: idmap.upsert_player(full_name=name, position=pos, team=team)
+        for name, pos, team in [
+            ("Jahmyr Gibbs", "RB", "DET"),
+            ("Puka Nacua", "WR", "LA"),
+            ("Ja'Marr Chase", "WR", "CIN"),
+        ]
+    }
+
+
+def test_a_yahoo_player_resolves_without_storing_a_yahoo_id(tmp_path):
+    """Decision (c): a Yahoo player key is Yahoo data and must not persist.
+
+    Joining a Yahoo roster to our players needs the mapping, so it is rebuilt
+    by name each run and held in memory. The cost is a name-match pass and the
+    occasional ambiguous name; the benefit is that no Yahoo identifier is ever
+    written down.
+    """
+    from src.yahoo_snapshot import YahooIdIndex
+
+    conn = db.init_db(tmp_path / "s.db", force_sqlite=True)
+    try:
+        ours = _players(conn)
+        index = YahooIdIndex(conn)
+
+        key = index.resolve({
+            "player_key": "449.p.40001", "player_id": "40001",
+            "full_name": "Jahmyr Gibbs", "primary_position": "RB",
+            "editorial_team_abbr": "DET",
+        })
+        assert key == ours["Jahmyr Gibbs"]
+
+        # The Yahoo API must not have contributed an identifier. The columns
+        # themselves stay: Sleeper publishes Yahoo cross-reference ids in its
+        # own free API, and that mapping predates this agreement and carries
+        # every non-Yahoo source. What the agreement governs is data obtained
+        # FROM YAHOO, so the test is about who wrote the value, not whether a
+        # column exists.
+        row = conn.fetchone(
+            "SELECT yahoo_id, yahoo_key FROM players WHERE player_key=?",
+            (ours["Jahmyr Gibbs"],),
+        )
+        assert row["yahoo_id"] is None and row["yahoo_key"] is None, (
+            "resolving a Yahoo player wrote a Yahoo identifier to disk"
+        )
+    finally:
+        conn.close()
+
+
+def test_the_yahoo_client_cannot_write_identifiers(tmp_path):
+    """Structural: the write path is gone, not merely unused.
+
+    _upsert_from_yahoo_player used to pass yahoo_id and yahoo_key straight into
+    the players table on every roster sync. It is replaced by resolution, which
+    reads and never writes.
+    """
+    import inspect
+
+    from src import yahoo_client
+
+    source = inspect.getsource(yahoo_client)
+    assert "yahoo_id=" not in source, (
+        "src/yahoo_client.py still passes a yahoo_id into a write"
+    )
+    assert "yahoo_key=" not in source, (
+        "src/yahoo_client.py still passes a yahoo_key into a write"
+    )
+
+
+def test_a_sleeper_supplied_id_is_used_when_present(tmp_path):
+    """Prefer the published cross-reference over guessing at names.
+
+    Sleeper carries `yahoo_id` for most players. Where it exists the join is
+    exact, and name matching - which is what breaks on "Ja'Marr" versus
+    "JaMarr", or two players sharing a name - is only the fallback.
+    """
+    from src.yahoo_snapshot import YahooIdIndex
+
+    conn = db.init_db(tmp_path / "s.db", force_sqlite=True)
+    try:
+        from src.idmap import IdMapper
+
+        key = IdMapper(conn).upsert_player(
+            full_name="Marquise Brown", position="WR", team="KC", yahoo_id="32180",
+        )
+        index = YahooIdIndex(conn)
+        # A name that would NOT match, so only the id can be doing the work.
+        assert index.resolve({
+            "player_key": "449.p.32180", "player_id": "32180",
+            "full_name": "Hollywood Brown", "primary_position": "WR",
+        }) == key
+    finally:
+        conn.close()
+
+
+def test_an_unmatched_yahoo_player_is_reported_not_invented(tmp_path):
+    """A name we cannot match must be visible, not silently dropped.
+
+    Name matching is the weak point of doing this in memory, so the failures
+    have to surface. Silently skipping an unmatched player would quietly shrink
+    the roster the lineup optimiser sees, and produce confident advice about an
+    incomplete team.
+    """
+    from src.yahoo_snapshot import YahooIdIndex
+
+    conn = db.init_db(tmp_path / "s.db", force_sqlite=True)
+    try:
+        _players(conn)
+        index = YahooIdIndex(conn)
+        assert index.resolve({"full_name": "Nobody At All", "primary_position": "WR"}) is None
+        assert index.unmatched == ["Nobody At All"]
+    finally:
+        conn.close()
+
+
+def test_a_snapshot_holds_the_roster_and_never_writes_it(tmp_path):
+    from src.yahoo_snapshot import LeagueSnapshot, RosterSpot
+
+    conn = db.init_db(tmp_path / "s.db", force_sqlite=True)
+    try:
+        snap = LeagueSnapshot(league_key="nfl.l.796511", season=2026, week=2)
+        snap.rosters.append(RosterSpot("4", "Butt Fumblers", "gibbs|RB", "RB"))
+        snap.rosters.append(RosterSpot("4", "Butt Fumblers", "nacua|WR", "WR"))
+        snap.rosters.append(RosterSpot("7", "NUB", "chase|WR", "WR"))
+
+        assert snap.roster_keys("4") == ["gibbs|RB", "nacua|WR"]
+        assert snap.all_rostered() == {"gibbs|RB", "nacua|WR", "chase|WR"}
+        assert conn.scalar("SELECT COUNT(*) FROM source_cache") == 0
+    finally:
+        conn.close()
