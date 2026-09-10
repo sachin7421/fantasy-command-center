@@ -791,8 +791,15 @@ def cmd_job(ctx: Context, args) -> int:
         if team_key is None:
             return EXIT_FAIL
         settings = ctx.settings()
+        snapshot = ctx.league_snapshot(season, week)
+        if snapshot is None:
+            print("Yahoo is not configured, so there is no free-agent pool and")
+            print("no rosters to compare against. The API agreement forbids")
+            print("storing them. Run `fcc setup` to connect Yahoo.")
+            return EXIT_FAIL
         waiver_report = waivers.run(
             ctx.conn, ctx.league_key, team_key, season, week,
+            snapshot=snapshot,
             uses_faab=str(settings.get("uses_faab", "1")) in ("1", "true", "True"),
             budget_left=int(args.budget if args.budget is not None
                             else _my_faab_left(ctx, season, settings)),
@@ -1357,7 +1364,20 @@ def cmd_faab(ctx: Context, args) -> int:
                 print(f"Ignoring unreadable budget entry {pair.strip()!r} "
                       "(expected team:amount, e.g. 3:40).")
 
-    records = faab.parse_bids(ctx.conn, ctx.league_key)
+    # Unlike lineup and waivers, this one still works without Yahoo. It answers
+    # "what is he worth to me and what will he cost", and the value half comes
+    # from our own projections. Only the rival half - who bids how hard - is
+    # learned from the transaction log, and without it every manager falls back
+    # to the league-average profile. That is a WEAKER answer, not a wrong one,
+    # so it degrades and says which rather than refusing.
+    snapshot = ctx.league_snapshot(season, week)
+    if snapshot is None:
+        print("Yahoo is not connected, so rival bidding habits cannot be")
+        print("learned. Every manager is treated as league-average; the value")
+        print("and the ceiling below are still yours.")
+        print("")
+
+    records = faab.parse_bids(snapshot.transactions if snapshot else [])
     if records:
         faab.attach_values(ctx.conn, records, season)
     profiles = faab.learn_profiles(records, teams, budgets)
@@ -1402,7 +1422,13 @@ def cmd_faab(ctx: Context, args) -> int:
     if args.replacement is None and my_key:
         from src.season import waivers as _w
 
-        roster = _w.load_my_droppables(ctx.conn, ctx.league_key, my_key, season, week)
+        snapshot = ctx.league_snapshot(season, week)
+        roster = (
+            _w.load_my_droppables(
+                ctx.conn, season, week, snapshot.roster_keys(my_key)
+            )
+            if snapshot is not None else []
+        )
         slots = ctx.starting_slots()
         if roster and slots:
             target = _w.Candidate(

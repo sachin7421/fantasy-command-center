@@ -17,6 +17,7 @@ import logging
 
 from src.notify import Notification
 from src.storage import Database
+from src.yahoo_snapshot import key_clause
 
 log = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ def replacement_levels(
 
 
 def load_free_agents(
-    conn: Database, league_key: str, season: int, week: int, limit: int = 200
+    conn: Database, season: int, week: int, free_agent_keys, limit: int = 200
 ) -> list[Candidate]:
     """Available players, valued on rest-of-season points.
 
@@ -136,38 +137,36 @@ bids are both calibrated against season points above replacement. Feeding it a
 weekly figure understated every claim by roughly the number of weeks left, and
 recommended $1 bids on players worth real money.
     """
+    fa_clause, fa_params = key_clause(free_agent_keys)
     rows = conn.execute(
-        """
-        SELECT f.player_key, f.pct_owned, p.full_name, p.position, p.team, p.bye_week,
+        f"""
+        SELECT p.player_key, p.full_name, p.position, p.team, p.bye_week,
                COALESCE(s.points, b.points, j.points, 0) AS pts,
                COALESCE(t.count, 0)                      AS trending,
                i.status                        AS injury_status
-        FROM free_agents f
-        JOIN players p USING(player_key)
+        FROM players p
         LEFT JOIN projections_blended s
-               ON s.player_key=f.player_key AND s.season=:season AND s.week=0
+               ON s.player_key=p.player_key AND s.season=? AND s.week=0
         LEFT JOIN projections_blended b
-               ON b.player_key=f.player_key AND b.season=:season AND b.week=:week
+               ON b.player_key=p.player_key AND b.season=? AND b.week=?
         LEFT JOIN projections j
-               ON j.player_key=f.player_key AND j.season=:season AND j.week=:week
+               ON j.player_key=p.player_key AND j.season=? AND j.week=?
               AND j.source='sleeper'
         LEFT JOIN (
             SELECT player_key, count,
                    ROW_NUMBER() OVER (PARTITION BY player_key ORDER BY fetched_at DESC) rn
             FROM trending WHERE kind='add'
-        ) t ON t.player_key=f.player_key AND t.rn=1
+        ) t ON t.player_key=p.player_key AND t.rn=1
         LEFT JOIN (
             SELECT player_key, status,
                    ROW_NUMBER() OVER (PARTITION BY player_key ORDER BY observed_at DESC) rn
             FROM injuries
-        ) i ON i.player_key=f.player_key AND i.rn=1
-        WHERE f.league_key=:league AND f.week=:week
+        ) i ON i.player_key=p.player_key AND i.rn=1
+        WHERE p.player_key IN ({fa_clause})
         ORDER BY pts DESC
-        LIMIT :limit
+        LIMIT ?
         """,
-        {
-            "season": season, "week": week, "league": league_key, "limit": limit,
-        },
+        [season, season, week, season, week, *fa_params, int(limit)],
     ).fetchall()
     baseline = replacement_levels(conn, season)
     share = ros_fraction(week)
@@ -175,7 +174,7 @@ recommended $1 bids on players worth real money.
         Candidate(
             player_key=r["player_key"], name=r["full_name"], position=r["position"],
             team=r["team"] or "FA", ros_points=float(r["pts"] or 0),
-            pct_owned=float(r["pct_owned"] or 0), trending_add=int(r["trending"] or 0),
+            pct_owned=float(0.0 or 0), trending_add=int(r["trending"] or 0),
             injury_status=r["injury_status"], bye_week=r["bye_week"],
             value=(float(r["pts"] or 0) - baseline.get(r["position"], 0.0)) * share,
         )
@@ -184,35 +183,35 @@ recommended $1 bids on players worth real money.
 
 
 def load_my_droppables(
-    conn: Database, league_key: str, team_key: str, season: int, week: int
+    conn: Database, season: int, week: int, roster_keys
 ) -> list[Candidate]:
     """Your roster, worst first, on the same season scale as the free agents.
 
     Both sides of the comparison have to be measured the same way or the margin
     is meaningless; see `load_free_agents` for why that is week 0.
     """
+    roster_clause, roster_params = key_clause(roster_keys)
     rows = conn.execute(
-        """
-        SELECT r.player_key, p.full_name, p.position, p.team, p.bye_week,
+        f"""
+        SELECT p.player_key, p.full_name, p.position, p.team, p.bye_week,
                COALESCE(s.points, b.points, j.points, 0) AS pts,
                i.status AS injury_status
-        FROM rosters r
-        JOIN players p USING(player_key)
+        FROM players p
         LEFT JOIN projections_blended s
-               ON s.player_key=r.player_key AND s.season=:season AND s.week=0
+               ON s.player_key=p.player_key AND s.season=? AND s.week=0
         LEFT JOIN projections_blended b
-               ON b.player_key=r.player_key AND b.season=:season AND b.week=:week
+               ON b.player_key=p.player_key AND b.season=? AND b.week=?
         LEFT JOIN projections j
-               ON j.player_key=r.player_key AND j.season=:season AND j.week=:week
+               ON j.player_key=p.player_key AND j.season=? AND j.week=?
               AND j.source='sleeper'
         LEFT JOIN (
             SELECT player_key, status,
                    ROW_NUMBER() OVER (PARTITION BY player_key ORDER BY observed_at DESC) rn
             FROM injuries
-        ) i ON i.player_key=r.player_key AND i.rn=1
-        WHERE r.league_key=:league AND r.team_key=:team AND r.week=:week
+        ) i ON i.player_key=p.player_key AND i.rn=1
+        WHERE p.player_key IN ({roster_clause})
         """,
-        {"season": season, "week": week, "league": league_key, "team": str(team_key)},
+        [season, season, week, season, week, *roster_params],
     ).fetchall()
     baseline = replacement_levels(conn, season)
     share = ros_fraction(week)
@@ -271,7 +270,7 @@ def suggest_bid(
 
 
 def find_handcuffs(
-    conn: Database, league_key: str, team_key: str, week: int, season: int | None = None
+    conn: Database, roster_keys, owned_keys, season: int | None = None
 ) -> list[dict[str, Any]]:
     """For each RB I roster, is the man behind him on the depth chart free?
 
@@ -284,13 +283,15 @@ def find_handcuffs(
     Falls back to the old projection ordering only when no depth chart has been
     synced, and says which one it used.
     """
+    owned = {str(k) for k in owned_keys}
+    rb_clause, rb_params = key_clause(roster_keys)
     my_rbs = conn.execute(
-        """
+        f"""
         SELECT p.player_key, p.full_name, p.team
-        FROM rosters r JOIN players p USING(player_key)
-        WHERE r.league_key=? AND r.team_key=? AND r.week=? AND p.position='RB'
+        FROM players p
+        WHERE p.player_key IN ({rb_clause}) AND p.position='RB'
         """,
-        (league_key, str(team_key), week),
+        rb_params,
     ).fetchall()
 
     # Most recent depth chart available, whatever season it came from.
@@ -308,10 +309,7 @@ def find_handcuffs(
         if depth_season is not None:
             backup = conn.fetchone(
                 """
-                SELECT d.player_key, d.player_name AS full_name,
-                       EXISTS(SELECT 1 FROM rosters r2
-                              WHERE r2.player_key=d.player_key
-                                AND r2.league_key=? AND r2.week=?) AS rostered
+                SELECT d.player_key, d.player_name AS full_name
                 FROM depth_charts d
                 WHERE d.season=? AND d.team=? AND d.position='RB'
                   AND d.player_key IS NOT NULL
@@ -323,17 +321,14 @@ def find_handcuffs(
                 ORDER BY d.depth_rank ASC
                 LIMIT 1
                 """,
-                (league_key, week, depth_season, rb["team"],
+                (depth_season, rb["team"],
                  depth_season, rb["team"], rb["player_key"]),
             )
         if backup is None:
             source = "projection order (no depth chart synced)"
             backup = conn.fetchone(
                 """
-                SELECT p.player_key, p.full_name,
-                       EXISTS(SELECT 1 FROM rosters r2
-                              WHERE r2.player_key=p.player_key AND r2.league_key=?
-                                AND r2.week=?) AS rostered
+                SELECT p.player_key, p.full_name
                 FROM players p
                 WHERE p.team=? AND p.position='RB' AND p.player_key<>?
                 ORDER BY (SELECT COALESCE(points,0) FROM projections
@@ -341,7 +336,7 @@ def find_handcuffs(
                           ORDER BY season DESC LIMIT 1) DESC
                 LIMIT 1
                 """,
-                (league_key, week, rb["team"], rb["player_key"]),
+                (rb["team"], rb["player_key"]),
             )
         if backup:
             out.append(
@@ -351,7 +346,7 @@ def find_handcuffs(
                     "handcuff": backup["full_name"],
                     "source": source,
                     "handcuff_key": backup["player_key"],
-                    "rostered": bool(backup["rostered"]),
+                    "rostered": backup["player_key"] in owned,
                 }
             )
     return out
@@ -406,9 +401,22 @@ def run(
     value_margin: float = 25.0,
     top_n: int = 8,
     starting_slots: dict[str, int] | None = None,
+    snapshot=None,
 ) -> WaiverReport:
-    free_agents = load_free_agents(conn, league_key, season, week)
-    droppables = load_my_droppables(conn, league_key, team_key, season, week)
+    """Who to claim, who to drop, and what to bid.
+
+    `snapshot` carries the Yahoo half - the wire, every roster, and each
+    rival's remaining budget. The API agreement forbids storing any of it, so
+    it is fetched once per run and passed in rather than read from tables.
+    """
+    if snapshot is None:
+        raise ValueError(
+            "waivers needs a league snapshot: the free-agent pool and every "
+            "roster come from Yahoo, and storing them is not permitted."
+        )
+    roster_keys = snapshot.roster_keys(team_key)
+    free_agents = load_free_agents(conn, season, week, snapshot.free_agents)
+    droppables = load_my_droppables(conn, season, week, roster_keys)
     weeks_left = _ros_weeks(week)
 
     # A player who is the last one you own at a required position is not a drop
@@ -427,29 +435,25 @@ def run(
         try:
             from src.analytics import faab as faab_model
 
-            records = faab_model.parse_bids(conn, league_key)
+            # The transaction log is read from the snapshot and never stored.
+            # What outlives the run is the learned coefficient - a shrunk
+            # dollars-per-point number from which no Yahoo fact is recoverable.
+            records = faab_model.parse_bids(snapshot.transactions)
             if records:
                 faab_model.attach_values(conn, records, season)
+
             names = {
-                str(r["team_key"]): (r["team_name"] or str(r["team_key"]))
-                for r in conn.fetchall(
-                    "SELECT DISTINCT team_key, team_name FROM rosters "
-                    "WHERE league_key=?",
-                    (league_key,),
-                )
+                key: (budget.team_name or key)
+                for key, budget in snapshot.budgets.items()
             }
             # Remaining budgets are the sharpest input the model has: a
             # manager with $2 left is not a rival whatever his habits. Without
             # them every hard-ceiling branch is skipped and the feature is inert.
             balances = {
-                str(r["team_key"]): int(r["faab_balance"])
-                for r in conn.fetchall(
-                    "SELECT team_key, faab_balance FROM team_budgets "
-                    "WHERE league_key=? AND season=?",
-                    (league_key, season),
-                )
-                if r["faab_balance"] is not None
-            } if conn.table_exists("team_budgets") else {}
+                key: budget.faab_balance
+                for key, budget in snapshot.budgets.items()
+                if budget.faab_balance is not None
+            }
 
             if records or names:
                 profiles = faab_model.learn_profiles(records, names, balances)
@@ -561,7 +565,9 @@ def run(
             )
     report.stashes = report.stashes[:5]
     report.handcuffs = [
-        h for h in find_handcuffs(conn, league_key, team_key, week, season)
+        h for h in find_handcuffs(
+            conn, roster_keys, snapshot.all_rostered(), season
+        )
         if not h["rostered"]
     ]
 
@@ -574,14 +580,7 @@ def run(
 
         signals = regression.scan(conn, season, through_week=week)
         available = {c.player_key for c in free_agents}
-        mine = {
-            r["player_key"]
-            for r in conn.fetchall(
-                "SELECT player_key FROM rosters WHERE league_key=? AND team_key=? "
-                "AND week=?",
-                (league_key, str(team_key), week),
-            )
-        }
+        mine = set(roster_keys)
         report.buy_low = [
             s for s in signals if s.verdict == "buy" and s.player_key in available
         ][:5]

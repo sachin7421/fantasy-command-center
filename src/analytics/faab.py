@@ -53,7 +53,6 @@ honest read of whether it will be enough.
 """
 from __future__ import annotations
 
-import json
 import math
 from dataclasses import dataclass, field
 from statistics import fmean, pstdev
@@ -196,18 +195,17 @@ class ManagerProfile:
 
 # --- learning from history ---------------------------------------------------
 
-def parse_bids(conn: Database, league_key: str) -> list[BidRecord]:
-    """Pull winning FAAB bids out of the stored Yahoo transaction log."""
-    rows = conn.fetchall(
-        "SELECT txn_id, type, timestamp, payload_json FROM transactions "
-        "WHERE league_key=?",
-        (league_key,),
-    )
+def parse_bids(transactions: Sequence[dict[str, Any]]) -> list[BidRecord]:
+    """Winning FAAB bids, out of the Yahoo transaction log.
+
+    Takes the log directly rather than reading a `transactions` table. The API
+    agreement forbids storing it, so it is fetched once per run and passed in.
+    What survives the run is what this produces: a learned dollars-per-point
+    coefficient, which is our own output and carries no Yahoo fact.
+    """
     out: list[BidRecord] = []
-    for row in rows:
-        try:
-            payload = json.loads(row["payload_json"] or "{}")
-        except (TypeError, ValueError):
+    for payload in transactions:
+        if not isinstance(payload, dict):
             continue
 
         # A claim that did not go through is not evidence of what wins.

@@ -721,20 +721,20 @@ def test_a_manager_who_never_bids_is_barely_a_threat():
 
 # --- FAAB bid parsing, against yfpy's real Transaction shape ------------------
 
-def _txn(conn, league_key, txn_id, *, bid, status="successful",
-         source_type="waivers", team="3", player_id="1001"):
-    """One stored transaction, shaped as yfpy serialises a Transaction.
+def _txn(txn_id, *, bid, status="successful", source_type="waivers",
+         team="3", player_id="1001"):
+    """One transaction, shaped as yfpy serialises a Transaction.
 
     Field names read off the installed package (yfpy/models.py): Transaction
     carries faab_bid, status, type and players; each player carries
     transaction_data with type and destination_team_key, and source_type says
-    whether the player came off waivers or was a free agent.
+    whether the player came off waivers or was a straight free-agent pickup.
+
+    Returned as a plain payload rather than written to a table - the API
+    agreement forbids storing the transaction log, so parse_bids now takes it
+    directly.
     """
-    import json
-
-    from src import db
-
-    payload = {
+    return {
         "transaction_id": txn_id,
         "type": "add/drop",
         "status": status,
@@ -752,12 +752,6 @@ def _txn(conn, league_key, txn_id, *, bid, status="successful",
             }
         ],
     }
-    conn.execute(
-        "INSERT INTO transactions(league_key, txn_id, type, timestamp, payload_json) "
-        "VALUES (?,?,?,?,?)",
-        (league_key, str(txn_id), "add/drop", db.utcnow(), json.dumps(payload)),
-    )
-    conn.commit()
 
 
 def test_only_successful_claims_are_learned_from(tmp_path):
@@ -769,17 +763,14 @@ def test_only_successful_claims_are_learned_from(tmp_path):
     that a LOSING bid won, which drags every predicted rival bid downward and
     makes it far too optimistic about winning a player.
     """
-    from src import db
     from src.analytics import faab
 
-    conn = db.init_db(tmp_path / "bids.db", force_sqlite=True)
-    key = "nfl.l.796511"
-    _txn(conn, key, 1, bid=44, status="successful")
-    _txn(conn, key, 2, bid=3, status="pending")
-    _txn(conn, key, 3, bid=1, status="failed")
+    log: list = []
+    log.append(_txn(1, bid=44, status="successful"))
+    log.append(_txn(2, bid=3, status="pending"))
+    log.append(_txn(3, bid=1, status="failed"))
 
-    bids = faab.parse_bids(conn, key)
-    conn.close()
+    bids = faab.parse_bids(log)
 
     assert [b.bid for b in bids] == [44], (
         f"learned from {[(b.bid) for b in bids]} - a claim that did not "
@@ -793,15 +784,12 @@ def test_a_zero_dollar_waiver_claim_is_real_evidence(tmp_path):
     Skipping every zero threw that away and left the model learning only from
     claims somebody paid for - so it believed the league always pays.
     """
-    from src import db
     from src.analytics import faab
 
-    conn = db.init_db(tmp_path / "zero.db", force_sqlite=True)
-    key = "nfl.l.796511"
-    _txn(conn, key, 1, bid=0, source_type="waivers")
+    log: list = []
+    log.append(_txn(1, bid=0, source_type="waivers"))
 
-    bids = faab.parse_bids(conn, key)
-    conn.close()
+    bids = faab.parse_bids(log)
 
     assert [b.bid for b in bids] == [0], "a $0 winning waiver claim is evidence"
 
@@ -813,15 +801,12 @@ def test_a_free_agent_pickup_is_not_a_bid(tmp_path):
     "freeagents" was a straight pickup with no bidding at all. Counting the
     second as a $0 bid would invent evidence that nobody competes.
     """
-    from src import db
     from src.analytics import faab
 
-    conn = db.init_db(tmp_path / "fa.db", force_sqlite=True)
-    key = "nfl.l.796511"
-    _txn(conn, key, 1, bid=0, source_type="freeagents")
-    _txn(conn, key, 2, bid=None, source_type="freeagents")
+    log: list = []
+    log.append(_txn(1, bid=0, source_type="freeagents"))
+    log.append(_txn(2, bid=None, source_type="freeagents"))
 
-    bids = faab.parse_bids(conn, key)
-    conn.close()
+    bids = faab.parse_bids(log)
 
     assert bids == [], f"invented {len(bids)} bid(s) from free-agent pickups"

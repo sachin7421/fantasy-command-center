@@ -27,7 +27,7 @@ MY_TEAM = "3"
 
 # --- the whole package must actually import ---------------------------------
 
-def test_every_module_imports():
+def test_every_module_imports(league_snapshot):
     """A syntax check is not an import check.
 
     `src/ui.py` once parsed perfectly and raised NameError on import, because a
@@ -89,6 +89,56 @@ def _bid(conn, txn_id, team_id, yahoo_id, name, amount, week):
     )
 
 
+
+def _snapshot_from_tables(conn, team_key=None, week=None):
+    """Build a snapshot out of a fixture that still seeds the old tables.
+
+    Several fixtures predate the API agreement and populate `rosters` and
+    `free_agents` directly. Rather than rewrite each one, this reads them back
+    into the shape the season modules now take - so the fixtures keep saying
+    what they meant, and the code under test sees only a snapshot.
+    """
+    from src.yahoo_snapshot import LeagueSnapshot, RosterSpot, TeamBudget
+
+    snap = LeagueSnapshot(
+        league_key=LEAGUE, season=SEASON, week=WEEK if week is None else week,
+    )
+    for r in conn.fetchall(
+        "SELECT team_key, team_name, player_key, selected_pos FROM rosters"
+    ):
+        snap.rosters.append(RosterSpot(
+            str(r["team_key"]), r["team_name"], r["player_key"], r["selected_pos"],
+        ))
+    for r in conn.fetchall("SELECT player_key FROM free_agents"):
+        snap.free_agents.append(r["player_key"])
+    for r in conn.fetchall(
+        "SELECT team_key, team_name, faab_balance FROM team_budgets"
+    ):
+        snap.budgets[str(r["team_key"])] = TeamBudget(
+            str(r["team_key"]), r["team_name"], r["faab_balance"],
+        )
+    snap.transactions = [
+        json.loads(r["payload_json"] or "{}")
+        for r in conn.fetchall("SELECT payload_json FROM transactions")
+    ]
+    return snap
+
+
+@pytest.fixture
+def league_snapshot(league_db):
+    """The Yahoo half of `league_db`, as a snapshot.
+
+    Yahoo state is fetched per run rather than stored, so the season modules
+    take it as an argument. A separate fixture keeps every existing
+    `str(league_db)` call site untouched.
+    """
+    return _SNAPSHOTS[str(league_db)]
+
+
+#: db path -> snapshot, populated by the league_db fixture.
+_SNAPSHOTS: dict = {}
+
+
 @pytest.fixture
 def league_db(tmp_path):
     path = tmp_path / "integration.db"
@@ -141,6 +191,28 @@ def league_db(tmp_path):
             (LEAGUE, SEASON, team_id, f"Team {team_id}", balance, None, db.utcnow()),
         )
     conn.commit()
+
+    # The same league as a snapshot. Yahoo state is fetched per run now rather
+    # than stored, so the tables above are the OLD shape and only some tests
+    # still need them; this is what the season modules actually consume.
+    from src.yahoo_snapshot import LeagueSnapshot, RosterSpot, TeamBudget
+
+    snap = LeagueSnapshot(league_key=LEAGUE, season=SEASON, week=WEEK)
+    for key, _name, pos, _pts in roster:
+        snap.rosters.append(RosterSpot(str(MY_TEAM), "Butt Fumblers", key, pos))
+    snap.rosters.append(RosterSpot("1", "Team One", "rival a|WR", "WR"))
+    snap.rosters.append(RosterSpot("2", "Team Two", "rival b|RB", "RB"))
+    snap.free_agents.append("waiver add|RB")
+    for team_id, balance in (("1", 62), ("2", 11), (MY_TEAM, 73)):
+        snap.budgets[str(team_id)] = TeamBudget(
+            str(team_id), f"Team {team_id}", balance,
+        )
+    snap.transactions = [
+        json.loads(r["payload_json"])
+        for r in conn.fetchall("SELECT payload_json FROM transactions")
+    ]
+    conn.close()
+    _SNAPSHOTS[str(path)] = snap
     return path
 
 
@@ -257,7 +329,7 @@ def test_faab_reports_an_unknown_player_rather_than_raising(league_db, capsys):
 
 # --- the waiver job's FAAB branch -------------------------------------------
 
-def test_waiver_run_produces_bids_without_crashing(league_db):
+def test_waiver_run_produces_bids_without_crashing(league_db, league_snapshot):
     """`waivers.run` reaches the same model through a different door."""
     from src.season import waivers
 
@@ -265,6 +337,7 @@ def test_waiver_run_produces_bids_without_crashing(league_db):
     report = waivers.run(
         conn, LEAGUE, MY_TEAM, SEASON, WEEK,
         uses_faab=True, budget_left=73, value_margin=8.0,
+        snapshot=league_snapshot,
     )
     assert report.claims, "the free agent is worth far more than the worst bench spot"
     claim = report.claims[0]
@@ -277,13 +350,14 @@ def test_waiver_run_produces_bids_without_crashing(league_db):
     assert "Waiver Add" in notification.text()
 
 
-def test_waiver_bids_respect_a_budget_that_is_nearly_spent(league_db):
+def test_waiver_bids_respect_a_budget_that_is_nearly_spent(league_db, league_snapshot):
     from src.season import waivers
 
     conn = db.init_db(league_db)
     report = waivers.run(
         conn, LEAGUE, MY_TEAM, SEASON, WEEK,
         uses_faab=True, budget_left=4, value_margin=8.0,
+        snapshot=league_snapshot,
     )
     for claim in report.claims:
         assert claim.bid_rec <= 4, "recommended a bid the manager cannot make"
@@ -410,6 +484,7 @@ def test_a_backup_at_a_single_slot_position_is_worth_nothing(lineup_league):
     report = waivers.run(
         conn, LEAGUE, MY_TEAM, SEASON, WEEK,
         uses_faab=True, budget_left=100, value_margin=1.0, starting_slots=SLOTS,
+        snapshot=_snapshot_from_tables(conn),
     )
     names = [c.add.name for c in report.claims]
     assert "Excellent Backup QB" not in names
@@ -424,6 +499,7 @@ def test_the_only_defence_is_never_a_drop_candidate(lineup_league):
     report = waivers.run(
         conn, LEAGUE, MY_TEAM, SEASON, WEEK,
         uses_faab=True, budget_left=100, value_margin=1.0, starting_slots=SLOTS,
+        snapshot=_snapshot_from_tables(conn),
     )
     dropped = {c.drop.name for c in report.claims if c.drop}
     assert "The Only Defence" not in dropped, dropped
@@ -437,6 +513,7 @@ def test_a_claim_gain_is_the_lineup_improvement(lineup_league):
     report = waivers.run(
         conn, LEAGUE, MY_TEAM, SEASON, WEEK,
         uses_faab=True, budget_left=100, value_margin=1.0, starting_slots=SLOTS,
+        snapshot=_snapshot_from_tables(conn),
     )
     upgrade = next(c for c in report.claims if c.add.name == "Genuine Upgrade WR")
     # 235 in, Flex RB3 (175) out of the lineup; the dropped spare TE never started.
