@@ -272,36 +272,6 @@ class YahooClient:
         payload, _ = self._cached(key, self.query.get_league_teams, force)
         return payload or []
 
-    def store_teams(self, teams: Iterable[dict[str, Any]], season: int) -> int:
-        """Persist the team list and each manager's remaining FAAB.
-
-        Remaining budget is the sharpest input the bid model has - a manager
-        sitting on $2 is not a rival however aggressively he normally bids - so
-        it is worth a table of its own rather than being re-derived from the
-        transaction log, which only shows what was spent, not what was carried.
-        """
-        stored = 0
-        for team in teams:
-            team_id = team.get("team_id")
-            if team_id in (None, ""):
-                continue
-            self.conn.execute(
-                "INSERT INTO team_budgets(league_key, season, team_key, team_name, "
-                "faab_balance, waiver_priority, fetched_at) VALUES (?,?,?,?,?,?,?) "
-                "ON CONFLICT(league_key, season, team_key) DO UPDATE SET "
-                "team_name=excluded.team_name, faab_balance=excluded.faab_balance, "
-                "waiver_priority=excluded.waiver_priority, fetched_at=excluded.fetched_at",
-                (
-                    self.league_key, int(season), str(team_id), team.get("name"),
-                    _as_int(team.get("faab_balance")),
-                    _as_int(team.get("waiver_priority")),
-                    db.utcnow(),
-                ),
-            )
-            stored += 1
-        self.conn.commit()
-        return stored
-
     def my_team_id(self) -> int | None:
         """The configured team id, or auto-detect via the authenticated user."""
         configured = self.cfg.get("league.my_team_id")
@@ -324,30 +294,6 @@ class YahooClient:
             key, lambda: self.query.get_team_roster_player_info_by_week(team_id, week), force
         )
         return payload or []
-
-    def store_roster(self, team_id: int, week: int, players: Iterable[dict[str, Any]],
-                     team_name: str | None = None) -> int:
-        stored = 0
-        for p in players:
-            key = self._resolve_yahoo_player(p)
-            if not key:
-                continue
-            self.conn.execute(
-                "INSERT INTO rosters(league_key, team_key, team_name, player_key, "
-                "selected_pos, week, fetched_at) VALUES (?,?,?,?,?,?,?) "
-                "ON CONFLICT(league_key, team_key, player_key, week) DO UPDATE SET "
-                "selected_pos=excluded.selected_pos, fetched_at=excluded.fetched_at",
-                (
-                    self.league_key, str(team_id), team_name, key,
-                    p.get("selected_position_value") or _dig(p, ["selected_position", "position"]),
-                    week, db.utcnow(),
-                ),
-            )
-            stored += 1
-        self.conn.commit()
-        return stored
-
-    # -- players / free agents ----------------------------------------------
 
     def fetch_free_agents(self, count: int = 200, position: str | None = None,
                           force: bool = False) -> list[dict[str, Any]]:
@@ -385,52 +331,11 @@ class YahooClient:
         payload, _ = self._cached(cache_key, _fetch, force)
         return payload or []
 
-    def store_free_agents(self, players: Iterable[dict[str, Any]], week: int) -> int:
-        stored = 0
-        for p in players:
-            key = self._resolve_yahoo_player(p)
-            if not key:
-                continue
-            self.conn.execute(
-                "INSERT INTO free_agents(league_key, player_key, pct_owned, week, fetched_at) "
-                "VALUES (?,?,?,?,?) ON CONFLICT(league_key, player_key, week) DO UPDATE SET "
-                "pct_owned=excluded.pct_owned, fetched_at=excluded.fetched_at",
-                (self.league_key, key, _as_float(p.get("percent_owned_value")), week, db.utcnow()),
-            )
-            stored += 1
-        self.conn.commit()
-        return stored
-
-    # -- draft ---------------------------------------------------------------
-
     def fetch_draft_results(self, force: bool = True) -> list[dict[str, Any]]:
         """Live during the draft, so this defaults to bypassing cache."""
         key = f"yahoo:draft:{self.league_key}"
         payload, _ = self._cached(key, self.query.get_league_draft_results, force)
         return payload or []
-
-    def store_draft_results(self, results: Iterable[dict[str, Any]]) -> int:
-        """Persist picks. Player keys are resolved from the Yahoo player key."""
-        stored = 0
-        for r in results:
-            yahoo_player_key = r.get("player_key")
-            if not yahoo_player_key:
-                continue
-            player_key = self._player_key_from_yahoo_key(yahoo_player_key)
-            self.conn.execute(
-                "INSERT INTO draft_picks(league_key, pick, round, team_key, player_key, "
-                "source, recorded_at) VALUES (?,?,?,?,?,?,?) "
-                "ON CONFLICT(league_key, pick) DO UPDATE SET "
-                "player_key=excluded.player_key, team_key=excluded.team_key, "
-                "round=excluded.round, recorded_at=excluded.recorded_at",
-                (
-                    self.league_key, _as_int(r.get("pick")), _as_int(r.get("round")),
-                    r.get("team_key"), player_key, "yahoo", db.utcnow(),
-                ),
-            )
-            stored += 1
-        self.conn.commit()
-        return stored
 
     def draft_settings(self) -> dict[str, Any]:
         s = self.load_settings()
@@ -441,31 +346,91 @@ class YahooClient:
             "draft_pick_time": s.get("draft_pick_time"),
         }
 
+    # -- the snapshot: Yahoo state for this run, never written down ---------
+
+    def new_snapshot(self, season: int, week: int):
+        """An empty snapshot for this league."""
+        from src.yahoo_snapshot import LeagueSnapshot
+
+        return LeagueSnapshot(league_key=self.league_key, season=int(season),
+                              week=int(week))
+
+    def collect_teams(self, snapshot, teams: Iterable[dict[str, Any]]):
+        """Remaining FAAB and waiver priority, per team.
+
+        Budget is the sharpest single input the bid model has - a manager
+        sitting on $2 is not a rival however aggressively he normally bids -
+        and it used to be worth a table of its own. It is worth exactly as much
+        held in memory; it just cannot outlive the run.
+        """
+        from src.yahoo_snapshot import TeamBudget
+
+        for team in teams:
+            team_id = team.get("team_id")
+            if team_id in (None, ""):
+                continue
+            snapshot.budgets[str(team_id)] = TeamBudget(
+                team_key=str(team_id),
+                # serialize() again, not redundantly: yfpy hands back Team.name
+                # as BYTES, and a caller that passes raw models rather than
+                # already-serialised dicts would otherwise put b'Butt Fumblers'
+                # into every report. Idempotent for a str.
+                team_name=serialize(team.get("name")),
+                faab_balance=_as_int(team.get("faab_balance")),
+                waiver_priority=_as_int(team.get("waiver_priority")),
+            )
+        return snapshot
+
+    def collect_roster(self, snapshot, team_id: Any, players: Iterable[dict[str, Any]],
+                       team_name: str | None = None):
+        """One team's roster, as our player keys."""
+        from src.yahoo_snapshot import RosterSpot
+
+        for p in players:
+            key = self._resolve_yahoo_player(p)
+            if not key:
+                continue
+            snapshot.rosters.append(RosterSpot(
+                team_key=str(team_id),
+                team_name=team_name,
+                player_key=key,
+                selected_pos=(p.get("selected_position_value")
+                              or _dig(p, ["selected_position", "position"])),
+            ))
+        snapshot.unmatched = list(self.index.unmatched)
+        return snapshot
+
+    def collect_free_agents(self, snapshot, players: Iterable[dict[str, Any]]):
+        for p in players:
+            key = self._resolve_yahoo_player(p)
+            if key:
+                snapshot.free_agents.append(key)
+        snapshot.unmatched = list(self.index.unmatched)
+        return snapshot
+
+    def collect_transactions(self, snapshot, txns: Iterable[dict[str, Any]]):
+        """The raw log, read once so bid behaviour can be learned from it.
+
+        What survives the run is the learned coefficient, not this - a shrunk
+        dollars-per-point number from which no Yahoo fact is recoverable.
+        """
+        snapshot.transactions.extend(txns)
+        return snapshot
+
+    def collect_snapshot(self, season: int, week: int,
+                         teams: Iterable[dict[str, Any]] | None = None):
+        """Everything, in one call. Used by `fcc sync-league` and the jobs."""
+        snapshot = self.new_snapshot(season, week)
+        team_list = list(teams) if teams is not None else self.fetch_teams()
+        self.collect_teams(snapshot, team_list)
+        return snapshot
+
     # -- transactions --------------------------------------------------------
 
     def fetch_transactions(self, force: bool = False) -> list[dict[str, Any]]:
         key = f"yahoo:txns:{self.league_key}"
         payload, _ = self._cached(key, self.query.get_league_transactions, force)
         return payload or []
-
-    def store_transactions(self, txns: Iterable[dict[str, Any]]) -> int:
-        stored = 0
-        for t in txns:
-            txn_id = str(t.get("transaction_id") or t.get("transaction_key") or "")
-            if not txn_id:
-                continue
-            self.conn.execute(
-                "INSERT INTO transactions(league_key, txn_id, type, timestamp, payload_json) "
-                "VALUES (?,?,?,?,?) ON CONFLICT(league_key, txn_id) DO UPDATE SET "
-                "type=excluded.type, timestamp=excluded.timestamp, payload_json=excluded.payload_json",
-                (self.league_key, txn_id, t.get("type"), str(t.get("timestamp") or ""),
-                 json.dumps(t)),
-            )
-            stored += 1
-        self.conn.commit()
-        return stored
-
-    # -- helpers -------------------------------------------------------------
 
     @property
     def index(self):

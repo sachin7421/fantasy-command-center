@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from src import db, league_bootstrap, projections as proj, scoring, vorp
+from src.yahoo_client import YahooClient
 from src.config import Config
 from src.idmap import IdMapper
 from src.notify import Notification, Notifier
@@ -42,7 +43,7 @@ class Context:
             db_path or self.cfg.db_path, force_sqlite=db_path is not None
         )
         self.idmap = IdMapper(self.conn, self.cfg.get("paths.manual_id_overrides"))
-        self._yahoo = None
+        self._yahoo: YahooClient | None = None
         self._settings: dict[str, Any] | None = None
 
     @property
@@ -64,10 +65,17 @@ class Context:
         return f"nfl.l.{self.cfg.get('league.league_id', league_bootstrap.LEAGUE_ID)}"
 
     @property
-    def yahoo(self):
-        if self._yahoo is None:
-            from src.yahoo_client import YahooClient
+    def yahoo(self) -> YahooClient:
+        """The Yahoo client, built on first use so offline paths never auth.
 
+        The return type matters more than it looks. Without it this property
+        was `Any`, and `Any` is contagious: every `ctx.yahoo.<anything>` call in
+        this module went unchecked, so four calls to methods that had been
+        deleted passed mypy cleanly and would have failed at runtime on the
+        next sync. A property that hands back the most important object in the
+        module is the last place to leave untyped.
+        """
+        if self._yahoo is None:
             self._yahoo = YahooClient(self.cfg, self.conn)
         return self._yahoo
 
@@ -384,9 +392,12 @@ def sync_yahoo_league(ctx: Context, season: int, week: int, force: bool = False)
     yahoo = ctx.yahoo
     out = {"teams": 0, "rosters": 0, "free_agents": 0, "transactions": 0}
 
+    snapshot = yahoo.new_snapshot(season, week)
+
     try:
         teams = yahoo.fetch_teams(force=force)
-        out["teams"] = yahoo.store_teams(teams, season)
+        yahoo.collect_teams(snapshot, teams)
+        out["teams"] = len(snapshot.budgets)
         print(f"  teams       : {out['teams']}")
     except Exception as exc:
         log.warning("Yahoo teams sync failed: %s", exc)
@@ -399,11 +410,10 @@ def sync_yahoo_league(ctx: Context, season: int, week: int, force: bool = False)
             continue
         try:
             players = yahoo.fetch_roster(int(team_id), week, force=force)
-            out["rosters"] += yahoo.store_roster(
-                int(team_id), week, players, team.get("name")
-            )
+            yahoo.collect_roster(snapshot, team_id, players, team.get("name"))
         except Exception as exc:
             log.warning("Roster sync failed for team %s: %s", team_id, exc)
+    out["rosters"] = len(snapshot.rosters)
     if teams:
         print(f"  rosters     : {out['rosters']:,} slots across {len(teams)} teams")
 
@@ -411,7 +421,8 @@ def sync_yahoo_league(ctx: Context, season: int, week: int, force: bool = False)
         free_agents = yahoo.fetch_free_agents(
             count=int(ctx.cfg.get("sources.yahoo.free_agent_count", 200)), force=force
         )
-        out["free_agents"] = yahoo.store_free_agents(free_agents, week)
+        yahoo.collect_free_agents(snapshot, free_agents)
+        out["free_agents"] = len(snapshot.free_agents)
         print(f"  free agents : {out['free_agents']:,}")
     except Exception as exc:
         log.warning("Free agent sync failed: %s", exc)
@@ -419,12 +430,21 @@ def sync_yahoo_league(ctx: Context, season: int, week: int, force: bool = False)
 
     try:
         txns = yahoo.fetch_transactions(force=force)
-        out["transactions"] = yahoo.store_transactions(txns)
+        yahoo.collect_transactions(snapshot, txns)
+        out["transactions"] = len(snapshot.transactions)
         print(f"  transactions: {out['transactions']:,} (FAAB bid history)")
     except Exception as exc:
         log.warning("Transaction sync failed: %s", exc)
         print(f"  transactions: unavailable ({exc})")
 
+    # Name matching is the fallback route when Sleeper has no cross-reference
+    # id, and it is the one part of this that can quietly lose a player. Say so
+    # rather than letting the roster silently come up short.
+    if snapshot.unmatched:
+        print(f"  unmatched   : {len(snapshot.unmatched)} player(s) could not be "
+              f"resolved: {', '.join(snapshot.unmatched[:5])}")
+
+    out["snapshot"] = snapshot
     return out
 
 

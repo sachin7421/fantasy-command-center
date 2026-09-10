@@ -1057,6 +1057,34 @@ def main():
         draft_view(cfg, conn, league_key)
     else:
         season_view(cfg, conn, league_key)
+    _footer()
+
+
+def _footer() -> None:
+    """Required attribution, on every page.
+
+    Obligation 4 of the Yahoo API agreement. Rendered from main() rather than
+    inside either view so it cannot be lost by editing one of them, and kept as
+    a named function so a restyle has to delete something obvious.
+
+    The other sources are credited alongside it because they have their own
+    attribution terms - nflverse asks for it by name - and a footer that
+    credits only the source with a lawyer is a poor way to treat the rest.
+    """
+    st.divider()
+    st.caption(
+        "Fantasy data provided by Yahoo Fantasy "
+        "(https://fantasy.yahoo.com). "
+        "Player data also from nflverse, Sleeper, ESPN and FantasyPros."
+    )
+    st.markdown(
+        "<div style='font-size:0.78rem;opacity:0.65;margin-top:-0.6rem'>"
+        "Fantasy data provided by "
+        "<a href='https://fantasy.yahoo.com' target='_blank' rel='noopener'>"
+        "Yahoo Fantasy</a>."
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 main()

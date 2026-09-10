@@ -23,6 +23,8 @@ The boundary being enforced - what counts as "Yahoo-derived":
 """
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from src import db
@@ -313,5 +315,125 @@ def test_a_snapshot_holds_the_roster_and_never_writes_it(tmp_path):
         assert snap.roster_keys("4") == ["gibbs|RB", "nacua|WR"]
         assert snap.all_rostered() == {"gibbs|RB", "nacua|WR", "chase|WR"}
         assert conn.scalar("SELECT COUNT(*) FROM source_cache") == 0
+    finally:
+        conn.close()
+
+
+# --- obligation 4: attribution ----------------------------------------------
+
+ATTRIBUTION = "Fantasy data provided by Yahoo Fantasy"
+YAHOO_URL = "https://fantasy.yahoo.com"
+
+
+def test_the_dashboard_credits_yahoo_with_a_link():
+    """Obligation 4, and the one most likely to be lost to a restyle.
+
+    Asserted against the source rather than a rendered page so it holds however
+    the footer is laid out, and fails loudly if someone deletes the line while
+    tidying.
+    """
+    source = pathlib.Path("dashboard.py").read_text(encoding="utf-8")
+    assert ATTRIBUTION in source, f"the dashboard no longer says {ATTRIBUTION!r}"
+    assert YAHOO_URL in source, "the attribution is not hyperlinked to Yahoo"
+
+
+# --- obligation 2: read-only -------------------------------------------------
+
+def test_the_client_makes_no_write_requests():
+    """The grant is read-only, so no non-GET verb may appear in the client.
+
+    The existing guard checks METHOD NAMES, which catches `add_player` and
+    misses `execute("POST", ...)`. Both matter: a write added through a
+    generically-named helper would pass the name check.
+    """
+    import inspect
+
+    from src import yahoo_client
+
+    source = inspect.getsource(yahoo_client).lower()
+    for verb in ('"post"', "'post'", '"put"', "'put'", '"delete"', "'delete'",
+                 '"patch"', "'patch'"):
+        assert verb not in source, f"the client references the {verb} verb"
+
+
+def test_no_module_calls_a_yfpy_write_helper():
+    """yfpy exposes no write methods today, so none may be referenced.
+
+    Named explicitly rather than inferred, so that if yfpy ever grows them this
+    fails on the day somebody reaches for one.
+    """
+    forbidden = ("add_player", "drop_player", "edit_roster", "set_lineup",
+                 "post_transaction", "put_roster", "submit_waiver")
+    offenders = []
+    for path in pathlib.Path("src").rglob("*.py"):
+        body = path.read_text(encoding="utf-8")
+        offenders += [f"{path}:{f}" for f in forbidden if f in body]
+    assert not offenders, f"write calls found: {offenders}"
+
+
+# --- obligation 1: the sync builds a snapshot, it does not fill tables -------
+
+class _LeagueQuery(_FakeQuery):
+    """A whole small league, shaped the way yfpy serialises it."""
+
+    def get_league_teams(self):
+        return [
+            {"team_id": "4", "name": b"Butt Fumblers", "faab_balance": 50,
+             "waiver_priority": 3},
+            {"team_id": "7", "name": b"NUB", "faab_balance": 100,
+             "waiver_priority": 1},
+        ]
+
+    def get_league_transactions(self):
+        return [{"transaction_id": 1, "type": "add/drop", "status": "successful",
+                 "faab_bid": 12, "players": []}]
+
+
+def test_the_yahoo_sync_writes_no_rows(tmp_path):
+    """The obligation, checked against the real sync path.
+
+    Every one of these tables used to be filled on every sync. If any of them
+    gains a row again, this fails - which is the point, because the failure
+    mode is silent by nature: nothing breaks when Yahoo data is written, it is
+    simply a breach nobody notices.
+    """
+
+    query = _LeagueQuery()
+    client, conn = _client(tmp_path, query)
+    try:
+        _players(conn)
+        snap = client.collect_snapshot(season=2026, week=2, teams=query.get_league_teams())
+
+        assert snap.budgets["4"].faab_balance == 50
+        assert snap.budgets["4"].team_name == "Butt Fumblers"   # decoded, not b'...'
+        assert snap.budgets["7"].faab_balance == 100
+
+        for table in ("rosters", "free_agents", "team_budgets", "transactions"):
+            count = conn.scalar(f"SELECT COUNT(*) FROM {table}") or 0
+            assert count == 0, f"the sync wrote {count} row(s) to {table}"
+        assert conn.scalar("SELECT COUNT(*) FROM source_cache") == 0
+    finally:
+        conn.close()
+
+
+def test_a_roster_becomes_player_keys_not_rows(tmp_path):
+    """The inverted join: Yahoo's side is keys in memory, ours stays in SQL."""
+
+    client, conn = _client(tmp_path, _LeagueQuery())
+    try:
+        ours = _players(conn)
+        snap = client.collect_roster(
+            snapshot=client.new_snapshot(2026, 2),
+            team_id="4",
+            team_name="Butt Fumblers",
+            players=[
+                {"full_name": "Jahmyr Gibbs", "primary_position": "RB",
+                 "selected_position_value": "RB"},
+                {"full_name": "Puka Nacua", "primary_position": "WR",
+                 "selected_position_value": "WR"},
+            ],
+        )
+        assert snap.roster_keys("4") == [ours["Jahmyr Gibbs"], ours["Puka Nacua"]]
+        assert conn.scalar("SELECT COUNT(*) FROM rosters") == 0
     finally:
         conn.close()
