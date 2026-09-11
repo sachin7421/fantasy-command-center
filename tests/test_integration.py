@@ -11,13 +11,13 @@ So these tests deliberately go in through the front door - `cli.main(argv)` and
 from __future__ import annotations
 
 import importlib
-import json
 import pkgutil
 from pathlib import Path
 
 import pytest
 
 from src import cli, db
+from tests.conftest import LeagueBuilder
 
 LEAGUE = "nfl.l.796511"
 SEASON = 2026
@@ -82,46 +82,18 @@ def _bid(conn, txn_id, team_id, yahoo_id, name, amount, week):
             }
         },
     }
-    conn.execute(
-        "INSERT INTO transactions(league_key, txn_id, type, timestamp, payload_json) "
-        "VALUES (?,?,?,?,?)",
-        (LEAGUE, txn_id, "add", "1700000000", json.dumps(payload)),
-    )
+    return payload
 
 
 
-def _snapshot_from_tables(conn, team_key=None, week=None):
-    """Build a snapshot out of a fixture that still seeds the old tables.
+def _snap(path):
+    """The snapshot a fixture registered for this database.
 
-    Several fixtures predate the API agreement and populate `rosters` and
-    `free_agents` directly. Rather than rewrite each one, this reads them back
-    into the shape the season modules now take - so the fixtures keep saying
-    what they meant, and the code under test sees only a snapshot.
+    The Yahoo tables are gone, so a fixture can no longer be read back into a
+    snapshot - it declares one as it builds. Keyed by database path, so a test
+    that already asks for a fixture does not have to ask for a second one.
     """
-    from src.yahoo_snapshot import LeagueSnapshot, RosterSpot, TeamBudget
-
-    snap = LeagueSnapshot(
-        league_key=LEAGUE, season=SEASON, week=WEEK if week is None else week,
-    )
-    for r in conn.fetchall(
-        "SELECT team_key, team_name, player_key, selected_pos FROM rosters"
-    ):
-        snap.rosters.append(RosterSpot(
-            str(r["team_key"]), r["team_name"], r["player_key"], r["selected_pos"],
-        ))
-    for r in conn.fetchall("SELECT player_key FROM free_agents"):
-        snap.free_agents.append(r["player_key"])
-    for r in conn.fetchall(
-        "SELECT team_key, team_name, faab_balance FROM team_budgets"
-    ):
-        snap.budgets[str(r["team_key"])] = TeamBudget(
-            str(r["team_key"]), r["team_name"], r["faab_balance"],
-        )
-    snap.transactions = [
-        json.loads(r["payload_json"] or "{}")
-        for r in conn.fetchall("SELECT payload_json FROM transactions")
-    ]
-    return snap
+    return _SNAPSHOTS[str(path)]
 
 
 @pytest.fixture
@@ -150,13 +122,10 @@ def league_db(tmp_path):
         ("jets wr|WR", "Garrett Wilson", "WR", 195.0),
         ("bench guy|RB", "Israel Abanikanda", "RB", 60.0),
     ]
+    build = LeagueBuilder(LEAGUE, SEASON, WEEK)
     for key, name, pos, pts in roster:
         _player(conn, key, name, pos, pts)
-        conn.execute(
-            "INSERT INTO rosters(league_key, team_key, team_name, player_key, "
-            "selected_pos, week, fetched_at) VALUES (?,?,?,?,?,?,?)",
-            (LEAGUE, MY_TEAM, "Butt Fumblers", key, pos, WEEK, db.utcnow()),
-        )
+        build.roster(MY_TEAM, key, pos, "Butt Fumblers")
 
     # Rivals, so the model has more than one manager to reason about.
     for team_id, team_name, key, name, pos, pts in [
@@ -164,53 +133,24 @@ def league_db(tmp_path):
         ("2", "Team Two", "rival b|RB", "Rival B", "RB", 140.0),
     ]:
         _player(conn, key, name, pos, pts)
-        conn.execute(
-            "INSERT INTO rosters(league_key, team_key, team_name, player_key, "
-            "selected_pos, week, fetched_at) VALUES (?,?,?,?,?,?,?)",
-            (LEAGUE, team_id, team_name, key, pos, WEEK, db.utcnow()),
-        )
+        build.roster(team_id, key, pos, team_name)
 
     # The target: a free agent worth clearly more than the worst roster spot.
     _player(conn, "waiver add|RB", "Waiver Add", "RB", 150.0, yahoo_id="31896")
-    conn.execute(
-        "INSERT INTO free_agents(league_key, player_key, pct_owned, week, fetched_at) "
-        "VALUES (?,?,?,?,?)",
-        (LEAGUE, "waiver add|RB", 22.0, WEEK, db.utcnow()),
-    )
+    build.free_agent("waiver add|RB")
 
     # Bid history, so profiles are learned rather than defaulted.
-    _bid(conn, "t1", "1", "31896", "Someone", 34, 2)
-    _bid(conn, "t2", "1", "31896", "Someone", 41, 3)
-    _bid(conn, "t3", "2", "31896", "Someone", 6, 2)
-    _bid(conn, "t4", "2", "31896", "Someone", 9, 4)
+    for txn_id, team, amount, wk in (
+        ("t1", "1", 34, 2), ("t2", "1", 41, 3),
+        ("t3", "2", 6, 2), ("t4", "2", 9, 4),
+    ):
+        build.transaction(_bid(conn, txn_id, team, "31896", "Someone", amount, wk))
 
     for team_id, balance in (("1", 62), ("2", 11), (MY_TEAM, 73)):
-        conn.execute(
-            "INSERT INTO team_budgets(league_key, season, team_key, team_name, "
-            "faab_balance, waiver_priority, fetched_at) VALUES (?,?,?,?,?,?,?)",
-            (LEAGUE, SEASON, team_id, f"Team {team_id}", balance, None, db.utcnow()),
-        )
+        build.budget(team_id, balance, f"Team {team_id}")
     conn.commit()
 
-    # The same league as a snapshot. Yahoo state is fetched per run now rather
-    # than stored, so the tables above are the OLD shape and only some tests
-    # still need them; this is what the season modules actually consume.
-    from src.yahoo_snapshot import LeagueSnapshot, RosterSpot, TeamBudget
-
-    snap = LeagueSnapshot(league_key=LEAGUE, season=SEASON, week=WEEK)
-    for key, _name, pos, _pts in roster:
-        snap.rosters.append(RosterSpot(str(MY_TEAM), "Butt Fumblers", key, pos))
-    snap.rosters.append(RosterSpot("1", "Team One", "rival a|WR", "WR"))
-    snap.rosters.append(RosterSpot("2", "Team Two", "rival b|RB", "RB"))
-    snap.free_agents.append("waiver add|RB")
-    for team_id, balance in (("1", 62), ("2", 11), (MY_TEAM, 73)):
-        snap.budgets[str(team_id)] = TeamBudget(
-            str(team_id), f"Team {team_id}", balance,
-        )
-    snap.transactions = [
-        json.loads(r["payload_json"])
-        for r in conn.fetchall("SELECT payload_json FROM transactions")
-    ]
+    snap = build.build()
     conn.close()
     _SNAPSHOTS[str(path)] = snap
     return path
@@ -466,13 +406,10 @@ def lineup_league(tmp_path):
         ("def1|DEF", "The Only Defence", "DEF", 130.0),
         ("te2|TE", "Spare TE", "TE", 120.0),
     ]
+    build = LeagueBuilder(LEAGUE, SEASON, WEEK)
     for key, name, pos, pts in roster:
         _player(conn, key, name, pos, pts)
-        conn.execute(
-            "INSERT INTO rosters(league_key, team_key, team_name, player_key, "
-            "selected_pos, week, fetched_at) VALUES (?,?,?,?,?,?,?)",
-            (LEAGUE, MY_TEAM, "Butt Fumblers", key, pos, WEEK, db.utcnow()),
-        )
+        build.roster(MY_TEAM, key, pos, "Butt Fumblers")
 
     free_agents = [
         ("faqb|QB", "Excellent Backup QB", "QB", 310.0),   # never starts: 1 QB slot
@@ -481,12 +418,10 @@ def lineup_league(tmp_path):
     ]
     for key, name, pos, pts in free_agents:
         _player(conn, key, name, pos, pts)
-        conn.execute(
-            "INSERT INTO free_agents(league_key, player_key, pct_owned, week, fetched_at) "
-            "VALUES (?,?,?,?,?)",
-            (LEAGUE, key, 30.0, WEEK, db.utcnow()),
-        )
+        build.free_agent(key)
     conn.commit()
+    conn.close()
+    _SNAPSHOTS[str(path)] = build.build()
     return path
 
 
@@ -503,7 +438,7 @@ def test_a_backup_at_a_single_slot_position_is_worth_nothing(lineup_league):
     report = waivers.run(
         conn, LEAGUE, MY_TEAM, SEASON, WEEK,
         uses_faab=True, budget_left=100, value_margin=1.0, starting_slots=SLOTS,
-        snapshot=_snapshot_from_tables(conn),
+        snapshot=_snap(lineup_league),
     )
     names = [c.add.name for c in report.claims]
     assert "Excellent Backup QB" not in names
@@ -518,7 +453,7 @@ def test_the_only_defence_is_never_a_drop_candidate(lineup_league):
     report = waivers.run(
         conn, LEAGUE, MY_TEAM, SEASON, WEEK,
         uses_faab=True, budget_left=100, value_margin=1.0, starting_slots=SLOTS,
-        snapshot=_snapshot_from_tables(conn),
+        snapshot=_snap(lineup_league),
     )
     dropped = {c.drop.name for c in report.claims if c.drop}
     assert "The Only Defence" not in dropped, dropped
@@ -532,7 +467,7 @@ def test_a_claim_gain_is_the_lineup_improvement(lineup_league):
     report = waivers.run(
         conn, LEAGUE, MY_TEAM, SEASON, WEEK,
         uses_faab=True, budget_left=100, value_margin=1.0, starting_slots=SLOTS,
-        snapshot=_snapshot_from_tables(conn),
+        snapshot=_snap(lineup_league),
     )
     upgrade = next(c for c in report.claims if c.add.name == "Genuine Upgrade WR")
     # 235 in, Flex RB3 (175) out of the lineup; the dropped spare TE never started.
@@ -653,7 +588,10 @@ def test_the_bye_planner_does_not_alarm_about_an_empty_roster(tmp_path):
     from src.season import byes
 
     conn = db.init_db(tmp_path / "nobody.db")
-    report = byes.run(conn, LEAGUE, MY_TEAM, SEASON, 3, SLOTS, snapshot=_snapshot_from_tables(conn))
+    report = byes.run(
+        conn, LEAGUE, MY_TEAM, SEASON, 3, SLOTS,
+        snapshot=LeagueBuilder(LEAGUE, SEASON, 3).build(),
+    )
     assert report.has_data is False
     assert report.roster_size == 0
 
@@ -666,7 +604,10 @@ def test_the_recap_of_an_unplayed_week_is_not_a_zero_point_recap(tmp_path):
     from src.season import recap
 
     conn = db.init_db(tmp_path / "unplayed.db")
-    report = recap.run(conn, LEAGUE, MY_TEAM, SEASON, 3, SLOTS, snapshot=_snapshot_from_tables(conn))
+    report = recap.run(
+        conn, LEAGUE, MY_TEAM, SEASON, 3, SLOTS,
+        snapshot=LeagueBuilder(LEAGUE, SEASON, 3).build(),
+    )
     assert report.has_data is False
     notification = recap.to_notification(report, SEASON)
     assert notification is not None
@@ -733,14 +674,12 @@ def lopsided_league(tmp_path):
     path = tmp_path / "trades.db"
     conn = db.init_db(path)
 
+    build = LeagueBuilder(LEAGUE, SEASON, WEEK)
+
     def add(team, key, name, pos, pts):
         if not conn.fetchone("SELECT 1 FROM players WHERE player_key=?", (key,)):
             _player(conn, key, name, pos, pts)
-        conn.execute(
-            "INSERT INTO rosters(league_key, team_key, team_name, player_key, "
-            "selected_pos, week, fetched_at) VALUES (?,?,?,?,?,?,?)",
-            (LEAGUE, team, f"Team {team}", key, pos, WEEK, db.utcnow()),
-        )
+        build.roster(team, key, pos, f"Team {team}")
 
     for i, pts in enumerate([260, 250, 240, 230, 220]):
         add(MY_TEAM, f"myrb{i}|RB", f"My RB{i}", "RB", pts)
@@ -755,6 +694,8 @@ def lopsided_league(tmp_path):
         add(team, f"te{team}|TE", f"TE {team}", "TE", 150.0)
         add(team, f"def{team}|DEF", f"DEF {team}", "DEF", 110.0)
     conn.commit()
+    conn.close()
+    _SNAPSHOTS[str(path)] = build.build()
     return path
 
 
@@ -762,7 +703,7 @@ def test_the_trade_scout_finds_an_obvious_swap(lopsided_league):
     from src.season import trades
 
     conn = db.init_db(lopsided_league)
-    ideas = trades.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS, snapshot=_snapshot_from_tables(conn))
+    ideas = trades.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS, snapshot=_snap(lopsided_league))
     assert ideas, "an RB-rich team and a WR-rich team should have a trade"
     idea = ideas[0]
     assert idea.i_give[0].position == "RB"
@@ -779,7 +720,7 @@ def test_a_trade_rationale_is_checked_against_the_rosters(lopsided_league):
     from src.season import trades
 
     conn = db.init_db(lopsided_league)
-    idea = trades.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS, snapshot=_snapshot_from_tables(conn))[0]
+    idea = trades.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS, snapshot=_snap(lopsided_league))[0]
     text = " ".join(idea.rationale)
     assert "pts of RB" in text, text
     assert "lineup effect" in text
@@ -790,7 +731,10 @@ def test_a_balanced_league_yields_no_trades(lineup_league):
     from src.season import trades
 
     conn = db.init_db(lineup_league)
-    assert trades.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS, snapshot=_snapshot_from_tables(conn)) == []
+    assert trades.run(
+        conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS,
+        snapshot=_snap(lineup_league),
+    ) == []
 
 
 # --- the draft has to know whose pick each one was --------------------------
@@ -860,10 +804,10 @@ def test_an_injury_report_survives_a_failed_delivery(tmp_path):
 
     conn = db.init_db(tmp_path / "injuries.db")
     _player(conn, "hurt|RB", "Hurt Player", "RB", 200.0)
-    conn.execute(
-        "INSERT INTO rosters(league_key, team_key, team_name, player_key, "
-        "selected_pos, week, fetched_at) VALUES (?,?,?,?,?,?,?)",
-        (LEAGUE, MY_TEAM, "Butt Fumblers", "hurt|RB", "RB", WEEK, db.utcnow()),
+    hurt_snap = (
+        LeagueBuilder(LEAGUE, SEASON, WEEK)
+        .roster(MY_TEAM, "hurt|RB", "RB", "Butt Fumblers")
+        .build()
     )
 
     def record(status, when):
@@ -875,24 +819,24 @@ def test_an_injury_report_survives_a_failed_delivery(tmp_path):
         conn.commit()
 
     record("Questionable", "2026-10-01T12:00:00+00:00")
-    baseline = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, snapshot=_snapshot_from_tables(conn))
+    baseline = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, snapshot=hurt_snap)
     assert baseline.first_run is True
     injuries.commit(conn, baseline)
 
     record("Out", "2026-10-02T12:00:00+00:00")
 
     # Read it twice without committing: the delta must still be there.
-    first = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, snapshot=_snapshot_from_tables(conn))
+    first = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, snapshot=hurt_snap)
     assert [c.player_key for c in first.actionable] == ["hurt|RB"]
 
-    second = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, snapshot=_snapshot_from_tables(conn))
+    second = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, snapshot=hurt_snap)
     assert [c.player_key for c in second.actionable] == ["hurt|RB"], (
         "reading the report must not consume it"
     )
 
     # Only after an explicit commit does it stop being news.
     injuries.commit(conn, second)
-    third = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, snapshot=_snapshot_from_tables(conn))
+    third = injuries.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, snapshot=hurt_snap)
     assert third.actionable == []
 
 

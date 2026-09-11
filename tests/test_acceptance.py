@@ -21,6 +21,7 @@ import json
 import pytest
 
 from src import db, scoring, vorp
+from tests.conftest import LeagueBuilder
 from src.idmap import IdMapper
 
 
@@ -169,14 +170,16 @@ def injury_league(tmp_path):
     idmap = IdMapper(conn)
     key = idmap.upsert_player(full_name="Star Player", position="RB", team="NYJ")
     bench = idmap.upsert_player(full_name="Bench Guy", position="RB", team="NYJ")
+    build = LeagueBuilder("nfl.l.1", 2026, 5)
     for player_key in (key, bench):
-        conn.execute(
-            "INSERT INTO rosters(league_key, team_key, team_name, player_key, "
-            "selected_pos, week, fetched_at) VALUES (?,?,?,?,?,?,?)",
-            ("nfl.l.1", "1", "Mine", player_key, "RB", 5, db.utcnow()),
-        )
+        build.roster("1", player_key, "RB", "Mine")
+    _SNAP["league"] = build.build()
     conn.commit()
-    return conn, key
+    yield conn, key
+    conn.close()
+
+
+_SNAP: dict = {}
 
 
 def _roster_snapshot(conn, league_key="nfl.l.1", team_key="1", week=5):
@@ -186,16 +189,7 @@ def _roster_snapshot(conn, league_key="nfl.l.1", team_key="1", week=5):
     is fetched per run rather than stored - so the fixture's rows are read back
     into that shape.
     """
-    from src.yahoo_snapshot import LeagueSnapshot, RosterSpot
-
-    snap = LeagueSnapshot(league_key=league_key, season=2026, week=week)
-    for r in conn.fetchall(
-        "SELECT team_key, team_name, player_key, selected_pos FROM rosters"
-    ):
-        snap.rosters.append(RosterSpot(
-            str(r["team_key"]), r["team_name"], r["player_key"], r["selected_pos"],
-        ))
-    return snap
+    return _SNAP["league"]
 
 
 def _record_injury(conn, player_key, status, stamp):

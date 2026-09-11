@@ -408,9 +408,14 @@ def test_the_yahoo_sync_writes_no_rows(tmp_path):
         assert snap.budgets["4"].team_name == "Butt Fumblers"   # decoded, not b'...'
         assert snap.budgets["7"].faab_balance == 100
 
+        # The tables are absent, not merely empty. An empty table is an
+        # invitation - the next person who needs a roster finds `rosters`
+        # sitting there and fills it - and nothing about an empty one says why
+        # it should stay that way.
         for table in ("rosters", "free_agents", "team_budgets", "transactions"):
-            count = conn.scalar(f"SELECT COUNT(*) FROM {table}") or 0
-            assert count == 0, f"the sync wrote {count} row(s) to {table}"
+            assert not conn.table_exists(table), (
+                f"{table} still exists; Yahoo league state has somewhere to live"
+            )
         assert conn.scalar("SELECT COUNT(*) FROM source_cache") == 0
     finally:
         conn.close()
@@ -434,7 +439,7 @@ def test_a_roster_becomes_player_keys_not_rows(tmp_path):
             ],
         )
         assert snap.roster_keys("4") == [ours["Jahmyr Gibbs"], ours["Puka Nacua"]]
-        assert conn.scalar("SELECT COUNT(*) FROM rosters") == 0
+        assert not conn.table_exists("rosters")
     finally:
         conn.close()
 
@@ -456,6 +461,21 @@ def test_purge_removes_every_yahoo_row_and_keeps_ours(tmp_path):
 
     conn = db.init_db(tmp_path / "p.db", force_sqlite=True)
     try:
+        # A database from BEFORE the agreement, which is the only kind that has
+        # anything to purge. Current schemas do not create these tables at all.
+        conn.executescript("""
+            CREATE TABLE rosters (league_key TEXT, team_key TEXT, team_name TEXT,
+                                  player_key TEXT, selected_pos TEXT, week INTEGER,
+                                  fetched_at TEXT);
+            CREATE TABLE team_budgets (league_key TEXT, season INTEGER,
+                                       team_key TEXT, team_name TEXT,
+                                       faab_balance INTEGER, waiver_priority INTEGER,
+                                       fetched_at TEXT);
+            CREATE TABLE free_agents (league_key TEXT, player_key TEXT,
+                                      pct_owned REAL, week INTEGER, fetched_at TEXT);
+            CREATE TABLE transactions (league_key TEXT, txn_id TEXT, type TEXT,
+                                       timestamp TEXT, payload_json TEXT);
+        """)
         ours = _players(conn)
         now = db.utcnow()
         conn.execute(

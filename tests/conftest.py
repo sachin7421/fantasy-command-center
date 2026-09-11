@@ -190,3 +190,45 @@ def ppr_settings(yahoo_settings) -> dict:
         if entry["stat"]["stat_id"] == 11:
             entry["stat"]["value"] = 1.0
     return settings
+
+
+class LeagueBuilder:
+    """Assemble the Yahoo half of a fixture, in memory.
+
+    The tables that used to hold this - rosters, free_agents, team_budgets,
+    transactions - are gone, because the API agreement forbids persisting Yahoo
+    league state. Fixtures said what they meant by INSERTing rows; they say the
+    same thing here, and what comes out is what the season modules now take.
+    """
+
+    def __init__(self, league_key: str, season: int, week: int):
+        from src.yahoo_snapshot import LeagueSnapshot
+
+        self.snap = LeagueSnapshot(league_key=league_key, season=season, week=week)
+
+    def roster(self, team_key, player_key, selected_pos=None, team_name=None):
+        from src.yahoo_snapshot import RosterSpot
+
+        self.snap.rosters.append(
+            RosterSpot(str(team_key), team_name, player_key, selected_pos)
+        )
+        return self
+
+    def free_agent(self, player_key):
+        self.snap.free_agents.append(player_key)
+        return self
+
+    def budget(self, team_key, balance, team_name=None, priority=None):
+        from src.yahoo_snapshot import TeamBudget
+
+        self.snap.budgets[str(team_key)] = TeamBudget(
+            str(team_key), team_name, balance, priority
+        )
+        return self
+
+    def transaction(self, payload):
+        self.snap.transactions.append(payload)
+        return self
+
+    def build(self):
+        return self.snap

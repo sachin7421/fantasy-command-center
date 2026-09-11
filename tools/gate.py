@@ -45,6 +45,11 @@ CHECKS: list[tuple[str, list[str], str]] = [
         "a failure is being swallowed without a word to anyone",
     ),
     (
+        "yahoo",
+        PY + ["tools/check_yahoo_persistence.py"],
+        "Yahoo league state is being written to disk",
+    ),
+    (
         "dead code",
         PY + ["-m", "vulture", "src", "dashboard.py", "fcc.py", "--min-confidence", "80"],
         "code written and never connected to anything",

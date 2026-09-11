@@ -65,6 +65,9 @@ jobs:
       - name: Silent degradation
         run: python tools/check_degradation.py
 
+      - name: Yahoo persistence
+        run: python tools/check_yahoo_persistence.py
+
       - name: Dead code
         run: python -m vulture src dashboard.py fcc.py --min-confidence 80
 

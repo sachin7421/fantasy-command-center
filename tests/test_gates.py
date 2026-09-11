@@ -112,3 +112,68 @@ def test_the_real_source_tree_is_clean():
         problems.extend(check_file(path))
     problems.extend(check_file(Path("dashboard.py")))
     assert problems == [], "\n".join(problems)
+
+
+# --- the Yahoo persistence gate ----------------------------------------------
+
+def _write(tmp_path, body: str, name="sample.py"):
+    path = tmp_path / name
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_it_catches_an_insert_into_a_yahoo_table(tmp_path):
+    """The breach this exists for is silent: nothing BREAKS when Yahoo data is
+    written, so only a checker notices."""
+    from tools.check_yahoo_persistence import check_file
+
+    path = _write(tmp_path, (
+        'def sync(conn):\n'
+        '    conn.execute("INSERT INTO rosters(league_key) VALUES (?)", (1,))\n'
+    ))
+    problems = check_file(path)
+    assert len(problems) == 1
+    assert "rosters" in problems[0]
+
+
+def test_it_catches_every_yahoo_table(tmp_path):
+    from tools.check_yahoo_persistence import check_file
+
+    for table in ("rosters", "free_agents", "team_budgets", "transactions"):
+        path = _write(tmp_path, f'x = "INSERT INTO {table} VALUES (1)"\n')
+        assert check_file(path), f"{table} not guarded"
+
+
+def test_it_catches_caching_a_yahoo_payload(tmp_path):
+    from tools.check_yahoo_persistence import check_file
+
+    path = _write(tmp_path, 'db.cache_put(conn, key, "yahoo", payload)\n')
+    assert check_file(path)
+
+
+def test_reading_a_yahoo_table_is_not_a_write(tmp_path):
+    """The ban is on persisting, not on a migration that drops the tables."""
+    from tools.check_yahoo_persistence import check_file
+
+    path = _write(tmp_path, 'x = "SELECT * FROM rosters"\ny = "DROP TABLE rosters"\n')
+    assert check_file(path) == []
+
+
+def test_our_own_tables_are_untouched(tmp_path):
+    from tools.check_yahoo_persistence import check_file
+
+    path = _write(tmp_path, 'x = "INSERT INTO projections(player_key) VALUES (1)"\n')
+    assert check_file(path) == []
+
+
+def test_the_real_source_tree_persists_no_yahoo_data():
+    """The current verdict, pinned, so the repository cannot drift back."""
+    from pathlib import Path
+
+    from tools.check_yahoo_persistence import check_file
+
+    problems = []
+    for path in sorted(Path("src").rglob("*.py")):
+        problems.extend(check_file(path))
+    problems.extend(check_file(Path("dashboard.py")))
+    assert problems == [], "\n".join(problems)

@@ -303,11 +303,13 @@ def cmd_doctor(ctx: Context, args) -> int:
             print(f"    {entry['job']:<16} {entry['runs']:>3} run(s), "
                   f"last {entry['last_run'][:16]}{failed}")
 
+    # Yahoo league state - rosters, free agents, budgets, transactions - is no
+    # longer counted here because it is no longer stored. It lives on a
+    # LeagueSnapshot for the duration of a run; see src/yahoo_snapshot.py.
     counts = {
         table: ctx.conn.execute(f"SELECT COUNT(*) c FROM {table}").fetchone()["c"]
         for table in ("players", "projections", "projections_blended", "adp",
-                      "injuries", "trending", "rosters", "free_agents", "draft_picks",
-                      "transactions", "team_budgets")
+                      "injuries", "trending", "draft_picks")
     }
     print("\n  stored rows :")
     for table, count in counts.items():

@@ -118,45 +118,12 @@ CREATE TABLE IF NOT EXISTS league_settings (
     fetched_at    TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS rosters (
-    league_key   TEXT NOT NULL,
-    team_key     TEXT NOT NULL,
-    team_name    TEXT,
-    player_key   TEXT NOT NULL,
-    selected_pos TEXT,
-    week         INTEGER NOT NULL,
-    fetched_at   TEXT NOT NULL,
-    PRIMARY KEY (league_key, team_key, player_key, week)
-);
-
-CREATE TABLE IF NOT EXISTS team_budgets (
-    league_key      TEXT NOT NULL,
-    season          INTEGER NOT NULL,
-    team_key        TEXT NOT NULL,
-    team_name       TEXT,
-    faab_balance    INTEGER,
-    waiver_priority INTEGER,
-    fetched_at      TEXT NOT NULL,
-    PRIMARY KEY (league_key, season, team_key)
-);
-
-CREATE TABLE IF NOT EXISTS transactions (
-    league_key   TEXT NOT NULL,
-    txn_id       TEXT NOT NULL,
-    type         TEXT,
-    timestamp    TEXT,
-    payload_json TEXT,
-    PRIMARY KEY (league_key, txn_id)
-);
-
-CREATE TABLE IF NOT EXISTS free_agents (
-    league_key   TEXT NOT NULL,
-    player_key   TEXT NOT NULL,
-    pct_owned    {REAL},
-    week         INTEGER NOT NULL,
-    fetched_at   TEXT NOT NULL,
-    PRIMARY KEY (league_key, player_key, week)
-);
+-- Yahoo league state - rosters, team_budgets, transactions, free_agents - used
+-- to be defined here. The API agreement signed 2026-09-10 forbids persisting
+-- it, so those tables are gone and the data lives on a LeagueSnapshot for the
+-- duration of a run. See src/yahoo_snapshot.py.
+--
+-- Migration 0002 drops them from databases that predate the agreement.
 
 CREATE TABLE IF NOT EXISTS draft_picks (
     league_key   TEXT NOT NULL,
