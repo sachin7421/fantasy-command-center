@@ -10,6 +10,8 @@ degraded into dead. This is the missing half.
 """
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from src import db
@@ -221,3 +223,96 @@ def test_a_prefix_match_never_beats_an_exact_one(conn):
                                   season=2026, week=2, team_key="4")
     assert unmatched == []
     assert snap.roster_keys("4") == ["josh allen|QB"]
+
+
+# --- the real thing ----------------------------------------------------------
+
+REAL_PASTE = (
+    pathlib.Path(__file__).parent / "fixtures" / "yahoo_roster_paste.txt"
+).read_text(encoding="utf-8")
+
+#: What a person reading that page would write down. The fixture is a verbatim
+#: copy of the Butt Fumblers roster page, week 1 2026, pasted by the manager.
+EXPECTED = [
+    ("QB", "Dak Prescott"),
+    ("RB", "Kyren Williams"),
+    ("RB", "Travis Etienne Jr."),
+    ("WR", "Puka Nacua"),
+    ("WR", "Tee Higgins"),
+    ("TE", "Tyler Warren"),
+    ("W/R/T", "Rome Odunze"),
+    ("W/R/T", "Jalen Coker"),
+    ("BN", "TreVeyon Henderson"),
+    ("BN", "Jacory Croskey-Merritt"),
+    ("BN", "Matthew Stafford"),
+    ("BN", "Mike Washington Jr."),
+    ("BN", "Jake Ferguson"),
+    ("BN", "Jordan Love"),
+    ("DEF", "Jaguars"),
+]
+
+
+def test_the_real_yahoo_paste_parses():
+    """The format my invented fixture got wrong, in every particular.
+
+    A real row is not one line. It is the slot, then the name, then the name
+    again concatenated with "Video Forecast" / "Player Note" / an injury
+    letter, then "TEAM - POS", then the matchup and a column of numbers. The
+    made-up single-line fixture I wrote first shares none of that structure,
+    which is what standard 7 means by "mocks lie".
+    """
+    from src.manual_roster import parse_lines
+
+    parsed = parse_lines(REAL_PASTE)
+    assert parsed == EXPECTED, f"got {len(parsed)} entries:\n{parsed}"
+
+
+def test_every_player_on_the_real_roster_resolves(conn):
+    """Fifteen names, and a miss costs a starter.
+
+    `Jaguars` has to find `Jacksonville Jaguars`, `Travis Etienne Jr.` has to
+    survive its suffix, and `TreVeyon HendersonO` has to shed the injury flag
+    glued to the surname.
+    """
+    from src.idmap import IdMapper
+    from src.manual_roster import load_roster
+
+    idmap = IdMapper(conn)
+    for name, pos, team in [
+        ("Dak Prescott", "QB", "DAL"), ("Kyren Williams", "RB", "LAR"),
+        ("Travis Etienne Jr.", "RB", "NO"), ("Puka Nacua", "WR", "LAR"),
+        ("Tee Higgins", "WR", "CIN"), ("Tyler Warren", "TE", "IND"),
+        ("Rome Odunze", "WR", "CHI"), ("Jalen Coker", "WR", "CAR"),
+        ("TreVeyon Henderson", "RB", "NE"),
+        ("Jacory Croskey-Merritt", "RB", "WAS"),
+        ("Matthew Stafford", "QB", "LAR"), ("Mike Washington Jr.", "RB", "LV"),
+        ("Jake Ferguson", "TE", "DAL"), ("Jordan Love", "QB", "GB"),
+        ("Jacksonville Jaguars", "DEF", "JAX"),
+    ]:
+        idmap.upsert_player(full_name=name, position=pos, team=team)
+    conn.commit()
+
+    snap, unmatched = load_roster(conn, REAL_PASTE, league_key="nfl.l.796511",
+                                  season=2026, week=1, team_key="4")
+    assert unmatched == [], f"could not place: {unmatched}"
+    assert len(snap.roster_keys("4")) == 15
+
+    slots = {s.player_key: s.selected_pos for s in snap.roster_spots_for("4")}
+    assert slots["dak prescott|QB"] == "QB"
+    assert slots["jordan love|QB"] == "BN"
+    assert slots["DEF|JAX"] == "DEF"
+
+
+def test_the_trailing_column_headers_are_not_players():
+    """The paste ends with a block of table headers - Sack, Safe, Int, TD.
+
+    "Defense/Special Teams", "Fan Pts" and "Blk Kick" are not people, and a
+    parser that turned them into roster entries would report a 20-man team and
+    five names it could not match.
+    """
+    from src.manual_roster import parse_lines
+
+    names = [name for _, name in parse_lines(REAL_PASTE)]
+    for header in ("Fan Pts", "Proj Pts", "Blk Kick", "Fum Rec",
+                   "Defense/Special Teams", "Details"):
+        assert header not in names

@@ -24,6 +24,7 @@ quiet week is the exact failure this whole feature exists to end.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from src.storage import Database
@@ -82,13 +83,55 @@ def _norm(name: str) -> str:
     return " ".join(parts)
 
 
+#: "LAR - RB", "Dal - QB", "Jax - DEF". The one reliable landmark in a pasted
+#: roster: every player has exactly one, and nothing else looks like it.
+_TEAM_POS = re.compile(
+    r"^([A-Za-z]{2,3})\s*-\s*(QB|RB|WR|TE|K|DEF|DST)$", re.IGNORECASE
+)
+
+#: Glued onto the end of the repeated name line: "Kyren WilliamsVideo
+#: ForecastNew Player Note", "Rome OdunzeQNew Player Note". The trailing Q/O/D
+#: is an injury flag with no separator, which is why the clean name two lines
+#: up is preferred over stripping these.
+_NAME_NOISE = re.compile(
+    r"(Video Forecast|New Player Note|No new player Notes?|Player Note)+$"
+)
+
+
 def parse_lines(text: str) -> list[tuple[str | None, str]]:
-    """(slot, name) for each roster line. Blank lines and comments dropped."""
+    """(slot, name) for each player in a pasted Yahoo roster.
+
+    A row is not one line. The real structure, verbatim:
+
+        RB                                        <- the slot
+        Kyren Williams                            <- the name, clean
+        Kyren WilliamsVideo ForecastNew Player Note
+        LAR - RB                                  <- team and position
+        Final L 7-27 vs SF                        <- the matchup
+        11 / 14.00 / 12.90 / 96% / 100% / ...     <- a column of numbers
+
+    So the parse anchors on "TEAM - POS", which every player has exactly one of
+    and which nothing else in the page resembles. The name is the line two
+    above it when that line is a clean prefix of the one between - which is
+    what the repetition gives us - and otherwise the line immediately above
+    with the noise stripped. The slot is the most recent slot token seen.
+
+    Anchoring on the numbers or the header text would mean tracking a layout
+    Yahoo controls. This tracks one pattern that has to exist for the page to
+    make sense.
+
+    A hand-typed list still works: a line that is just "QB Josh Allen", or just
+    "Josh Allen", is taken as written.
+    """
+    lines = [raw.replace("\t", " ").split("#", 1)[0].strip()
+             for raw in text.splitlines()]
+
+    anchors = [i for i, line in enumerate(lines) if _TEAM_POS.match(line)]
+    if anchors:
+        return _parse_table(lines, anchors)
+
     out: list[tuple[str | None, str]] = []
-    for raw in text.splitlines():
-        # A paste from the roster table is tab-separated. Treat tabs as spaces
-        # so the slot and the name split the same way either side.
-        line = raw.replace("\t", " ").split("#", 1)[0].strip()
+    for line in lines:
         if not line:
             continue
         head, _, rest = line.partition(" ")
@@ -98,6 +141,57 @@ def parse_lines(text: str) -> list[tuple[str | None, str]]:
             continue          # a slot with no name yet - an unfilled template row
         else:
             out.append((None, line))
+    return out
+
+
+def _clean_name(lines: list[str], anchor: int) -> str | None:
+    """The player's name, from the two lines above a "TEAM - POS" line."""
+    above = lines[anchor - 1] if anchor >= 1 else ""
+    two_above = lines[anchor - 2] if anchor >= 2 else ""
+
+    # The clean name is repeated with junk appended, so it is a prefix of the
+    # line below it. That is the reliable signal; stripping is the fallback.
+    if two_above and above.startswith(two_above):
+        return two_above
+
+    stripped = _NAME_NOISE.sub("", above).strip()
+    # A lone injury letter is left glued to the surname once the notes are off
+    # ("TreVeyon HendersonO"), and only there - never inside a real name.
+    flagged = (
+        stripped
+        and len(stripped) > 2
+        and stripped[-1] in ("Q", "O", "D", "P")
+        and stripped[-2].islower()
+    )
+    if flagged:
+        stripped = stripped[:-1]
+    return stripped or None
+
+
+def _parse_table(lines: list[str], anchors: list[int]) -> list[tuple[str | None, str]]:
+    out: list[tuple[str | None, str]] = []
+    for anchor in anchors:
+        name = _clean_name(lines, anchor)
+        if not name:
+            continue
+
+        # The most recent slot token above this player, not counting the
+        # position half of a "TEAM - POS" line. The first player's slot is
+        # often missing because the paste starts mid-row, so it falls back to
+        # the position Yahoo lists him at.
+        slot = None
+        for i in range(anchor - 1, -1, -1):
+            candidate = lines[i].strip().upper()
+            if _TEAM_POS.match(lines[i]):
+                break                      # reached the previous player
+            if candidate in SLOT_TOKENS:
+                slot = candidate
+                break
+        if slot is None:
+            match = _TEAM_POS.match(lines[anchor])
+            slot = match.group(2).upper() if match else None
+
+        out.append((slot, name))
     return out
 
 
