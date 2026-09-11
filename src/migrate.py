@@ -23,7 +23,6 @@ log = logging.getLogger(__name__)
 TABLES: list[tuple[str, tuple[str, ...]]] = [
     ("players", ("player_key",)),
     ("player_id_map", ("source", "source_id")),
-    ("league_settings", ("league_key",)),
     ("projections", ("player_key", "source", "season", "week")),
     ("projections_blended", ("player_key", "season", "week")),
     ("projection_history", ("player_key", "source", "season", "week", "observed_at")),

@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import argparse
-import json
 import logging
 import os
 import sys
@@ -82,14 +81,22 @@ class Context:
         return self._yahoo
 
     def settings(self) -> dict[str, Any]:
-        """League settings from the DB, bootstrapping if the API is not wired."""
+        """This league's scoring rules and roster slots.
+
+        They live in `src/league_bootstrap.py`, transcribed by hand from the
+        league settings page - the user's own configuration of his own league,
+        never fetched from the API. That distinction is why they may be kept at
+        all: everything Yahoo TELLS us is snapshot-only, and this is the one
+        thing we were told by a person reading a screen.
+
+        They used to be written into a `league_settings` table, which
+        `sync-settings` then overwrote from the API - and that second step is
+        what the agreement forbids, because the overwritten row IS Yahoo data.
+        The table is gone. `fcc verify-settings` still diffs these against a
+        live fetch, and reports the difference rather than storing it.
+        """
         if self._settings is None:
-            league_bootstrap.install(self.conn, self.league_key)
-            row = self.conn.execute(
-                "SELECT settings_json FROM league_settings WHERE league_key=?",
-                (self.league_key,),
-            ).fetchone()
-            self._settings = json.loads(row["settings_json"]) if row else league_bootstrap.build_settings()
+            self._settings = league_bootstrap.build_settings()
         return self._settings
 
     def scoring(self):

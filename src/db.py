@@ -111,12 +111,9 @@ CREATE TABLE IF NOT EXISTS projections_blended (
     PRIMARY KEY (player_key, season, week)
 );
 
-CREATE TABLE IF NOT EXISTS league_settings (
-    league_key    TEXT PRIMARY KEY,
-    season        INTEGER,
-    settings_json TEXT NOT NULL,
-    fetched_at    TEXT NOT NULL
-);
+-- league_settings used to live here. Scoring rules and roster slots are now
+-- read from src/league_bootstrap.py - the manager's own transcription of his
+-- own league - and a live fetch is diffed against them rather than stored.
 
 -- Yahoo league state - rosters, team_budgets, transactions, free_agents - used
 -- to be defined here. The API agreement signed 2026-09-10 forbids persisting

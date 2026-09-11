@@ -91,7 +91,6 @@ def _build_context():
     # matching schema, so the same code serves local and hosted runs.
     conn = db.init_db(cfg.db_path, same_thread=False)
     league_key = f"nfl.l.{cfg.get('league.league_id', league_bootstrap.LEAGUE_ID)}"
-    league_bootstrap.install(conn, league_key)
     return cfg, conn, league_key
 
 
@@ -155,10 +154,13 @@ def board_for(cfg, conn, season, slots, teams):
 
 
 def settings_of(conn, league_key):
-    row = conn.fetchone(
-        "SELECT settings_json FROM league_settings WHERE league_key=?", (league_key,)
-    )
-    return json.loads(row["settings_json"]) if row else league_bootstrap.build_settings()
+    """This league's scoring rules and roster slots.
+
+    Read from the repository rather than a table. They were transcribed by hand
+    from the league settings page, which makes them the manager's own
+    configuration; what Yahoo's API returns is snapshot-only and never stored.
+    """
+    return league_bootstrap.build_settings()
 
 
 def starting_slots_of(settings) -> dict[str, int]:

@@ -6,16 +6,20 @@ payload `YahooClient.fetch_league_settings()` returns, so the scoring engine,
 VORP board and every job can run today and switch to the live API with no code
 change.
 
-This is a BOOTSTRAP, not a second source of truth: once OAuth is configured,
-`fcc sync-settings` overwrites this row from the API and the league_settings
-table stays authoritative. Use `fcc verify-settings` to diff the two.
+These are the SOURCE OF TRUTH, and deliberately so. They were read off a
+screen by the league's own manager, which makes them his configuration of his
+own league rather than data obtained from Yahoo - the one category the API
+agreement lets us keep.
+
+They used to be copied into a `league_settings` table that `fcc sync-settings`
+then overwrote from the API. That second step is what the agreement forbids:
+the overwritten row is Yahoo's data. The table is gone, and
+`fcc verify-settings` diffs these against a live fetch and REPORTS the
+difference rather than storing it.
 """
 from __future__ import annotations
 
-import json
 
-from src import db
-from src.storage import Database
 
 LEAGUE_ID = "796511"
 LEAGUE_NAME = "Extra Fun League"
@@ -170,26 +174,6 @@ def build_settings() -> dict:
             ]
         },
     }
-
-
-def install(conn: Database, league_key: str | None = None) -> str:
-    """Store the bootstrap settings if nothing is stored yet.
-
-    Never overwrites settings that came from the live API.
-    """
-    key = league_key or f"nfl.l.{LEAGUE_ID}"
-    row = conn.execute(
-        "SELECT settings_json FROM league_settings WHERE league_key=?", (key,)
-    ).fetchone()
-    if row is not None:
-        return key
-    conn.execute(
-        "INSERT INTO league_settings(league_key, season, settings_json, fetched_at) "
-        "VALUES (?,?,?,?)",
-        (key, SEASON, json.dumps(build_settings()), db.utcnow()),
-    )
-    conn.commit()
-    return key
 
 
 def starting_slots() -> dict[str, int]:
