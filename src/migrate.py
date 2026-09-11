@@ -32,8 +32,6 @@ TABLES: list[tuple[str, tuple[str, ...]]] = [
     ("injuries", ("player_key", "source", "observed_at")),
     ("trending", ("player_key", "kind", "fetched_at")),
     ("draft_picks", ("league_key", "pick")),
-    ("matchups", ("league_key", "season", "week", "team_key")),
-    ("standings_history", ("league_key", "season", "week", "team_key")),
     ("snapshots", ("kind", "taken_at")),
     ("source_cache", ("cache_key",)),
     ("player_week_usage", ("player_key", "season", "week")),

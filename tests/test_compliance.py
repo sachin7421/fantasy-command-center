@@ -602,3 +602,72 @@ def test_an_empty_roster_selects_nobody_rather_than_everybody(tmp_path):
         assert rows == []
     finally:
         conn.close()
+
+
+# --- matchups and standings are Yahoo data too -------------------------------
+
+def test_matchups_and_standings_are_never_stored(tmp_path):
+    """They come from the Yahoo API, so the same rule applies.
+
+    Playoff odds needed a schedule and never had a writer for one. The obvious
+    fix - sync `matchups` and `standings_history` into tables - would have
+    reintroduced exactly what the agreement forbids, in a new pair of tables
+    nobody had thought to name. They go on the snapshot instead.
+    """
+
+    class _Q(_FakeQuery):
+        def get_league_scoreboard_by_week(self, chosen_week):
+            return {"matchups": [
+                {"week": chosen_week, "teams": [
+                    {"team_id": "4", "name": b"Butt Fumblers"},
+                    {"team_id": "7", "name": b"NUB"},
+                ]},
+            ]}
+
+        def get_league_standings(self):
+            return {"teams": [
+                {"team_id": "4", "name": b"Butt Fumblers",
+                 "team_standings": {"rank": 1, "outcome_totals":
+                                    {"wins": 8, "losses": 2, "ties": 0},
+                                    "points_for": 1200.5}},
+            ]}
+
+    query = _Q()
+    client, conn = _client(tmp_path, query)
+    try:
+        snap = client.new_snapshot(2026, 3)
+        client.collect_matchups(snap, query.get_league_scoreboard_by_week(3), 3)
+        client.collect_standings(snap, query.get_league_standings())
+
+        assert snap.matchups == [(3, "4", "7")]
+        assert snap.standings["4"].rank == 1
+        assert snap.standings["4"].wins == 8
+        assert snap.standings["4"].team_name == "Butt Fumblers"  # decoded
+
+        for table in ("matchups", "standings_history"):
+            assert not conn.table_exists(table), f"{table} still exists"
+    finally:
+        conn.close()
+
+
+def test_a_matchup_pairs_both_directions_once(tmp_path):
+    """Each game is one row, not two.
+
+    Yahoo reports a matchup once with both teams in it. Storing it per team
+    double-counted the schedule, which in a Monte Carlo means every team plays
+    twice as many games as it really does.
+    """
+
+    client, conn = _client(tmp_path, _FakeQuery())
+    try:
+        snap = client.new_snapshot(2026, 3)
+        client.collect_matchups(snap, {"matchups": [
+            {"week": 3, "teams": [{"team_id": "4"}, {"team_id": "7"}]},
+            {"week": 3, "teams": [{"team_id": "1"}, {"team_id": "2"}]},
+        ]}, 3)
+        assert len(snap.matchups) == 2
+        assert snap.opponent_of("4", 3) == "7"
+        assert snap.opponent_of("7", 3) == "4"
+        assert snap.opponent_of("9", 3) is None
+    finally:
+        conn.close()

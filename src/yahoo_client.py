@@ -417,6 +417,71 @@ class YahooClient:
         snapshot.transactions.extend(txns)
         return snapshot
 
+    def fetch_standings(self, force: bool = False) -> Any:
+        key = f"yahoo:standings:{self.league_key}"
+        payload, _ = self._cached(key, self.query.get_league_standings, force)
+        return payload or {}
+
+    def fetch_scoreboard(self, week: int, force: bool = False) -> Any:
+        key = f"yahoo:scoreboard:{self.league_key}:{week}"
+        payload, _ = self._cached(
+            key, lambda: self.query.get_league_scoreboard_by_week(int(week)), force
+        )
+        return payload or {}
+
+    def collect_matchups(self, snapshot, scoreboard: Any, week: int):
+        """One row per GAME. Never stored - the agreement covers these too.
+
+        Playoff odds needed a schedule and never had a writer for one. The
+        obvious fix was to sync `matchups` into a table, which would have
+        reintroduced exactly what obligation 1 forbids in a table nobody had
+        thought to name.
+        """
+        payload = serialize(scoreboard) or {}
+        games = payload.get("matchups") or []
+        if isinstance(games, dict):
+            games = list(games.values())
+        for game in games:
+            entry = game.get("matchup", game) if isinstance(game, dict) else {}
+            teams = entry.get("teams") or []
+            if isinstance(teams, dict):
+                teams = list(teams.values())
+            ids = []
+            for team in teams:
+                inner = team.get("team", team) if isinstance(team, dict) else {}
+                team_id = inner.get("team_id")
+                if team_id not in (None, ""):
+                    ids.append(str(team_id))
+            if len(ids) == 2:
+                snapshot.matchups.append((int(entry.get("week") or week), ids[0], ids[1]))
+        return snapshot
+
+    def collect_standings(self, snapshot, standings: Any):
+        """Records and points-for, for seeding and its tiebreak."""
+        from src.yahoo_snapshot import TeamStanding
+
+        payload = serialize(standings) or {}
+        teams = payload.get("teams") or []
+        if isinstance(teams, dict):
+            teams = list(teams.values())
+        for team in teams:
+            inner = team.get("team", team) if isinstance(team, dict) else {}
+            team_id = inner.get("team_id")
+            if team_id in (None, ""):
+                continue
+            standing = inner.get("team_standings") or {}
+            totals = standing.get("outcome_totals") or {}
+            snapshot.standings[str(team_id)] = TeamStanding(
+                team_key=str(team_id),
+                team_name=serialize(inner.get("name")),
+                rank=_as_int(standing.get("rank")),
+                wins=_as_int(totals.get("wins")) or 0,
+                losses=_as_int(totals.get("losses")) or 0,
+                ties=_as_int(totals.get("ties")) or 0,
+                points_for=float(standing.get("points_for") or 0.0),
+            )
+        return snapshot
+
     def collect_snapshot(self, season: int, week: int,
                          teams: Iterable[dict[str, Any]] | None = None):
         """Everything, in one call. Used by `fcc sync-league` and the jobs."""

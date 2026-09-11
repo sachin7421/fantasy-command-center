@@ -149,6 +149,34 @@ class Context:
         self._snapshot = snapshot
         return snapshot
 
+    def playoff_snapshot(self, season: int, week: int, final_week: int):
+        """Standings plus every remaining regular-season matchup.
+
+        Separate from `league_snapshot` because it costs one API call per week
+        of remaining schedule, and only the playoff simulation needs them. With
+        eight weeks left that is eight calls, which is worth paying once for a
+        simulation and not worth paying on every injury check.
+        """
+        if not self.yahoo_configured():
+            return None
+        snapshot = self.yahoo.new_snapshot(season, week)
+        try:
+            self.yahoo.collect_standings(
+                snapshot, self.yahoo.fetch_standings()
+            )
+        except Exception as exc:
+            log.warning("Standings fetch failed: %s", exc)
+            return None
+        for target in range(int(week) + 1, int(final_week) + 1):
+            try:
+                self.yahoo.collect_matchups(
+                    snapshot, self.yahoo.fetch_scoreboard(target), target
+                )
+            except Exception as exc:
+                # One unreachable week costs that week, not the simulation.
+                log.warning("Scoreboard fetch failed for week %s: %s", target, exc)
+        return snapshot
+
     def yahoo_configured(self) -> bool:
         """Whether Yahoo credentials are present, without authenticating.
 
@@ -1270,17 +1298,19 @@ def cmd_playoffs(ctx: Context, args) -> int:
     spots = int(settings.get("num_playoff_teams") or 6)
     final_week = int(settings.get("playoff_start_week") or 15) - 1
 
-    standings = ctx.conn.fetchall(
-        "SELECT team_key, team_name, wins, losses, ties, points_for "
-        "FROM standings_history WHERE league_key=? AND season=? "
-        "AND week=(SELECT MAX(week) FROM standings_history "
-        "          WHERE league_key=? AND season=?)",
-        (ctx.league_key, season, ctx.league_key, season),
-    )
+    # Standings and the remaining schedule are Yahoo league state, so they are
+    # fetched for this run and never kept. Playoff odds were unreachable for
+    # the whole of last season because nothing ever wrote either one.
+    snapshot = ctx.playoff_snapshot(season, week, final_week)
+    if snapshot is None:
+        print("Yahoo is not connected, so there are no standings and no")
+        print("remaining schedule to simulate. Run `fcc setup`.")
+        return EXIT_FAIL
+
+    standings = list(snapshot.standings.values())
     if not standings:
-        print("No standings stored yet.")
-        print("This needs Yahoo data: run `fcc sync-settings` once access is")
-        print("approved, then the Monday recap job records standings each week.")
+        print("Yahoo returned no standings for this league yet.")
+        print("Before week 1 there is nothing to simulate.")
         return EXIT_OK
 
     # Each team scores at the rate it has been scoring, with the spread implied
@@ -1302,19 +1332,12 @@ def cmd_playoffs(ctx: Context, args) -> int:
     # Only the regular season decides seeding. `final_week` was computed here
     # and then never used, so playoff-week matchups were simulated as though
     # they still counted toward making the playoffs.
-    stored = ctx.conn.fetchall(
-        "SELECT week, team_key, opponent_key FROM matchups "
-        "WHERE league_key=? AND season=? AND week>? AND week<=? ORDER BY week",
-        (ctx.league_key, season, week, final_week),
-    )
-    seen = set()
-    remaining = []
-    for row in stored:
-        pair = tuple(sorted((str(row["team_key"]), str(row["opponent_key"] or ""))))
-        if not pair[1] or (row["week"], pair) in seen:
-            continue
-        seen.add((row["week"], pair))
-        remaining.append(Matchup(int(row["week"]), pair[0], pair[1]))
+    # One row per game already - the snapshot pairs each matchup once, so the
+    # de-duplication that used to be needed here is gone with the table.
+    remaining = [
+        Matchup(w, a, b)
+        for (w, a, b) in snapshot.remaining_matchups(week, final_week)
+    ]
 
     if not remaining:
         if week >= final_week:

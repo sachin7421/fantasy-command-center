@@ -88,13 +88,24 @@ def test_postgres_schema_has_no_sqlite_only_syntax():
 
 
 def test_expected_history_tables_exist():
-    """The append-only tables are what make later analysis possible."""
+    """The append-only tables are what make later analysis possible.
+
+    `matchups` and `standings_history` are deliberately absent. They held Yahoo
+    league state, which the API agreement forbids persisting, so they live on a
+    LeagueSnapshot for the duration of a run instead - and this test asserts
+    they have not crept back.
+    """
     sql = db.schema_for("postgres")
     for table in (
-        "projection_history", "player_week_actuals", "matchups",
-        "standings_history", "recommendations", "adp", "injuries", "trending",
+        "projection_history", "player_week_actuals",
+        "recommendations", "adp", "injuries", "trending",
     ):
         assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
+    for gone in ("matchups", "standings_history", "rosters", "free_agents",
+                 "team_budgets", "transactions"):
+        assert f"CREATE TABLE IF NOT EXISTS {gone}" not in sql, (
+            f"{gone} is back in the schema; it holds Yahoo league state"
+        )
 
 
 # --- round trip on a real database ------------------------------------------

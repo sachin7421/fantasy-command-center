@@ -58,6 +58,24 @@ class TeamBudget:
     waiver_priority: int | None = None
 
 
+
+@dataclass(frozen=True)
+class TeamStanding:
+    """Where a team sits, and what it has scored.
+
+    Playoff odds need both: the record decides seeding, and points-for is the
+    tiebreak in most leagues - including this one.
+    """
+
+    team_key: str
+    team_name: str | None
+    rank: int | None
+    wins: int
+    losses: int
+    ties: int
+    points_for: float
+
+
 @dataclass
 class LeagueSnapshot:
     """Everything Yahoo told us this run. Never written to disk."""
@@ -69,6 +87,12 @@ class LeagueSnapshot:
     free_agents: list[str] = field(default_factory=list)
     budgets: dict[str, TeamBudget] = field(default_factory=dict)
     transactions: list[dict[str, Any]] = field(default_factory=list)
+    #: (week, team_key, opponent_key) - one row per GAME, not per team. Yahoo
+    #: reports a matchup once with both sides in it, and storing it per team
+    #: doubled the schedule, which in a Monte Carlo makes every team play twice
+    #: as many games as it really does.
+    matchups: list[tuple[int, str, str]] = field(default_factory=list)
+    standings: dict[str, TeamStanding] = field(default_factory=dict)
     #: Yahoo players no name match could place. Surfaced, never silently
     #: dropped - see YahooIdIndex.
     unmatched: list[str] = field(default_factory=list)
@@ -89,6 +113,24 @@ class LeagueSnapshot:
     def all_rostered(self) -> set[str]:
         """Everyone owned by anybody - i.e. everyone NOT on the wire."""
         return {r.player_key for r in self.rosters}
+
+    def opponent_of(self, team_key: str, week: int) -> str | None:
+        """Who this team plays that week, looking at both sides of each game."""
+        for game_week, home, away in self.matchups:
+            if game_week != int(week):
+                continue
+            if home == str(team_key):
+                return away
+            if away == str(team_key):
+                return home
+        return None
+
+    def remaining_matchups(self, from_week: int, through_week: int):
+        """Every game still to play in the regular season."""
+        return [
+            (w, a, b) for (w, a, b) in self.matchups
+            if int(from_week) < w <= int(through_week)
+        ]
 
     def budget_of(self, team_key: str) -> int | None:
         entry = self.budgets.get(str(team_key))

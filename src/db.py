@@ -224,35 +224,9 @@ CREATE TABLE IF NOT EXISTS trending (
     PRIMARY KEY (player_key, kind, fetched_at)
 );
 
--- Weekly matchup results, for season-over-season review.
-CREATE TABLE IF NOT EXISTS matchups (
-    league_key    TEXT NOT NULL,
-    season        INTEGER NOT NULL,
-    week          INTEGER NOT NULL,
-    team_key      TEXT NOT NULL,
-    opponent_key  TEXT,
-    points        {REAL},
-    opponent_points {REAL},
-    result        TEXT,
-    recorded_at   TEXT NOT NULL,
-    PRIMARY KEY (league_key, season, week, team_key)
-);
-
-CREATE TABLE IF NOT EXISTS standings_history (
-    league_key   TEXT NOT NULL,
-    season       INTEGER NOT NULL,
-    week         INTEGER NOT NULL,
-    team_key     TEXT NOT NULL,
-    team_name    TEXT,
-    rank         INTEGER,
-    wins         INTEGER,
-    losses       INTEGER,
-    ties         INTEGER,
-    points_for   {REAL},
-    points_against {REAL},
-    recorded_at  TEXT NOT NULL,
-    PRIMARY KEY (league_key, season, week, team_key)
-);
+-- Matchups and standings used to be defined here. They come from the Yahoo
+-- API, so the agreement covers them too: they live on a LeagueSnapshot for the
+-- duration of a run. Migration 0003 drops them.
 
 -- Every recommendation the system produced, kept so its advice can be graded
 -- later against what actually happened.
