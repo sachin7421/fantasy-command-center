@@ -93,6 +93,11 @@ class LeagueSnapshot:
     #: as many games as it really does.
     matchups: list[tuple[int, str, str]] = field(default_factory=list)
     standings: dict[str, TeamStanding] = field(default_factory=dict)
+    #: True when this came from a roster the manager typed in rather than from
+    #: Yahoo. It carries his own roster and nothing else, and the jobs that
+    #: need more have to SAY so - an empty league reported as a quiet week is
+    #: the failure the manual path exists to end.
+    is_manual: bool = False
     #: Yahoo players no name match could place. Surfaced, never silently
     #: dropped - see YahooIdIndex.
     unmatched: list[str] = field(default_factory=list)
@@ -113,6 +118,24 @@ class LeagueSnapshot:
     def all_rostered(self) -> set[str]:
         """Everyone owned by anybody - i.e. everyone NOT on the wire."""
         return {r.player_key for r in self.rosters}
+
+    def describe_gaps(self) -> str:
+        """What this snapshot cannot answer, in a sentence, or "" if complete."""
+        if not self.is_manual:
+            return ""
+        missing = []
+        if not self.free_agents:
+            missing.append("who is on the waiver wire")
+        if len({r.team_key for r in self.rosters}) <= 1:
+            missing.append("other teams' rosters")
+        if not self.standings:
+            missing.append("standings")
+        if not missing:
+            return ""
+        return (
+            "This is your own roster, typed in - it does not include "
+            + ", ".join(missing) + "."
+        )
 
     def opponent_of(self, team_key: str, week: int) -> str | None:
         """Who this team plays that week, looking at both sides of each game."""

@@ -139,7 +139,7 @@ class Context:
         step share one fetch instead of paying for three.
         """
         if not self.yahoo_configured():
-            return None
+            return self.manual_snapshot(season, week)
         cached = getattr(self, "_snapshot", None)
         if cached is not None and cached.week == int(week):
             return cached
@@ -182,6 +182,38 @@ class Context:
             except Exception as exc:
                 # One unreachable week costs that week, not the simulation.
                 log.warning("Scoreboard fetch failed for week %s: %s", target, exc)
+        return snapshot
+
+    def manual_snapshot(self, season: int, week: int):
+        """The roster typed into `data/roster.txt`, or None if there is none.
+
+        Yahoo approval is an external gate with no timeline, and while it is
+        closed this is the difference between an application that works and
+        one that reports "nothing actionable" every day of the season.
+
+        It carries your roster and nothing else - not the wire, not rival
+        rosters - and `snapshot.describe_gaps()` says so, because an empty
+        league rendered as a quiet week is the failure this exists to end.
+        """
+        from src import manual_roster
+
+        team_key = self.team_key()
+        if not team_key:
+            return None
+        loaded = manual_roster.load_from_file(
+            self.conn, manual_roster.roster_path(self.cfg),
+            league_key=self.league_key, season=int(season), week=int(week),
+            team_key=str(team_key), team_name="Butt Fumblers",
+        )
+        if loaded is None:
+            return None
+        snapshot, unmatched = loaded
+        if unmatched:
+            print(f"  {len(unmatched)} name(s) in your roster file could not be "
+                  f"matched: {', '.join(unmatched)}")
+            print("  Check the spelling - a missing player is a missing starter.")
+        if not snapshot.rosters:
+            return None
         return snapshot
 
     def yahoo_configured(self) -> bool:
@@ -1617,6 +1649,75 @@ def cmd_purge_yahoo(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+def cmd_roster(ctx: Context, args) -> int:
+    """Show, or create, the roster you type in yourself.
+
+    `fcc roster --init` writes a template to fill in; `fcc roster` reads it
+    back and says exactly who was matched, so a typo is caught at a keyboard
+    rather than in a Sunday lineup.
+    """
+    from src import manual_roster
+
+    path = manual_roster.roster_path(ctx.cfg)
+
+    if getattr(args, "init", False):
+        manual_roster.write_template(path)
+        print(f"Roster template written to {path}")
+        print("")
+        print("Paste one player per line. The slot in front is optional, but")
+        print("including it lets the Monday recap tell who you actually started.")
+        print("")
+        print("Then: python fcc.py roster")
+        return EXIT_OK
+
+    if not path.exists():
+        print(f"No roster file at {path}.")
+        print("")
+        print("Yahoo API access is not required for most of season mode - your")
+        print("own roster is. Create the file with:")
+        print("")
+        print("  python fcc.py roster --init")
+        return EXIT_FAIL
+
+    team_key = ctx.team_key() or "1"
+    season = ctx.season
+    week = args.week if args.week is not None else ctx.current_week()
+    loaded = manual_roster.load_from_file(
+        ctx.conn, path, league_key=ctx.league_key, season=season, week=week,
+        team_key=str(team_key), team_name="Butt Fumblers",
+    )
+    if loaded is None:
+        print(f"No roster file at {path}.")
+        return EXIT_FAIL
+
+    snapshot, unmatched = loaded
+    spots = snapshot.roster_spots_for(team_key)
+    print(f"{len(spots)} player(s) from {path}\n")
+    for spot in spots:
+        row = ctx.conn.fetchone(
+            "SELECT full_name, position, team FROM players WHERE player_key=?",
+            (spot.player_key,),
+        )
+        slot = (spot.selected_pos or "-").ljust(6)
+        if row:
+            print(f"  {slot} {row['full_name'][:26]:<26} "
+                  f"{row['position']:<4} {row['team'] or ''}")
+
+    if unmatched:
+        print("")
+        print(f"  {len(unmatched)} NOT MATCHED: {', '.join(unmatched)}")
+        print("  These are missing from every recommendation until they match.")
+        return EXIT_FAIL
+
+    gaps = snapshot.describe_gaps()
+    if gaps:
+        print("")
+        print(f"  {gaps}")
+        print("  lineup, byes, recap, startsit and injuries work from this.")
+        print("  waivers and trades need Yahoo.")
+    return EXIT_OK
+
+
 def cmd_check(ctx: Context, args) -> int:
     """Run the static analysers over the source tree.
 
@@ -1831,6 +1932,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="required; without it the command explains and exits non-zero",
     )
 
+    p_roster = sub.add_parser(
+        "roster", help="the roster you type in yourself (no Yahoo needed)"
+    )
+    p_roster.add_argument("--init", action="store_true",
+                          help="write a template to fill in")
+    p_roster.add_argument("--week", type=int)
+
     p_check = sub.add_parser("check", help="run the static analysers")
     p_check.add_argument("--only", help="comma-separated subset, e.g. ruff,mypy")
 
@@ -1859,6 +1967,7 @@ HANDLERS = {
     "playoffs": cmd_playoffs,
     "faab": cmd_faab,
     "check": cmd_check,
+    "roster": cmd_roster,
     "purge-yahoo": cmd_purge_yahoo,
     "test-notify": cmd_test_notify,
     "migrate": cmd_migrate,

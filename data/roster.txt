@@ -1,0 +1,22 @@
+# Your roster, one player per line.
+#
+# The slot in front of each name is OPTIONAL - a bare list of names works.
+# Include it and the recap can tell who you actually started.
+#
+# Lines beginning with # are ignored.
+
+QB
+RB
+RB
+WR
+WR
+TE
+W/R/T
+W/R/T
+DEF
+
+BN
+BN
+BN
+BN
+BN

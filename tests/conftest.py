@@ -232,3 +232,28 @@ class LeagueBuilder:
 
     def build(self):
         return self.snap
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_roster(monkeypatch, tmp_path):
+    """No test may read the roster file sitting in the working directory.
+
+    `paths.manual_roster` defaults to a path relative to the CWD, so a real
+    roster in the repo changed the behaviour of jobs under test: the daily
+    suite passed or failed depending on whether someone had filled in their
+    team. A suite whose result depends on a file outside it is not testing
+    anything. Same reasoning as the SQLite pin above.
+
+    A test that WANTS a roster sets `paths.manual_roster` in its own config,
+    and that still works - only the unset default is redirected.
+    """
+    from src import manual_roster
+
+    original = manual_roster.roster_path
+
+    def absent(cfg):
+        if cfg.get("paths.manual_roster"):
+            return original(cfg)
+        return tmp_path / "no-roster.txt"
+
+    monkeypatch.setattr(manual_roster, "roster_path", absent)
