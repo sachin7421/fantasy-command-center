@@ -163,3 +163,61 @@ def test_a_defence_matches_however_you_name_it(conn):
         # Defences are keyed by TEAM, not by name - a defence has no player
         # name of its own, and two "Houston" rows would otherwise collide.
         assert snap.roster_keys("4") == ["DEF|KC"], written
+
+
+YAHOO_PASTE = """
+QB	Josh Allen Buf - QB	@ NYJ W 31-24	24.50
+RB	Jahmyr Gibbs Det - RB	vs CHI	18.20
+RB	Bijan Robinson Atl - RB	@ MIN	21.10
+WR	Puka Nacua LAR - WR	vs SF	14.80
+WR	Ja'Marr Chase Cin - WR	@ BAL	 9.30
+TE	Trey McBride Ari - TE	vs SEA	11.40
+W/R/T	De'Von Achane Mia - RB	@ BUF	16.70
+W/R/T	Amon-Ra St. Brown Det - WR	vs CHI	13.90
+DEF	Houston Texans Hou - DEF	@ JAX	 8.00
+BN	Tyjae Spears Ten - RB	vs IND	 4.20
+"""
+
+
+def test_a_raw_paste_from_the_yahoo_roster_page_works(conn):
+    """Copying the roster table gives name, team, opponent and points on one line.
+
+    Asking someone to retype fifteen names by hand invites a typo that costs a
+    starter, so the parser takes the paste as it comes: it tries progressively
+    shorter prefixes of each line until one matches a player, which strips the
+    trailing team, matchup and score without needing to know their format.
+    """
+    from src.idmap import IdMapper
+    from src.manual_roster import load_roster
+
+    IdMapper(conn).upsert_player(
+        full_name="Houston Texans", position="DEF", team="HOU"
+    )
+    conn.commit()
+
+    snap, unmatched = load_roster(conn, YAHOO_PASTE, league_key="x",
+                                  season=2026, week=2, team_key="4")
+    assert unmatched == [], f"could not place: {unmatched}"
+    assert len(snap.roster_keys("4")) == 10
+
+    slots = {s.player_key: s.selected_pos for s in snap.roster_spots_for("4")}
+    assert slots["josh allen|QB"] == "QB"
+    assert slots["tyjae spears|RB"] == "BN"
+
+
+def test_a_prefix_match_never_beats_an_exact_one(conn):
+    """Longest match wins, so a real name is not truncated into a shorter one.
+
+    If someone named "Josh" existed, "Josh Allen Buf - QB" must still resolve
+    to Josh Allen rather than stopping at the first thing that matched.
+    """
+    from src.idmap import IdMapper
+    from src.manual_roster import load_roster
+
+    IdMapper(conn).upsert_player(full_name="Josh", position="WR", team="NYJ")
+    conn.commit()
+
+    snap, unmatched = load_roster(conn, "QB Josh Allen Buf - QB", league_key="x",
+                                  season=2026, week=2, team_key="4")
+    assert unmatched == []
+    assert snap.roster_keys("4") == ["josh allen|QB"]

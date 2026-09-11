@@ -86,7 +86,9 @@ def parse_lines(text: str) -> list[tuple[str | None, str]]:
     """(slot, name) for each roster line. Blank lines and comments dropped."""
     out: list[tuple[str | None, str]] = []
     for raw in text.splitlines():
-        line = raw.split("#", 1)[0].strip()
+        # A paste from the roster table is tab-separated. Treat tabs as spaces
+        # so the slot and the name split the same way either side.
+        line = raw.replace("\t", " ").split("#", 1)[0].strip()
         if not line:
             continue
         head, _, rest = line.partition(" ")
@@ -157,13 +159,33 @@ def load_roster(
     snapshot.is_manual = True
     unmatched: list[str] = []
 
+    def resolve(words: list[str], slot: str | None) -> str | None:
+        """Longest prefix of `words` that names a player we know.
+
+        A paste from the Yahoo roster page carries the team, the matchup and
+        the week's points on the same line as the name. Rather than teach the
+        parser that format - which changes - it tries progressively shorter
+        prefixes until one matches. LONGEST first, so "Josh Allen Buf - QB"
+        resolves to Josh Allen and is not truncated to a shorter real name.
+        """
+        for end in range(len(words), 0, -1):
+            wanted = _norm(" ".join(words[:end]))
+            if not wanted:
+                continue
+            found = index.get(wanted) or squashed.get(wanted.replace(" ", ""))
+            if found:
+                return found
+            bare = " ".join(
+                w for w in wanted.split() if w not in ("dst", "dhst", "d")
+            )
+            if slot in ("DEF", "DST") or bare in defences:
+                found = defences.get(bare) or defences.get(wanted)
+                if found:
+                    return found
+        return None
+
     for slot, name in parse_lines(text):
-        wanted = _norm(name)
-        # "Houston DST" and "Houston D/ST" are the same team as "Houston".
-        bare = " ".join(w for w in wanted.split() if w not in ("dst", "dhst", "d"))
-        player_key = index.get(wanted) or squashed.get(wanted.replace(" ", ""))
-        if not player_key and (slot in ("DEF", "DST") or bare in defences):
-            player_key = defences.get(bare) or defences.get(wanted)
+        player_key = resolve(name.split(), slot)
         if not player_key:
             unmatched.append(name)
             continue
