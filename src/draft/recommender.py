@@ -329,7 +329,13 @@ class DraftRecommender:
         """
         if vorp > 0:
             return vorp * need * urgency
-        return vorp / max(need, 1e-6) * urgency
+        # Below replacement, BOTH multipliers have to be inverted, not just
+        # `need`. Leaving `urgency` as a bare multiplier meant a higher urgency
+        # made a negative score worse - so the player about to be drafted
+        # ranked below the one certain to still be there, which is the exact
+        # inversion the need-guard exists to prevent. On a real board this
+        # governs roughly half the picks in a draft.
+        return vorp / max(need, 1e-6) / max(urgency, 1e-6)
 
     def recommend(
         self,

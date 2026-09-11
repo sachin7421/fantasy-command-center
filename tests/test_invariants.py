@@ -409,3 +409,45 @@ def test_a_player_who_will_last_is_worth_less_now_than_one_who_will_not(recommen
         f"urgency fell to {safe_urgency:.3f}; a 20% discount is the cap, "
         "otherwise a good unpopular player loses to a worse urgent one"
     )
+
+
+def test_urgency_never_inverts_below_replacement():
+    """A player about to be gone must never rank BELOW one who will keep.
+
+    `_score_for` sign-guarded `need` for negative VORP and left `urgency` as a
+    bare multiplier, so for VORP < 0 a higher urgency made the score worse -
+    the exact inversion the need-guard was written to prevent, in the other
+    factor. This governs the whole below-replacement tail, which on a real
+    board is roughly half the picks in a draft.
+    """
+    from src.draft.recommender import DraftRecommender
+
+    urgent = DraftRecommender._score_for(-20.0, 1.0, 1.15)
+    safe = DraftRecommender._score_for(-20.0, 1.0, 0.81)
+    assert urgent > safe, (
+        f"a player about to be drafted scored {urgent} and one certain to "
+        f"remain scored {safe}; urgency is inverted below replacement"
+    )
+
+
+def test_a_position_nobody_projects_is_not_worth_zero(board):
+    """Every kicker is projected at 0.0 by both sources, so every kicker had
+    VORP exactly 0.00 - and `_score_for` maps VORP 0 to score 0 for EVERY
+    value of `need`, so the deferral multiplier could not suppress them and 0
+    outranked every genuinely below-replacement real player.
+
+    On the live board that made rounds 14-16 a wall of tied kickers, ordered
+    by whatever SQLite returned first.
+    """
+    from src.vorp import compute_replacement_levels
+
+    pool = {"K": [p for p in board.players if p.position == "K"]}
+    levels = compute_replacement_levels(pool, {"K": 1}, 12)
+    level = levels.get("K")
+    if level is None:
+        return  # this league has no kicker slot, which is the real case
+    assert level.scarce or level.points > 0, (
+        "a position whose whole pool projects zero must be flagged scarce, "
+        "not handed a replacement level of 0.0 that makes every player at it "
+        "look exactly replaceable"
+    )

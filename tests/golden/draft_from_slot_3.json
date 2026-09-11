@@ -511,13 +511,29 @@
   {
     "choices": [
       {
+        "name": "TE18",
+        "need": 0.2,
+        "pos": "TE",
+        "reasons": [
+          "last 1 in TE tier 4; next tier drops 30%",
+          "TE already deep"
+        ],
+        "score": -164.78,
+        "survival": 0.77,
+        "urgency": 0.97,
+        "vorp": -32.14,
+        "warnings": [
+          "reach vs ADP 130 (board rank 142)"
+        ]
+      },
+      {
         "name": "QB23",
         "need": 0.2,
         "pos": "QB",
         "reasons": [
           "QB already deep"
         ],
-        "score": -139.87,
+        "score": -171.77,
         "survival": 0.8,
         "urgency": 0.9,
         "vorp": -31.0,
@@ -530,27 +546,11 @@
         "reasons": [
           "QB already deep"
         ],
-        "score": -151.56,
+        "score": -191.81,
         "survival": 0.82,
         "urgency": 0.89,
         "vorp": -34.1,
         "warnings": []
-      },
-      {
-        "name": "TE18",
-        "need": 0.2,
-        "pos": "TE",
-        "reasons": [
-          "last 1 in TE tier 4; next tier drops 30%",
-          "TE already deep"
-        ],
-        "score": -156.72,
-        "survival": 0.77,
-        "urgency": 0.97,
-        "vorp": -32.14,
-        "warnings": [
-          "reach vs ADP 130 (board rank 142)"
-        ]
       }
     ],
     "pick": 142,
@@ -559,48 +559,30 @@
   {
     "choices": [
       {
-        "name": "TE20",
+        "name": "QB23",
         "need": 0.2,
-        "pos": "TE",
+        "pos": "QB",
         "reasons": [
-          "last 2 in TE tier 5; next tier drops 31%",
-          "TE already deep"
+          "31% chance he lasts to pick 166",
+          "QB already deep"
         ],
-        "score": -249.74,
-        "survival": 0.41,
-        "urgency": 1.14,
-        "vorp": -43.83,
+        "score": -155.0,
+        "survival": 0.31,
+        "urgency": 1.0,
+        "vorp": -31.0,
         "warnings": []
       },
       {
-        "name": "TE19",
+        "name": "QB24",
         "need": 0.2,
-        "pos": "TE",
+        "pos": "QB",
         "reasons": [
-          "last 2 in TE tier 5; next tier drops 64%",
-          "34% chance he lasts to pick 166",
-          "TE already deep"
+          "QB already deep"
         ],
-        "score": -250.22,
-        "survival": 0.34,
-        "urgency": 1.31,
-        "vorp": -38.05,
-        "warnings": [
-          "reach vs ADP 136 (board rank 148)"
-        ]
-      },
-      {
-        "name": "TE21",
-        "need": 0.2,
-        "pos": "TE",
-        "reasons": [
-          "last 2 in TE tier 6; next tier drops 61%",
-          "TE already deep"
-        ],
-        "score": -306.4,
-        "survival": 0.48,
-        "urgency": 1.24,
-        "vorp": -49.49,
+        "score": -170.5,
+        "survival": 0.36,
+        "urgency": 1.0,
+        "vorp": -34.1,
         "warnings": []
       }
     ],
@@ -637,7 +619,7 @@
         "reasons": [
           "best of what is left"
         ],
-        "score": -0.0,
+        "score": -49490000.0,
         "survival": null,
         "urgency": 0.0,
         "vorp": -49.49,
