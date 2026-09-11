@@ -177,3 +177,24 @@ def test_the_real_source_tree_persists_no_yahoo_data():
         problems.extend(check_file(path))
     problems.extend(check_file(Path("dashboard.py")))
     assert problems == [], "\n".join(problems)
+
+
+def test_the_persistence_gate_covers_every_dropped_yahoo_table():
+    """Every table a migration removed for holding Yahoo data must be guarded.
+
+    Four were listed and three were not, so writes to matchups,
+    standings_history and league_settings passed silently. The list and the
+    migrations have to agree, or the gate reports a success it has not checked.
+    """
+    from pathlib import Path
+
+    from tools.check_yahoo_persistence import YAHOO_TABLES
+
+    dropped = set()
+    for sql in Path("src/migrations").glob("*.sql"):
+        for line in sql.read_text(encoding="utf-8").splitlines():
+            if line.upper().startswith("DROP TABLE IF EXISTS"):
+                dropped.add(line.split()[-1].rstrip(";"))
+
+    missing = dropped - set(YAHOO_TABLES)
+    assert not missing, f"dropped for holding Yahoo data but not guarded: {missing}"

@@ -415,6 +415,21 @@ def run(
             "roster come from Yahoo, and storing them is not permitted."
         )
     roster_keys = snapshot.roster_keys(team_key)
+    if not roster_keys:
+        # Every sibling job has this guard; waivers did not. With no roster,
+        # `_lineup_total([])` is 0.0, so every free agent scores his full raw
+        # projection as "gain" - which recommended four backup quarterbacks in
+        # a one-QB league at $29 each, the exact failure this module's own
+        # docstring says was fixed.
+        #
+        # It is reachable without Yahoo being down at all: the per-team roster
+        # loop logs and continues, so ONE failed call for YOUR team leaves
+        # every rival roster populated and yours empty.
+        log.warning(
+            "No roster for team %s; refusing to value claims against nothing.",
+            team_key,
+        )
+        return WaiverReport(week=week, uses_faab=uses_faab, budget_left=budget_left)
     free_agents = load_free_agents(conn, season, week, snapshot.free_agents)
     droppables = load_my_droppables(conn, season, week, roster_keys)
     weeks_left = _ros_weeks(week)

@@ -65,6 +65,14 @@ class _Scored:
     scored: bool = False
 
 
+BENCH_SLOTS = ("BN", "IR", "IR+", "NA")
+
+
+def _was_started(slot: str | None) -> bool:
+    """Whether a roster slot is a starting one."""
+    return bool(slot) and str(slot).upper() not in BENCH_SLOTS
+
+
 def _actual_week_scores(
     conn: Database, season: int, week: int, roster_spots
 ) -> list[_Scored]:
@@ -107,9 +115,11 @@ def _actual_week_scores(
             # recap to give at all.
             points=float(r["actual_pts"]) if r["actual_pts"] is not None else 0.0,
             scored=r["actual_pts"] is not None,
-            started=bool(
-                slot_of.get(r["player_key"]) and r["selected_pos"].upper() not in ("BN", "IR", "IR+", "NA")
-            ),
+            # The slot comes from the snapshot, not from the row - the query
+            # no longer selects it. A player with no recorded slot is treated
+            # as benched rather than started: crediting an unknown as a starter
+            # would inflate what the lineup actually scored.
+            started=_was_started(slot_of.get(r["player_key"])),
         )
         for r in rows
     ]

@@ -114,19 +114,20 @@ def opponent_roster_keys(snapshot, opponent_team_key: str | None) -> set[str]:
 
 
 def top_free_agent_keys(
-    conn: Database, free_agent_keys, limit: int = 60
+    conn: Database, free_agent_keys, season: int, limit: int = 60
 ) -> set[str]:
     clause, params = key_clause(free_agent_keys)
     rows = conn.execute(
         f"""
         SELECT p.player_key
         FROM players p
-        LEFT JOIN projections_blended b ON b.player_key = p.player_key
+        LEFT JOIN projections_blended b
+               ON b.player_key = p.player_key AND b.season = ? AND b.week = 0
         WHERE p.player_key IN ({clause})
         ORDER BY COALESCE(b.points, 0) DESC
         LIMIT ?
         """,
-        (*params, limit),
+        (season, *params, limit),
     ).fetchall()
     return {r["player_key"] for r in rows}
 
@@ -220,7 +221,7 @@ def run(
     roster = my_roster_keys(my_keys)
     opponents = opponent_roster_keys(snapshot, opponent_team_key)
     free_agents = top_free_agent_keys(
-        conn, snapshot.free_agents if snapshot else []
+        conn, snapshot.free_agents if snapshot else [], season
     )
     watching = set(watch_keys)
 

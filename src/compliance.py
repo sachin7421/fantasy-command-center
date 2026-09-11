@@ -36,6 +36,23 @@ YAHOO_COLUMNS: tuple[tuple[str, str], ...] = (
     ("players", "yahoo_key"),
 )
 
+#: Rows on tables of ours that are Yahoo's by PROVENANCE rather than by table.
+#: `draft_picks` holds both: picks typed in by hand are ours, picks synced from
+#: Yahoo are Yahoo's, and the `source` column is the only thing that knows.
+#: player_id_map is the one that actually mattered - 1,604 Yahoo ids survived a
+#: purge that reported removing every Yahoo identifier, and faab.py reads them
+#: back with WHERE source='yahoo', so the join kept working afterwards.
+YAHOO_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("player_id_map", "source", "yahoo"),
+    ("draft_picks", "source", "yahoo"),
+)
+
+#: Tables whose stored TEXT quotes Yahoo facts verbatim. A waiver notification
+#: names the free-agent pool and a remaining FAAB balance; a lineup one names
+#: who is started on the Yahoo roster. The dashboard re-renders these, so
+#: leaving them behind leaves Yahoo data on screen after a purge.
+YAHOO_DERIVED_TEXT: tuple[str, ...] = ("recommendations",)
+
 
 def purge_yahoo(conn: Database) -> dict[str, int]:
     """Delete everything Yahoo-derived. Returns what was removed, per table.
@@ -82,6 +99,39 @@ def purge_yahoo(conn: Database) -> dict[str, int]:
             log.info("purge: %s.%s is not present (%s)", table, column, exc)
             cleared = 0
         removed[f"{table}.{column}"] = int(cleared)
+
+    for table, column, value in YAHOO_ROWS:
+        try:
+            count = conn.scalar(
+                f"SELECT COUNT(*) FROM {table} WHERE {column}=?", (value,)
+            ) or 0
+            conn.execute(f"DELETE FROM {table} WHERE {column}=?", (value,))
+        except Exception as exc:
+            log.info("purge: %s.%s is not present (%s)", table, column, exc)
+            count = 0
+        removed[f"{table}[{column}={value}]"] = int(count)
+
+    for table in YAHOO_DERIVED_TEXT:
+        try:
+            count = conn.scalar(f"SELECT COUNT(*) FROM {table}") or 0
+            conn.execute(f"DELETE FROM {table}")
+        except Exception as exc:
+            log.info("purge: %s is not present (%s)", table, exc)
+            count = 0
+        removed[table] = int(count)
+
+    # job_runs.detail carries Yahoo API URLs and league keys out of exception
+    # messages. The runs themselves are our own operational record, so the
+    # detail is cleared rather than the rows deleted.
+    try:
+        count = conn.scalar(
+            "SELECT COUNT(*) FROM job_runs WHERE detail IS NOT NULL"
+        ) or 0
+        conn.execute("UPDATE job_runs SET detail=NULL WHERE detail IS NOT NULL")
+    except Exception as exc:
+        log.info("purge: job_runs is not present (%s)", exc)
+        count = 0
+    removed["job_runs.detail"] = int(count)
 
     # Yahoo may never be in source_cache at all - cache_put refuses it - but a
     # database that predates that guard can still hold rows from before.

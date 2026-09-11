@@ -23,7 +23,16 @@ from src.storage import Database
 
 log = logging.getLogger(__name__)
 
-DEFAULT_WEIGHTS = {"fantasypros": 0.5, "yahoo": 0.25, "espn": 0.25, "sleeper": 0.5}
+#: Used whenever config.yaml omits the weights section. Yahoo is absent, not
+#: zero: the API agreement makes it optional and off by default, and a default
+#: map that names it at 0.25 is one forgotten config file away from blending it.
+DEFAULT_WEIGHTS = {"fantasypros": 0.5, "espn": 0.25, "sleeper": 0.5}
+
+#: Sources that may never be given a fallback weight, however they are spelled.
+#: An unconfigured source normally gets UNCONFIGURED_SOURCE_WEIGHT so a real
+#: projection is not silently discarded; for Yahoo that generosity is a
+#: contract breach.
+NEVER_DEFAULTED = ("yahoo",)
 
 #: Week-to-week coefficient of variation by position: the standard deviation of
 #: a player's weekly points divided by his mean, averaged across players.
@@ -108,7 +117,15 @@ def normalize_weights(
     """
     available = list(available)
     present: dict[str, float] = {}
+    #: Sources deliberately switched off. Kept apart from the ones that merely
+    #: have no data, because the fallback below must never reach for them.
+    disabled: set[str] = set()
+
     for source in available:
+        banned = any(b in str(source).lower() for b in NEVER_DEFAULTED)
+        if banned and float(weights.get(source) or 0.0) <= 0:
+            disabled.add(source)
+            continue
         weight = weights.get(source)
         if weight is None:
             log.debug(
@@ -117,13 +134,21 @@ def normalize_weights(
             )
             weight = UNCONFIGURED_SOURCE_WEIGHT
         weight = float(weight)
-        if weight > 0:
-            present[source] = weight
+        if weight <= 0:
+            disabled.add(source)
+            continue
+        present[source] = weight
 
     total = sum(present.values())
     if not total:
-        n = len(available)
-        return dict.fromkeys(available, 1.0 / n) if n else {}
+        # Nothing configured had data. Falling back to equal weights over
+        # `available` used to include the sources just switched off - so a
+        # player projected ONLY by a zero-weighted source was blended entirely
+        # from it. That is the coverage gap a third source exists to fill,
+        # which makes it the likely case rather than a corner one.
+        usable = [s for s in available if s not in disabled]
+        n = len(usable)
+        return dict.fromkeys(usable, 1.0 / n) if n else {}
     return {s: w / total for s, w in present.items()}
 
 

@@ -28,7 +28,19 @@ import sys
 from pathlib import Path
 
 #: Tables that exist only to hold Yahoo league state.
-YAHOO_TABLES = ("rosters", "free_agents", "team_budgets", "transactions")
+#: Kept in step with the DROP statements in src/migrations. A table dropped
+#: for holding Yahoo data and not listed here is a hole in a gate whose whole
+#: stated purpose is that the breach is silent - it reports a success it has
+#: not checked. tests/test_gates.py asserts the two lists agree.
+YAHOO_TABLES = (
+    "rosters",
+    "free_agents",
+    "team_budgets",
+    "transactions",
+    "matchups",
+    "standings_history",
+    "league_settings",
+)
 
 #: Any statement that puts rows INTO one of them. UPDATE and INSERT both
 #: persist; SELECT and DROP do not.

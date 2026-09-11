@@ -1259,3 +1259,82 @@ def test_undecodable_bytes_do_not_crash_the_sync():
 
     result = serialize(b"\xff\xfe bad")
     assert isinstance(result, str)
+
+
+def test_the_monday_recap_does_not_crash_on_a_scored_week(tmp_path):
+    """A column was read that the SELECT no longer returns.
+
+    Converting the recap to the snapshot replaced the roster join, and the
+    started/benched test read `selected_pos` off the row. The slot comes from
+    the snapshot now and the column is gone from the query, so the first Monday
+    Yahoo worked, the recap would have raised IndexError - invisible until
+    then, because the missing-snapshot guard returned first.
+    """
+    from src.season import recap
+    from tests.conftest import LeagueBuilder
+
+    conn = db.init_db(tmp_path / "recap.db")
+    for key, name, pos, pts in (
+        ("star|RB", "Star Back", "RB", 22.4),
+        ("bench|WR", "Bench Guy", "WR", 3.1),
+    ):
+        _player(conn, key, name, pos, 200.0)
+        conn.execute(
+            "INSERT INTO player_week_actuals(player_key, season, week, points, "
+            "source, recorded_at) VALUES (?,?,?,?,?,?)",
+            (key, SEASON, WEEK, pts, "nflverse", db.utcnow()),
+        )
+    conn.commit()
+
+    snap = (
+        LeagueBuilder(LEAGUE, SEASON, WEEK)
+        .roster(MY_TEAM, "star|RB", "RB", "Butt Fumblers")
+        .roster(MY_TEAM, "bench|WR", "BN", "Butt Fumblers")
+        .build()
+    )
+    report = recap.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, SLOTS, snapshot=snap)
+    conn.close()
+
+    assert report.has_data, "two scored players is a recap"
+    # Only the started player counts toward what the lineup actually scored;
+    # the benched one is what was left on the bench.
+    assert report.actual_points == pytest.approx(22.4), report.actual_points
+
+
+def test_daily_fails_when_a_job_it_ran_failed(tmp_path, capsys, monkeypatch):
+    """A green run over seven dead jobs is the failure this project keeps having.
+
+    cmd_daily counted only jobs that RAISED. A job that returned EXIT_FAIL -
+    which is now how every roster-dependent job reports "no Yahoo connection" -
+    was counted as success, so `fcc daily` exited 0 having done nothing at all
+    and the workflow went green. The user, who does not read logs, sees no
+    email and has no way to tell a quiet week from a dead product.
+    """
+    config = tmp_path / "daily.yaml"
+    config.write_text(
+        "league:\n"
+        '  league_id: "796511"\n'
+        "  season: 2026\n"
+        "  my_team_id: 3\n"
+        "paths:\n"
+        f'  env_dir: "{tmp_path.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    # Pin the job list. `daily` chooses by weekday, and Friday/Saturday run
+    # only the two jobs that DEGRADE rather than fail - so asserting against
+    # the real calendar made this test red two days in seven. The contract
+    # under test is "a job that RETURNS failure is counted", not the schedule.
+    monkeypatch.setattr(cli, "DAILY_FALLBACK", ["lineup", "waivers"])
+    monkeypatch.setattr(
+        cli, "DAILY_SCHEDULE",
+        {d: ["lineup", "waivers"] for d in ("MON", "TUE", "WED", "THU", "SUN")},
+    )
+    code = cli.main([
+        "--config", str(config), "--db", str(tmp_path / "d.db"),
+        "daily", "--week", "2", "--dry-run",
+    ])
+    out = capsys.readouterr().out
+    assert code == cli.EXIT_FAIL, (
+        "every roster job cannot run without Yahoo, and daily reported success:\n" + out
+    )
+    assert "could not run" in out.lower(), out

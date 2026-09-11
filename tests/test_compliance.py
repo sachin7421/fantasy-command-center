@@ -671,3 +671,158 @@ def test_a_matchup_pairs_both_directions_once(tmp_path):
         assert snap.opponent_of("9", 3) is None
     finally:
         conn.close()
+
+
+def test_league_settings_is_a_forbidden_table():
+    """The gate missed the table migration 0004 removed for being Yahoo data.
+
+    tools/check_yahoo_persistence listed four tables and not this one, so the
+    write in fetch_league_settings passed a gate whose entire stated purpose is
+    that this breach is silent. A checker with a hole in it is worse than none,
+    because it reports success.
+    """
+    from tools.check_yahoo_persistence import YAHOO_TABLES
+
+    assert "league_settings" in YAHOO_TABLES
+
+
+def test_fetching_settings_stores_nothing(tmp_path):
+    """Settings fetched from the API are Yahoo's, whatever we do with them.
+
+    The hand transcription in league_bootstrap may be kept - a person read it
+    off a screen. What the API returns may not, and this wrote the whole
+    payload to disk on every fetch.
+    """
+    class _Settings(_FakeQuery):
+        def get_league_settings(self):
+            return {"num_teams": 12, "name": b"Extra Fun League"}
+
+    query = _Settings()
+    client, conn = _client(tmp_path, query)
+    try:
+        payload = client.fetch_league_settings()
+        assert payload["num_teams"] == 12
+        assert not conn.table_exists("league_settings")
+    finally:
+        conn.close()
+
+
+# --- obligation 3, in the code rather than the config ------------------------
+
+def test_a_zero_weighted_source_is_never_blended_even_alone():
+    """Weight zero must mean OFF, not "off unless nobody else showed up".
+
+    normalize_weights dropped zero-weighted sources, and when that emptied the
+    dict it fell back to equal weighting over whatever was available - so a
+    player only Yahoo projects was blended 100% from Yahoo despite a shipped
+    weight of 0.0. That is exactly the coverage gap a third source exists to
+    fill, which makes it the likeliest case, not a corner one.
+
+    Asserting on the YAML string was not enough; the string was correct all
+    along and the arithmetic ignored it.
+    """
+    from src.projections import normalize_weights
+
+    weights = {"sleeper": 0.5, "espn": 0.5, "yahoo": 0.0}
+    assert normalize_weights(["yahoo"], weights) == {}
+    assert normalize_weights(["sleeper", "espn", "yahoo"], weights) == {
+        "sleeper": 0.5, "espn": 0.5
+    }
+
+
+def test_the_shipped_default_weights_do_not_include_yahoo():
+    """DEFAULT_WEIGHTS applies whenever config omits the section."""
+    from src.projections import DEFAULT_WEIGHTS
+
+    assert DEFAULT_WEIGHTS.get("yahoo", 0) == 0
+
+
+def test_an_unconfigured_yahoo_source_gets_no_weight():
+    """An unlisted source defaults to a nonzero weight; Yahoo may not."""
+    from src.projections import normalize_weights
+
+    assert normalize_weights(["yahoo_daily"], {"sleeper": 1.0}) == {}
+
+
+# --- purge coverage ----------------------------------------------------------
+
+def test_purge_removes_yahoo_rows_from_the_shared_id_map(tmp_path):
+    """1,604 Yahoo player ids were on disk in player_id_map after a purge.
+
+    The purge cleared players.yahoo_id and stopped there. player_id_map is a
+    different table with a `source` column, and faab.py reads it with
+    WHERE source='yahoo' - so the Yahoo join kept working after a purge that
+    reported it had removed every Yahoo identifier.
+    """
+    from src.compliance import purge_yahoo
+    from src.idmap import IdMapper
+
+    conn = db.init_db(tmp_path / "m.db", force_sqlite=True)
+    try:
+        IdMapper(conn).upsert_player(
+            full_name="Marquise Brown", position="WR", team="KC",
+            yahoo_id="32180", sleeper_id="4task",
+        )
+        assert conn.scalar(
+            "SELECT COUNT(*) FROM player_id_map WHERE source='yahoo'"
+        ) >= 1
+
+        purge_yahoo(conn)
+
+        assert conn.scalar(
+            "SELECT COUNT(*) FROM player_id_map WHERE source='yahoo'"
+        ) == 0
+        # Other sources' mappings are ours and must survive.
+        assert conn.scalar(
+            "SELECT COUNT(*) FROM player_id_map WHERE source='sleeper'"
+        ) >= 1
+    finally:
+        conn.close()
+
+
+def test_purge_removes_picks_that_came_from_yahoo_and_keeps_ours(tmp_path):
+    """draft_picks holds both. Provenance is in the `source` column."""
+    from src.compliance import purge_yahoo
+
+    conn = db.init_db(tmp_path / "d.db", force_sqlite=True)
+    try:
+        for pick, source in ((3, "manual"), (4, "yahoo"), (5, "skipped")):
+            conn.execute(
+                "INSERT INTO draft_picks(league_key, pick, round, team_key, "
+                "player_key, source, recorded_at) VALUES (?,?,?,?,?,?,?)",
+                ("nfl.l.796511", pick, 1, "4", f"p{pick}", source, db.utcnow()),
+            )
+        conn.commit()
+        purge_yahoo(conn)
+
+        left = {r["source"] for r in conn.fetchall("SELECT source FROM draft_picks")}
+        assert left == {"manual", "skipped"}, (
+            f"purge left {left}; picks synced FROM Yahoo are Yahoo's data, "
+            "and picks typed in by hand are ours"
+        )
+    finally:
+        conn.close()
+
+
+def test_purge_clears_stored_notification_bodies(tmp_path):
+    """recommendations.payload_json quotes Yahoo facts verbatim.
+
+    A stored waiver notification names the free-agent pool and the remaining
+    FAAB balance; a lineup one names who is started on the Yahoo roster. The
+    dashboard re-renders those lines after a purge that claimed to be complete.
+    """
+    from src.compliance import purge_yahoo
+
+    conn = db.init_db(tmp_path / "r.db", force_sqlite=True)
+    try:
+        conn.execute(
+            "INSERT INTO recommendations(job, season, week, payload_json, "
+            "created_at) VALUES (?,?,?,?,?)",
+            ("waivers", 2026, 2,
+             '{"lines": ["__CLAIMS (FAAB left: $63)__"]}', db.utcnow()),
+        )
+        conn.commit()
+        purge_yahoo(conn)
+        assert conn.scalar("SELECT COUNT(*) FROM recommendations") == 0
+    finally:
+        conn.close()

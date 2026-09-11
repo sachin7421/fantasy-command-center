@@ -196,16 +196,11 @@ class YahooClient:
 
     def fetch_league_settings(self, force: bool = False) -> dict[str, Any]:
         key = f"yahoo:settings:{self.league_key}"
-        payload, from_cache = self._cached(key, self.query.get_league_settings, force)
-        if not from_cache:
-            self.conn.execute(
-                "INSERT INTO league_settings(league_key, season, settings_json, fetched_at) "
-                "VALUES (?,?,?,?) ON CONFLICT(league_key) DO UPDATE SET "
-                "settings_json=excluded.settings_json, fetched_at=excluded.fetched_at, "
-                "season=excluded.season",
-                (self.league_key, self.resolve_season(), json.dumps(payload), db.utcnow()),
-            )
-            self.conn.commit()
+        payload, _ = self._cached(key, self.query.get_league_settings, force)
+        # Stored nowhere. What the API returns is Yahoo's data; the hand
+        # transcription in src/league_bootstrap.py is the manager's own
+        # reading of his own settings page and is what the app runs on.
+        # `fcc verify-settings` diffs the two and reports the difference.
         return payload
 
     def load_settings(self) -> dict[str, Any]:
@@ -483,11 +478,37 @@ class YahooClient:
         return snapshot
 
     def collect_snapshot(self, season: int, week: int,
-                         teams: Iterable[dict[str, Any]] | None = None):
-        """Everything, in one call. Used by `fcc sync-league` and the jobs."""
+                         teams: Iterable[dict[str, Any]] | None = None,
+                         free_agent_count: int = 200):
+        """Everything a season job needs, in one call.
+
+        Teams and budgets, the free-agent pool, and the transaction log.
+
+        It used to collect only teams, which made `fcc waivers` a permanent
+        silent no-op: an empty pool produced zero claims, zero stashes and zero
+        handcuffs, `to_notification` returned None, the job printed "nothing
+        actionable" and exited 0. Every Tuesday looked like a quiet week.
+
+        Nothing caught it because the tests build snapshots by hand with the
+        pool already populated - the seam between this method and the jobs was
+        untested by construction.
+        """
         snapshot = self.new_snapshot(season, week)
         team_list = list(teams) if teams is not None else self.fetch_teams()
         self.collect_teams(snapshot, team_list)
+
+        # Each leg is independent: losing the wire should not also lose the bid
+        # history, and either is better than losing the run.
+        try:
+            self.collect_free_agents(
+                snapshot, self.fetch_free_agents(count=free_agent_count)
+            )
+        except Exception as exc:
+            log.warning("Free-agent fetch failed: %s", exc)
+        try:
+            self.collect_transactions(snapshot, self.fetch_transactions())
+        except Exception as exc:
+            log.warning("Transaction fetch failed: %s", exc)
         return snapshot
 
     # -- transactions --------------------------------------------------------

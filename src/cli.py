@@ -869,14 +869,20 @@ def cmd_job(ctx: Context, args) -> int:
         team_key = _require_team(ctx)
         if team_key is None:
             return EXIT_FAIL
-        snapshot = ctx.league_snapshot(season, week)
+        # The roster must be the one from the week being recapped. Yahoo's
+        # roster endpoint is week-scoped, and asking for THIS week's lineup
+        # while scoring LAST week's points blames the manager for benchings he
+        # made after the games were over - which is wrong in the only dimension
+        # a recap has.
+        recap_week = max(1, week - 1)
+        snapshot = ctx.league_snapshot(season, recap_week)
         if snapshot is None:
             print("Yahoo is not connected, so there is no roster to work from.")
             print("The API agreement forbids storing one, so there is no cached")
             print("copy either. Run `fcc setup` to connect Yahoo.")
             return EXIT_FAIL
         recap_report = recap.run(
-            ctx.conn, ctx.league_key, team_key, season, max(1, week - 1), slots,
+            ctx.conn, ctx.league_key, team_key, season, recap_week, slots,
             snapshot=snapshot,
         )
         if not recap_report.has_data:
@@ -965,6 +971,22 @@ def cmd_job(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+#: Which jobs `fcc daily` runs on each weekday, in the league's timezone.
+#: Module level so a test can pin it: asserting against the real calendar made
+#: one test pass Sunday to Thursday and fail at the weekend, and a suite that is
+#: red two days in seven teaches people to ignore it.
+DAILY_SCHEDULE: dict[str, list[str]] = {
+    "TUE": ["waivers", "injuries", "reminders"],
+    "WED": ["byes", "injuries"],
+    "THU": ["lineup", "injuries", "reminders"],
+    "SUN": ["lineup", "injuries", "reminders"],
+    "MON": ["recap", "trades", "injuries"],
+}
+
+#: Friday and Saturday. Only the two jobs that degrade rather than fail.
+DAILY_FALLBACK: list[str] = ["injuries", "reminders"]
+
+
 def cmd_daily(ctx: Context, args) -> int:
     """Sync then run every job that is due today (spec 11.3: idempotent)."""
     import datetime as dt
@@ -976,14 +998,7 @@ def cmd_daily(ctx: Context, args) -> int:
     # recap entirely. Everything else here already reads schedule.timezone.
     tz = ZoneInfo(str(ctx.cfg.get("schedule.timezone", "America/New_York")))
     weekday = dt.datetime.now(tz).strftime("%a").upper()[:3]
-    schedule = {
-        "TUE": ["waivers", "injuries", "reminders"],
-        "WED": ["byes", "injuries"],
-        "THU": ["lineup", "injuries", "reminders"],
-        "SUN": ["lineup", "injuries", "reminders"],
-        "MON": ["recap", "trades", "injuries"],
-    }
-    jobs = schedule.get(weekday, ["injuries", "reminders"])
+    jobs = DAILY_SCHEDULE.get(weekday, DAILY_FALLBACK)
 
     class _A:
         force = False
@@ -1000,7 +1015,12 @@ def cmd_daily(ctx: Context, args) -> int:
     except Exception as exc:
         log.warning("Usage sync skipped: %s", exc)
         print(f"  usage       : unavailable ({exc})")
-    failures = 0
+    # Count what a job RETURNS, not only what it raises. Every roster-dependent
+    # job reports "no Yahoo connection" by returning EXIT_FAIL, and discarding
+    # that return meant `fcc daily` exited 0 having done nothing at all - a
+    # green workflow run over seven dead jobs, which is this project's oldest
+    # and most expensive failure mode.
+    failed: list[str] = []
     for job in jobs:
         print(f"\n=== {job} ===")
 
@@ -1008,11 +1028,19 @@ def cmd_daily(ctx: Context, args) -> int:
             job=job, week=args.week, dry_run=args.dry_run, budget=None,
         )
         try:
-            cmd_job(ctx, job_args)
+            if cmd_job(ctx, job_args) != EXIT_OK:
+                failed.append(job)
         except Exception:
-            failures += 1
+            failed.append(job)
             traceback.print_exc()
-    return EXIT_FAIL if failures else EXIT_OK
+
+    if failed:
+        print("")
+        print(f"  {len(failed)} of {len(jobs)} job(s) could not run: "
+              f"{', '.join(failed)}")
+        print("  Nothing was sent for those. This run is a FAILURE, not a quiet")
+        print("  week - silence must never be how 'everything is fine' looks.")
+    return EXIT_FAIL if failed else EXIT_OK
 
 
 def cmd_setup(_ctx, args) -> int:
@@ -1324,14 +1352,19 @@ def cmd_playoffs(ctx: Context, args) -> int:
     # by the league. Better than a league-average assumption, and it is what is
     # actually knowable before any games in the remaining schedule are played.
     teams = []
-    for row in standings:
-        played = max(1, (row["wins"] or 0) + (row["losses"] or 0) + (row["ties"] or 0))
-        mean = float(row["points_for"] or 0) / played
+    # Attribute access, not subscripts. These are TeamStanding dataclasses off
+    # the snapshot now; the row-style lookups were left over from the dropped
+    # standings_history table and raised TypeError on every run past the guard
+    # above - which is to say every run where Yahoo returned anything.
+    for standing in standings:
+        played = max(1, standing.wins + standing.losses + standing.ties)
+        mean = standing.points_for / played
         teams.append(
             TeamSeason(
-                team_key=str(row["team_key"]), name=row["team_name"] or row["team_key"],
-                wins=int(row["wins"] or 0), losses=int(row["losses"] or 0),
-                ties=int(row["ties"] or 0), points_for=float(row["points_for"] or 0),
+                team_key=standing.team_key,
+                name=standing.team_name or standing.team_key,
+                wins=standing.wins, losses=standing.losses, ties=standing.ties,
+                points_for=standing.points_for,
                 mean=mean if mean > 0 else 100.0, sd=max(12.0, mean * 0.22),
             )
         )
