@@ -1338,3 +1338,44 @@ def test_daily_fails_when_a_job_it_ran_failed(tmp_path, capsys, monkeypatch):
         "every roster job cannot run without Yahoo, and daily reported success:\n" + out
     )
     assert "could not run" in out.lower(), out
+
+
+def test_the_optimiser_never_moves_a_player_whose_game_is_over(tmp_path):
+    """You cannot start a player who has already played, or bench one.
+
+    Both halves matter. Recommending a locked player INTO the lineup swaps a
+    settled score for a projection; recommending one OUT pretends points
+    already banked can be given back.
+    """
+    from src.season import lineup
+    from tests.conftest import LeagueBuilder
+
+    conn = db.init_db(tmp_path / "locked.db")
+    for key, name, pos, pts in (
+        ("done|QB", "Already Played", "QB", 18.0),
+        ("todo|QB", "Plays Sunday", "QB", 17.3),
+    ):
+        _player(conn, key, name, pos, 200.0)
+        conn.execute(
+            "INSERT INTO projections_blended(player_key, season, week, points, "
+            "computed_at) VALUES (?,?,?,?,?)",
+            (key, SEASON, WEEK, pts, db.utcnow()),
+        )
+    conn.commit()
+
+    snap = (
+        LeagueBuilder(LEAGUE, SEASON, WEEK)
+        .roster(MY_TEAM, "todo|QB", "QB", "Butt Fumblers")
+        .roster(MY_TEAM, "done|QB", "BN", "Butt Fumblers")
+        .build()
+    )
+    snap.locked = {"done|QB"}
+
+    report = lineup.run(conn, LEAGUE, MY_TEAM, SEASON, WEEK, {"QB": 1},
+                        snapshot=snap, min_gap=0.1)
+    conn.close()
+
+    moved = {s.bench_in.name for s in report.swaps}
+    assert "Already Played" not in moved, (
+        "recommended starting a player whose game is already over"
+    )

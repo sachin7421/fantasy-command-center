@@ -161,6 +161,28 @@ def load_roster(
     return out
 
 
+def _with_locked(solved, locked_starters):
+    """Re-insert players whose game is settled into the solved lineup.
+
+    They were removed before solving because their week cannot change. The
+    report still has to show them: they are in the lineup, their points are in
+    the total, and a manager reading it needs to see his whole team.
+    """
+    from src.lineup_solver import Lineup, LineupSlot
+
+    slots = list(solved.slots)
+    for held in locked_starters:
+        slots.append(
+            LineupSlot(
+                slot=(held.selected_pos or held.position or "").upper(),
+                player=held,
+                points=held.points,
+            )
+        )
+    total = sum(s.points for s in slots if s.player is not None)
+    return Lineup(slots=slots, total=total, bench=list(solved.bench))
+
+
 def run(
     conn: Database,
     league_key: str,
@@ -189,13 +211,49 @@ def run(
     # is right in general - so an Out or on-bye player was still assigned a
     # slot, `is_complete` came back True, and the "roster is short this week"
     # warning stayed silent in precisely the week it mattered.
-    playable = [p for p in roster if p.startable]
-    optimal = best_lineup(
+    # A settled game is a fact. Valuing a player who has already played at his
+    # PROJECTION made the optimiser name Matthew Stafford the best quarterback
+    # at 18.0 when he had finished on 5.1, while Dak Prescott's game was still
+    # to come - and the only thing that stopped it recommending the swap was
+    # the gain falling under the threshold by eight tenths of a point.
+    #
+    # Locked players keep whatever slot they are in and are not offered for any
+    # other. They are still IN the lineup, so the totals stay honest.
+    locked = set(getattr(snapshot, "locked", ()) or ())
+
+    # A locked STARTER keeps his slot and his points. Excluding him outright
+    # was the opposite error to valuing him at his projection: it dropped two
+    # players who had already scored out of the "optimal" lineup and made a
+    # settled 114 look like a 99.
+    #
+    # So his slot comes off the board before the solver runs, and the rest of
+    # the roster is optimised over what is left. A locked player on the BENCH
+    # stays there - his week is over either way.
+    locked_starters = [
+        p for p in roster
+        if p.player_key in locked
+        and p.selected_pos
+        and p.selected_pos.upper() not in BENCH_SLOTS
+    ]
+    remaining_slots = dict(starting_slots)
+    for held in locked_starters:
+        slot = (held.selected_pos or "").upper()
+        for name in (slot, held.position):
+            if remaining_slots.get(name):
+                remaining_slots[name] -= 1
+                break
+
+    playable = [p for p in roster if p.startable and p.player_key not in locked]
+    solved = best_lineup(
         playable,
-        starting_slots,
+        remaining_slots,
         points_of=lambda p: p.effective(mode),
         position_of=lambda p: p.position,
     )
+
+    # Put the locked starters back where they already are, so the totals and
+    # the printed lineup describe the team that is actually playing.
+    optimal = _with_locked(solved, locked_starters)
 
     currently_starting = {
         p.player_key for p in roster

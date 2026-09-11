@@ -98,6 +98,19 @@ _NAME_NOISE = re.compile(
 )
 
 
+def settled_names(text: str) -> set[str]:
+    """Names whose game has already kicked off, from a pasted roster."""
+    lines = [raw.replace("\t", " ").split("#", 1)[0].strip()
+             for raw in text.splitlines()]
+    out: set[str] = set()
+    for i, line in enumerate(lines):
+        if _TEAM_POS.match(line) and _is_settled(lines, i):
+            name = _clean_name(lines, i)
+            if name:
+                out.add(name)
+    return out
+
+
 def parse_lines(text: str) -> list[tuple[str | None, str]]:
     """(slot, name) for each player in a pasted Yahoo roster.
 
@@ -166,6 +179,18 @@ def _clean_name(lines: list[str], anchor: int) -> str | None:
     if flagged:
         stripped = stripped[:-1]
     return stripped or None
+
+
+#: The matchup line sits directly under "TEAM - POS". "Final L 7-27 vs SF"
+#: means the week is settled; "Sun 1:00 pm @ Det" means it is not. Anything
+#: already in progress counts as settled too - you cannot change a lineup once
+#: a player has taken a snap.
+_SETTLED = re.compile(r"\b(final|in progress|halftime|\dq\b)", re.IGNORECASE)
+
+
+def _is_settled(lines: list[str], anchor: int) -> bool:
+    below = lines[anchor + 1] if anchor + 1 < len(lines) else ""
+    return bool(_SETTLED.search(below))
 
 
 def _parse_table(lines: list[str], anchors: list[int]) -> list[tuple[str | None, str]]:
@@ -252,6 +277,7 @@ def load_roster(
     )
     snapshot.is_manual = True
     unmatched: list[str] = []
+    settled = settled_names(text)
 
     def resolve(words: list[str], slot: str | None) -> str | None:
         """Longest prefix of `words` that names a player we know.
@@ -286,6 +312,8 @@ def load_roster(
         snapshot.rosters.append(
             RosterSpot(str(team_key), team_name, player_key, slot)
         )
+        if name in settled:
+            snapshot.locked.add(player_key)
     return snapshot, unmatched
 
 

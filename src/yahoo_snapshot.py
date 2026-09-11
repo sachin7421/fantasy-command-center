@@ -98,6 +98,11 @@ class LeagueSnapshot:
     #: need more have to SAY so - an empty league reported as a quiet week is
     #: the failure the manual path exists to end.
     is_manual: bool = False
+    #: Players whose game has already kicked off or finished. Their week is
+    #: settled, so a projection for them is a fiction and the lineup optimiser
+    #: must not move them in either direction - starting one swaps a known
+    #: score for a guess, benching one pretends banked points can be returned.
+    locked: set[str] = field(default_factory=set)
     #: Yahoo players no name match could place. Surfaced, never silently
     #: dropped - see YahooIdIndex.
     unmatched: list[str] = field(default_factory=list)

@@ -316,3 +316,36 @@ def test_the_trailing_column_headers_are_not_players():
     for header in ("Fan Pts", "Proj Pts", "Blk Kick", "Fum Rec",
                    "Defense/Special Teams", "Details"):
         assert header not in names
+
+
+def test_players_whose_game_is_over_are_marked_locked(conn):
+    """A finished game is a fact, and a projection for it is a fiction.
+
+    The real paste has four players whose games were Final. The optimiser
+    valued Matthew Stafford at his 17.96 PROJECTION and called him the optimal
+    QB - he had already played and scored 5.10, while Dak Prescott's game was
+    still to come. Acting on that swaps a known 5.1 for a likely 17, and the
+    only reason it was not recommended is that the gain fell under the swap
+    threshold by eight tenths of a point.
+    """
+    from src.idmap import IdMapper
+    from src.manual_roster import load_roster
+
+    idmap = IdMapper(conn)
+    for name, pos, team in [
+        ("Matthew Stafford", "QB", "LAR"), ("Kyren Williams", "RB", "LAR"),
+        ("Puka Nacua", "WR", "LAR"), ("TreVeyon Henderson", "RB", "NE"),
+        ("Dak Prescott", "QB", "DAL"),
+    ]:
+        idmap.upsert_player(full_name=name, position=pos, team=team)
+    conn.commit()
+
+    snap, _ = load_roster(conn, REAL_PASTE, league_key="x", season=2026,
+                          week=1, team_key="4")
+
+    assert "matthew stafford|QB" in snap.locked
+    assert "kyren williams|RB" in snap.locked
+    assert "puka nacua|WR" in snap.locked
+    assert "treveyon henderson|RB" in snap.locked
+    # Dak plays Sunday night; nothing about him is settled.
+    assert "dak prescott|QB" not in snap.locked
