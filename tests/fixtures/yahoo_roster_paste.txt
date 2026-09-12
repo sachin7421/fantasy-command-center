@@ -1,11 +1,23 @@
+# A verbatim copy of the Yahoo roster page STRUCTURE, with every
+# Yahoo-generated number replaced by a placeholder.
+#
+# The structure is what the parser has to cope with and is not Yahoo's data -
+# it is the shape of a web page. The projections, start percentages and scores
+# that were originally here ARE Yahoo's data, and committing them to a public
+# repository was a breach of obligation 1. They are placeholders now.
+#
+# Player names and slots are the manager's own roster, which is the same
+# category as the league settings in src/league_bootstrap.py: his record of
+# his own team.
+
 Dak PrescottVideo ForecastPlayer Note
 Dal - QB
 Sun 8:20 pm @ NYG
-14
+0
 –
-18.27
-76%
-97%
+0.00
+0%
+0%
 -
 -
 -
@@ -24,21 +36,21 @@ RB
 Kyren Williams
 Kyren WilliamsVideo ForecastNew Player Note
 LAR - RB
-Final L 7-27 vs SF
-11
-14.00
-12.90
-96%
-100%
+Final L  0-0 vs SF
+0
+0.00
+0.00
+0%
+0%
 -
 -
 -
-11
-41
-1
-3
-3
-24
+0
+0
+0
+0
+0
+0
 0
 -
 -
@@ -49,11 +61,11 @@ Travis Etienne Jr.
 Travis Etienne Jr.Video ForecastPlayer Note
 NO - RB
 Sun 1:00 pm @ Det
-8
+0
 –
-12.54
-91%
-99%
+0.00
+0%
+0%
 -
 -
 -
@@ -72,21 +84,21 @@ WR
 Puka Nacua
 Puka NacuaVideo ForecastNew Player Note
 LAR - WR
-Final L 7-27 vs SF
-11
-9.90
-16.35
-100%
-100%
+Final L  0-0 vs SF
+0
+0.00
+0.00
+0%
+0%
 -
 -
 -
 -
 -
 -
-9
-5
-74
+0
+0
+0
 0
 -
 -
@@ -97,11 +109,11 @@ Tee Higgins
 Tee HigginsVideo ForecastNew Player Note
 Cin - WR
 Sun 1:00 pm vs TB
-6
+0
 –
-13.06
-94%
-100%
+0.00
+0%
+0%
 -
 -
 -
@@ -121,11 +133,11 @@ Tyler Warren
 Tyler WarrenVideo ForecastPlayer Note
 Ind - TE
 Sun 1:00 pm vs Bal
-13
+0
 –
-10.16
-96%
-100%
+0.00
+0%
+0%
 -
 -
 -
@@ -145,11 +157,11 @@ Rome Odunze
 Rome OdunzeQNew Player Note
 Chi - WR
 Sun 1:00 pm @ Car
-10
+0
 –
-9.42
-42%
-96%
+0.00
+0%
+0%
 -
 -
 -
@@ -169,11 +181,11 @@ Jalen Coker
 Jalen CokerPlayer Note
 Car - WR
 Sun 1:00 pm vs Chi
-5
+0
 –
-8.88
-7%
-59%
+0.00
+0%
+0%
 -
 -
 -
@@ -192,12 +204,12 @@ BN
 TreVeyon Henderson
 TreVeyon HendersonOVideo ForecastPlayer Note
 NE - RB
-Final L 10-13 @ Sea
-11
+Final L  0-0 @ Sea
+0
 0.00
 0.00
-9%
-94%
+0%
+0%
 -
 -
 -
@@ -217,11 +229,11 @@ Jacory Croskey-Merritt
 Jacory Croskey-MerrittNew Player Note
 Was - RB
 Sun 4:25 pm @ Phi
-7
+0
 –
-8.33
-8%
-85%
+0.00
+0%
+0%
 -
 -
 -
@@ -240,16 +252,16 @@ BN
 Matthew Stafford
 Matthew StaffordVideo ForecastNew Player Note
 LAR - QB
-Final L 7-27 vs SF
-11
-5.10
-17.96
-41%
-92%
-155
+Final L  0-0 vs SF
 0
-1
-2
+0.00
+0.00
+0%
+0%
+0
+0
+0
+0
 -1
 0
 -
@@ -265,11 +277,11 @@ Mike Washington Jr.
 Mike Washington Jr.Video ForecastPlayer Note
 LV - RB
 Sun 4:25 pm vs Mia
-13
+0
 –
-6.66
-2%
-54%
+0.00
+0%
+0%
 -
 -
 -
@@ -289,11 +301,11 @@ Jake Ferguson
 Jake FergusonPlayer Note
 Dal - TE
 Sun 8:20 pm @ NYG
-14
+0
 –
-7.26
-26%
-79%
+0.00
+0%
+0%
 -
 -
 -
@@ -313,11 +325,11 @@ Jordan Love
 Jordan LoveVideo ForecastPlayer Note
 GB - QB
 Sun 4:25 pm @ Min
-11
+0
 –
-16.46
-12%
-68%
+0.00
+0%
+0%
 -
 -
 -
@@ -365,11 +377,11 @@ Jaguars
 JaguarsNo new player Notes
 Jax - DEF
 Sun 1:00 pm vs Cle
-7
+0
 –
-7.83
-86%
-88%
+0.00
+0%
+0%
 -
 -
 -

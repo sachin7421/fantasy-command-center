@@ -904,6 +904,106 @@ def _tab_edge(conn, season: int):
             st.markdown("Earned blend weights: " + chips, unsafe_allow_html=True)
 
 
+def _this_week(cfg, conn, league_key, season, slots):
+    """Your lineup, and what to change about it. First thing on the page.
+
+    Season mode opened on buy-low/sell-high, which is gated at three games
+    played - so in week 2 the first thing on screen was an empty state, and
+    would be until roughly week 4. Nothing anywhere showed the roster, the
+    lineup, or this week's decision.
+    """
+    from src import manual_roster
+    from src.season import lineup as lineup_job
+
+    week = st.number_input(
+        "Week", min_value=1, max_value=18,
+        value=int(cfg.get("league.current_week") or 1), step=1, key="tw_week",
+    )
+    team_key = str(cfg.get("league.my_team_id") or "")
+    if not team_key:
+        st.warning("Set `league.my_team_id` in config.yaml to see your team.")
+        return
+
+    path = manual_roster.roster_path(cfg)
+    loaded = manual_roster.load_from_file(
+        conn, path, league_key=league_key, season=season, week=int(week),
+        team_key=team_key, team_name="Butt Fumblers",
+    )
+    if loaded is None:
+        st.info(
+            f"No roster yet. Paste your team from the Yahoo roster page into "
+            f"`{path}` - the slot column and all - and this fills in.\n\n"
+            "Create the file with `python fcc.py roster --init`."
+        )
+        return
+
+    snapshot, unmatched = loaded
+    if unmatched:
+        st.error(
+            f"{len(unmatched)} player(s) could not be matched: "
+            + ", ".join(unmatched)
+            + ". They are missing from everything below until they do."
+        )
+
+    report = lineup_job.run(
+        conn, league_key, team_key, season, int(week), slots, snapshot=snapshot
+    )
+    if not report.has_data:
+        st.warning(
+            f"{report.roster_size} player(s) on the roster, "
+            f"{report.projected} with a week {week} projection. "
+            "Run `python fcc.py sync` and this fills in."
+        )
+        return
+
+    left, middle, right = st.columns(3)
+    left.metric("Your lineup", f"{report.current_points:.1f}")
+    middle.metric("Best legal lineup", f"{report.optimal_points:.1f}",
+                  delta=f"{report.gain:+.1f}")
+    right.metric("Changes to make", len(report.swaps))
+
+    if report.swaps:
+        st.markdown("<div class='fcc-section'>Change these</div>",
+                    unsafe_allow_html=True)
+        for swap in report.swaps:
+            st.markdown(
+                f"**{swap.slot}** &nbsp; start **{swap.bench_in.name}** "
+                f"over {swap.starter_out.name if swap.starter_out else '(empty slot)'}"
+                f" &nbsp; `{swap.gain:+.1f}`"
+            )
+            for reason in swap.reasons[:2]:
+                st.caption(f"+ {reason}")
+    else:
+        st.success("Your lineup is already the best legal one for this week.")
+
+    for warning in report.warnings:
+        st.warning(warning)
+
+    locked = getattr(snapshot, "locked", set())
+    rows = []
+    for slot in report.optimal.slots:
+        player = slot.player
+        if player is None:
+            rows.append({"Slot": slot.slot, "Player": "(empty)", "Proj": None})
+            continue
+        rows.append({
+            "Slot": slot.slot,
+            "Player": player.name + (" (played)" if player.player_key in locked else ""),
+            "Pos": player.position,
+            "Proj": round(player.points, 1),
+            "Status": player.injury_status or "",
+        })
+    st.markdown("<div class='fcc-section'>Best legal lineup</div>",
+                unsafe_allow_html=True)
+    st.dataframe(rows, width="stretch", hide_index=True)
+
+    gaps = snapshot.describe_gaps()
+    if gaps:
+        st.caption(
+            gaps + " Waivers and the trade scout need Yahoo API access."
+        )
+
+
 def season_view(cfg, conn, league_key):
     settings = settings_of(conn, league_key)
     slots = starting_slots_of(settings)
@@ -914,14 +1014,18 @@ def season_view(cfg, conn, league_key):
     st.sidebar.caption(f"Data: {db.describe_backend()}")
 
     tabs = st.tabs(
-        ["Edge", "Activity", "Injuries", "Waiver heat", "Board", "Positional shape"]
+        ["This week", "Edge", "Activity", "Injuries", "Waiver heat", "Board",
+         "Positional shape"]
     )
 
     with tabs[0]:
+        _this_week(cfg, conn, league_key, season, slots)
+
+    with tabs[1]:
         _tab_edge(conn, season)
 
 
-    with tabs[1]:
+    with tabs[2]:
         st.markdown("<div class='fcc-section'>Recent job output</div>",
                     unsafe_allow_html=True)
         rows = conn.fetchall(
@@ -941,7 +1045,7 @@ def season_view(cfg, conn, league_key):
             ):
                 st.text("\n".join(payload.get("lines", [])))
 
-    with tabs[2]:
+    with tabs[3]:
         rows = conn.fetchall(
             """
             SELECT p.full_name AS player, p.position, p.team, i.status,
@@ -957,7 +1061,7 @@ def season_view(cfg, conn, league_key):
         )
         st.dataframe([dict(r) for r in rows], width="stretch", hide_index=True, height=520)
 
-    with tabs[3]:
+    with tabs[4]:
         st.caption(
             "Trending adds across all Sleeper leagues — a leading indicator of who "
             "your league-mates are about to claim."
@@ -974,7 +1078,7 @@ def season_view(cfg, conn, league_key):
         )
         st.dataframe([dict(r) for r in rows], width="stretch", hide_index=True, height=520)
 
-    with tabs[4]:
+    with tabs[5]:
         board = board_for(cfg, conn, season, slots, teams)
         st.dataframe(
             [
@@ -989,7 +1093,7 @@ def season_view(cfg, conn, league_key):
             width="stretch", hide_index=True, height=560,
         )
 
-    with tabs[5]:
+    with tabs[6]:
         board = board_for(cfg, conn, season, slots, teams)
         chart = charts.value_curve(board.players, height=380)
         if chart is not None:

@@ -18,3 +18,8 @@ __pycache__/
 .pytest_cache/
 .streamlit/secrets.toml
 .coverage
+
+# Your roster, pasted from the Yahoo page. NEVER committed: the paste carries
+# Yahoo's projections, start percentages and scores, and this repository is
+# public. It is also yours, and nobody else needs it to run the code.
+data/roster.txt
