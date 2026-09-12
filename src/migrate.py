@@ -31,6 +31,9 @@ TABLES: list[tuple[str, tuple[str, ...]]] = [
     ("injuries", ("player_key", "source", "observed_at")),
     ("trending", ("player_key", "kind", "fetched_at")),
     ("draft_picks", ("league_key", "pick")),
+    # The manager's own roster. Migrated because it is OURS - slots and
+    # our player keys, with nothing Yahoo generated in it.
+    ("my_roster", ("league_key", "season", "week", "team_key", "player_key")),
     ("snapshots", ("kind", "taken_at")),
     ("source_cache", ("cache_key",)),
     ("player_week_usage", ("player_key", "season", "week")),

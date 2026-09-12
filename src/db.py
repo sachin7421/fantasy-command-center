@@ -122,6 +122,29 @@ CREATE TABLE IF NOT EXISTS projections_blended (
 --
 -- Migration 0002 drops them from databases that predate the agreement.
 
+-- The manager's own record of his own team, typed in or pasted by him.
+--
+-- Deliberately NOT the `rosters` table that was dropped. That one held what
+-- Yahoo's API returned about every team in the league, which the agreement
+-- forbids keeping. This holds one team - his - as slots and OUR player keys,
+-- with no Yahoo projection, percentage or score anywhere in it. Same category
+-- as the league settings in src/league_bootstrap.py: a person read a screen
+-- and wrote it down.
+--
+-- Who has already played is NOT stored. It changes during the week, and a
+-- recorded score in player_week_actuals says it from our own nflverse data.
+CREATE TABLE IF NOT EXISTS my_roster (
+    league_key TEXT NOT NULL,
+    season     INTEGER NOT NULL,
+    week       INTEGER NOT NULL,
+    team_key   TEXT NOT NULL,
+    player_key TEXT NOT NULL,
+    slot       TEXT,
+    played     INTEGER NOT NULL DEFAULT 0,
+    entered_at TEXT NOT NULL,
+    PRIMARY KEY (league_key, season, week, team_key, player_key)
+);
+
 CREATE TABLE IF NOT EXISTS draft_picks (
     league_key   TEXT NOT NULL,
     pick         INTEGER NOT NULL,

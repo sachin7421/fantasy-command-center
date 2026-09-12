@@ -924,20 +924,43 @@ def _this_week(cfg, conn, league_key, season, slots):
         st.warning("Set `league.my_team_id` in config.yaml to see your team.")
         return
 
-    path = manual_roster.roster_path(cfg)
-    loaded = manual_roster.load_from_file(
-        conn, path, league_key=league_key, season=season, week=int(week),
+    snapshot = manual_roster.load_from_db(
+        conn, league_key=league_key, season=season, week=int(week),
         team_key=team_key, team_name="Butt Fumblers",
     )
-    if loaded is None:
-        st.info(
-            f"No roster yet. Paste your team from the Yahoo roster page into "
-            f"`{path}` - the slot column and all - and this fills in.\n\n"
-            "Create the file with `python fcc.py roster --init`."
+    unmatched: list[str] = []
+
+    # The paste box. Reading the file worked on a laptop and not on the hosted
+    # app, and the file cannot be committed because the paste it comes from
+    # carries Yahoo's projections. So the roster is entered here and stored.
+    with st.expander("Paste your roster" if snapshot else "Paste your roster to begin",
+                     expanded=snapshot is None):
+        st.caption(
+            "Select your team on the Yahoo roster page - the slot column and "
+            "all - copy, and paste it below. Names and slots are kept; the "
+            "projections and percentages that come with them are discarded."
         )
+        text = st.text_area("Roster", height=200, label_visibility="collapsed",
+                            key="roster_paste")
+        if st.button("Save roster", type="primary", key="roster_save"):
+            parsed, unmatched = manual_roster.load_roster(
+                conn, text, league_key=league_key, season=season,
+                week=int(week), team_key=team_key, team_name="Butt Fumblers",
+            )
+            if not parsed.rosters:
+                st.error(
+                    "Nothing recognisable in that paste. Include the slot "
+                    "column (QB, RB, BN...) or one player name per line."
+                )
+            else:
+                written = manual_roster.save_roster(conn, parsed, team_key)
+                st.cache_data.clear()
+                st.success(f"Saved {written} player(s).")
+                snapshot = parsed
+
+    if snapshot is None or not snapshot.rosters:
         return
 
-    snapshot, unmatched = loaded
     if unmatched:
         st.error(
             f"{len(unmatched)} player(s) could not be matched: "

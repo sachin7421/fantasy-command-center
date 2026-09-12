@@ -198,3 +198,22 @@ def test_the_persistence_gate_covers_every_dropped_yahoo_table():
 
     missing = dropped - set(YAHOO_TABLES)
     assert not missing, f"dropped for holding Yahoo data but not guarded: {missing}"
+
+
+def test_the_yahoo_client_cannot_write_the_manual_roster():
+    """`my_roster` is the manager's own record, and only he may fill it.
+
+    It exists because the Yahoo `rosters` table was removed, so the two are
+    one careless sync apart: a future `collect_roster` that wrote here instead
+    would restore exactly the persistence the agreement forbids, in a table
+    whose name suggests it is ours.
+    """
+    import inspect
+
+    from src import yahoo_client
+
+    source = inspect.getsource(yahoo_client)
+    assert "my_roster" not in source, (
+        "src/yahoo_client.py references my_roster; Yahoo league state must "
+        "never be written there"
+    )

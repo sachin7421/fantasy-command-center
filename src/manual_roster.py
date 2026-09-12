@@ -338,3 +338,108 @@ def write_template(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(TEMPLATE, encoding="utf-8")
     return path
+
+
+def save_roster(conn: Database, snapshot, team_key: str) -> int:
+    """Store the roster so every reader shares it. Returns rows written.
+
+    Replaces rather than appends: a re-paste is a correction, and appending
+    would leave dropped players on the team forever, with the lineup optimiser
+    still offering someone who is no longer on it.
+
+    Only slots and our own player keys are written. Everything Yahoo generated
+    - the projections, the percentages, the scores that came off the same page
+    - was discarded by the parser and never reaches here.
+    """
+    from src import db
+
+    conn.execute(
+        "DELETE FROM my_roster WHERE league_key=? AND season=? AND week=? "
+        "AND team_key=?",
+        (snapshot.league_key, int(snapshot.season), int(snapshot.week),
+         str(team_key)),
+    )
+    now = db.utcnow()
+    written = 0
+    for spot in snapshot.roster_spots_for(team_key):
+        conn.execute(
+            "INSERT INTO my_roster(league_key, season, week, team_key, "
+            "player_key, slot, played, entered_at) VALUES (?,?,?,?,?,?,?,?)",
+            (snapshot.league_key, int(snapshot.season), int(snapshot.week),
+             str(team_key), spot.player_key, spot.selected_pos,
+             # Finality is monotonic - a game that was over when this was
+             # pasted is still over - so recording it can only be
+             # conservative. nflverse publishes actuals days later, and
+             # without this the optimiser is free to recommend starting
+             # someone who has already finished.
+             1 if spot.player_key in getattr(snapshot, "locked", ()) else 0,
+             now),
+        )
+        written += 1
+    conn.commit()
+    return written
+
+
+def load_from_db(
+    conn: Database, *, league_key: str, season: int, week: int, team_key: str,
+    team_name: str | None = None,
+):
+    """The stored roster for a week, or None if none has been entered.
+
+    Falls back to the most recent week entered, because a roster does not stop
+    being true because the week ticked over - a manager who pasted in week 1
+    should not find the app blank in week 2 and be told to paste again.
+    """
+    rows = conn.fetchall(
+        "SELECT player_key, slot, played FROM my_roster WHERE league_key=? "
+        "AND season=? AND week=? AND team_key=?",
+        (league_key, int(season), int(week), str(team_key)),
+    )
+    used_week = int(week)
+    if not rows:
+        latest = conn.fetchone(
+            "SELECT MAX(week) AS w FROM my_roster WHERE league_key=? AND "
+            "season=? AND team_key=?",
+            (league_key, int(season), str(team_key)),
+        )
+        if not latest or latest["w"] is None:
+            return None
+        used_week = int(latest["w"])
+        rows = conn.fetchall(
+            "SELECT player_key, slot, played FROM my_roster WHERE league_key=? "
+            "AND season=? AND week=? AND team_key=?",
+            (league_key, int(season), used_week, str(team_key)),
+        )
+
+    snapshot = LeagueSnapshot(
+        league_key=league_key, season=int(season), week=int(week)
+    )
+    snapshot.is_manual = True
+    for row in rows:
+        snapshot.rosters.append(
+            RosterSpot(str(team_key), team_name, row["player_key"], row["slot"])
+        )
+    # The union of what the paste knew and what nflverse has since published.
+    snapshot.locked = {r["player_key"] for r in rows if r["played"]} | already_played(
+        conn, [r["player_key"] for r in rows], int(season), int(week)
+    )
+    return snapshot
+
+
+def already_played(conn: Database, player_keys, season: int, week: int) -> set[str]:
+    """Which of these have a recorded score for the week.
+
+    Derived, never stored. Who has played changes through the week, so Yahoo's
+    "Final" marker is a point-in-time snapshot that is wrong an hour later. A
+    recorded actual in `player_week_actuals` is our own nflverse data and stays
+    current on its own.
+    """
+    from src.yahoo_snapshot import key_clause
+
+    clause, params = key_clause(player_keys)
+    rows = conn.fetchall(
+        f"SELECT player_key FROM player_week_actuals WHERE season=? AND week=? "
+        f"AND points IS NOT NULL AND player_key IN ({clause})",
+        (int(season), int(week), *params),
+    )
+    return {r["player_key"] for r in rows}

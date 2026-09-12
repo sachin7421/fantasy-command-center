@@ -349,3 +349,145 @@ def test_players_whose_game_is_over_are_marked_locked(conn):
     assert "treveyon henderson|RB" in snap.locked
     # Dak plays Sunday night; nothing about him is settled.
     assert "dak prescott|QB" not in snap.locked
+
+
+# --- storing it, so the hosted app can use it --------------------------------
+
+def test_a_saved_roster_stores_only_our_own_facts(conn):
+    """Slots and OUR player keys. No Yahoo numbers, ever.
+
+    The boundary is the same one that let league settings stay in the
+    repository: a roster the manager typed is his record of his own team. What
+    came off the Yahoo page WITH it - the projections, the start percentages,
+    the scores - is Yahoo's product and is discarded by the parser before this
+    ever sees it.
+    """
+    from src.idmap import IdMapper
+    from src.manual_roster import load_roster, save_roster
+
+    IdMapper(conn).upsert_player(full_name="Dak Prescott", position="QB", team="DAL")
+    conn.commit()
+
+    snap, _ = load_roster(conn, "QB Dak Prescott", league_key="nfl.l.796511",
+                          season=2026, week=1, team_key="4")
+    save_roster(conn, snap, team_key="4")
+
+    row = conn.fetchone("SELECT * FROM my_roster")
+    stored = set(row.keys())
+    for banned in ("points", "proj", "projection", "pct_owned", "pct_start",
+                   "fan_pts", "yahoo_id", "yahoo_key"):
+        assert banned not in stored, f"my_roster stores {banned}"
+    assert row["player_key"] == "dak prescott|QB"
+    assert row["slot"] == "QB"
+
+
+def test_a_saved_roster_round_trips(conn):
+    from src.idmap import IdMapper
+    from src.manual_roster import load_from_db, load_roster, save_roster
+
+    idmap = IdMapper(conn)
+    for name, pos in (("Dak Prescott", "QB"), ("Kyren Williams", "RB")):
+        idmap.upsert_player(full_name=name, position=pos, team="X")
+    conn.commit()
+
+    snap, _ = load_roster(conn, "QB Dak Prescott\nBN Kyren Williams",
+                          league_key="nfl.l.796511", season=2026, week=1,
+                          team_key="4")
+    save_roster(conn, snap, team_key="4")
+
+    back = load_from_db(conn, league_key="nfl.l.796511", season=2026, week=1,
+                        team_key="4")
+    assert back is not None
+    slots = {s.player_key: s.selected_pos for s in back.roster_spots_for("4")}
+    assert slots == {"dak prescott|QB": "QB", "kyren williams|RB": "BN"}
+    assert back.is_manual is True
+
+
+def test_saving_replaces_rather_than_accumulates(conn):
+    """A re-paste is a correction, not an addition.
+
+    Appending would leave dropped players on the roster forever, and the
+    lineup optimiser would keep offering someone who is no longer on the team.
+    """
+    from src.idmap import IdMapper
+    from src.manual_roster import load_from_db, load_roster, save_roster
+
+    idmap = IdMapper(conn)
+    for name, pos in (("Dak Prescott", "QB"), ("Jordan Love", "QB")):
+        idmap.upsert_player(full_name=name, position=pos, team="X")
+    conn.commit()
+
+    for text in ("QB Dak Prescott", "QB Jordan Love"):
+        snap, _ = load_roster(conn, text, league_key="L", season=2026, week=1,
+                              team_key="4")
+        save_roster(conn, snap, team_key="4")
+
+    back = load_from_db(conn, league_key="L", season=2026, week=1, team_key="4")
+    assert back.roster_keys("4") == ["jordan love|QB"]
+
+
+def test_already_played_is_derived_not_stored(conn):
+    """Who has played is a fact about the NFL, and it changes during the week.
+
+    Storing Yahoo's "Final" marker would freeze a point-in-time snapshot that
+    is wrong an hour later. A recorded actual score in player_week_actuals -
+    our own nflverse data - says the same thing and stays current.
+    """
+    from src import db as dbm
+    from src.idmap import IdMapper
+    from src.manual_roster import load_from_db, load_roster, save_roster
+
+    idmap = IdMapper(conn)
+    for name, pos in (("Played Already", "QB"), ("Plays Sunday", "QB")):
+        idmap.upsert_player(full_name=name, position=pos, team="X")
+    conn.execute(
+        "INSERT INTO player_week_actuals(player_key, season, week, points, "
+        "source, recorded_at) VALUES (?,?,?,?,?,?)",
+        ("played already|QB", 2026, 1, 5.1, "nflverse", dbm.utcnow()),
+    )
+    conn.commit()
+
+    snap, _ = load_roster(conn, "QB Played Already\nBN Plays Sunday",
+                          league_key="L", season=2026, week=1, team_key="4")
+    save_roster(conn, snap, team_key="4")
+
+    back = load_from_db(conn, league_key="L", season=2026, week=1, team_key="4")
+    assert back.locked == {"played already|QB"}
+
+
+def test_a_game_that_was_final_when_pasted_stays_locked(conn):
+    """nflverse publishes results days later, so actuals alone are not enough.
+
+    On the real roster, four games were Final when pasted but nflverse had no
+    2026 actuals at all - so deriving "already played" only from
+    player_week_actuals returned nothing, and the optimiser was free to
+    recommend starting a quarterback who had finished on 5.1 again.
+
+    Finality is MONOTONIC: a game that was final when pasted is still final.
+    So the paste's own marker is stored and unioned with the actuals, which
+    can only ever be conservative - it cannot wrongly unlock anybody.
+    """
+    from src.idmap import IdMapper
+    from src.manual_roster import load_from_db, load_roster, save_roster
+
+    idmap = IdMapper(conn)
+    for name, pos in (("Matthew Stafford", "QB"), ("Dak Prescott", "QB")):
+        idmap.upsert_player(full_name=name, position=pos, team="X")
+    conn.commit()
+
+    paste = (
+        "BN\nMatthew Stafford\nMatthew StaffordPlayer Note\nLAR - QB\n"
+        "Final L 7-27 vs SF\n"
+        "QB\nDak Prescott\nDak PrescottPlayer Note\nDal - QB\n"
+        "Sun 8:20 pm @ NYG\n"
+    )
+    snap, _ = load_roster(conn, paste, league_key="L", season=2026, week=1,
+                          team_key="4")
+    assert snap.locked == {"matthew stafford|QB"}
+    save_roster(conn, snap, team_key="4")
+
+    # No actuals exist for 2026 at all, exactly as in production.
+    back = load_from_db(conn, league_key="L", season=2026, week=1, team_key="4")
+    assert back.locked == {"matthew stafford|QB"}, (
+        "the paste knew this game was over and the stored roster forgot"
+    )

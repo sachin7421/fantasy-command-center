@@ -200,6 +200,15 @@ class Context:
         team_key = self.team_key()
         if not team_key:
             return None
+        # The database first, so the hosted dashboard and this share one
+        # roster. The file is the way to GET one in, not where it lives.
+        stored = manual_roster.load_from_db(
+            self.conn, league_key=self.league_key, season=int(season),
+            week=int(week), team_key=str(team_key), team_name="Butt Fumblers",
+        )
+        if stored is not None and stored.rosters:
+            return stored
+
         loaded = manual_roster.load_from_file(
             self.conn, manual_roster.roster_path(self.cfg),
             league_key=self.league_key, season=int(season), week=int(week),
@@ -208,6 +217,13 @@ class Context:
         if loaded is None:
             return None
         snapshot, unmatched = loaded
+        # Saved on first read, so a roster entered once is available to the
+        # dashboard and to every later job without pasting it again.
+        if snapshot.rosters and not unmatched:
+            manual_roster.save_roster(self.conn, snapshot, str(team_key))
+        snapshot.locked = manual_roster.already_played(
+            self.conn, snapshot.roster_keys(str(team_key)), int(season), int(week)
+        )
         if unmatched:
             print(f"  {len(unmatched)} name(s) in your roster file could not be "
                   f"matched: {', '.join(unmatched)}")
