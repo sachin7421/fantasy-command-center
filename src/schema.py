@@ -62,6 +62,37 @@ def current_version(conn: Database) -> int:
     return int(row["v"]) if row and row["v"] is not None else 0
 
 
+#: A migration may declare a precondition the runner checks first:
+#:
+#:     -- if-missing-column: my_roster.played
+#:     ALTER TABLE my_roster ADD COLUMN played INTEGER NOT NULL DEFAULT 0;
+#:
+#: ALTER TABLE ADD COLUMN is not idempotent, and the upgrade path replays every
+#: migration against a schema that may already have its effects. Postgres has
+#: ADD COLUMN IF NOT EXISTS; SQLite does not. Catching the duplicate-column
+#: error instead would mean swallowing a failure to find out whether it
+#: mattered, which is the habit this project keeps having to break.
+_IF_MISSING_COLUMN = re.compile(
+    r"^--\s*if-missing-column:\s*(\w+)\.(\w+)\s*$", re.MULTILINE
+)
+
+
+def should_run(conn: Database, sql: str) -> bool:
+    """Whether a migration's precondition is met. True when it declares none."""
+    match = _IF_MISSING_COLUMN.search(sql)
+    if not match:
+        return True
+    table, column = match.group(1), match.group(2)
+    try:
+        return not conn.column_exists(table, column)
+    except Exception as exc:
+        log.warning(
+            "Could not check %s.%s for migration precondition (%s); running it",
+            table, column, exc,
+        )
+        return True
+
+
 def apply(conn: Database, baseline: str) -> list[int]:
     """Bring `conn` up to date. Returns the migrations that ran.
 
@@ -100,7 +131,10 @@ def apply(conn: Database, baseline: str) -> list[int]:
             continue
         sql = schema_for(conn.dialect, template=path.read_text(encoding="utf-8"))
         log.info("Applying migration %s", path.name)
-        conn.executescript(sql)
+        if should_run(conn, sql):
+            conn.executescript(sql)
+        else:
+            log.info("migration %s precondition already satisfied; skipped", number)
         _stamp(conn, number)
         ran.append(number)
 

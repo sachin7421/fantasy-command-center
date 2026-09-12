@@ -16,4 +16,5 @@
 -- still over - so recording it can only ever be conservative. It is unioned
 -- with the actuals at read time.
 
+-- if-missing-column: my_roster.played
 ALTER TABLE my_roster ADD COLUMN played INTEGER NOT NULL DEFAULT 0;

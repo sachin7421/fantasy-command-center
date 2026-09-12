@@ -100,3 +100,43 @@ def test_the_migration_copies_every_table_in_the_schema():
 
     unknown = listed - declared
     assert not unknown, f"migrated but not in the schema: {sorted(unknown)}"
+
+
+def test_a_guarded_migration_is_skipped_when_the_column_exists(tmp_path):
+    """`ALTER TABLE ADD COLUMN` is not idempotent, and migrations must be.
+
+    A fresh database runs the baseline and stamps every migration without
+    replaying it, so the baseline carries every column. But the UPGRADE path -
+    an existing database with no version table - replays the whole chain
+    against a schema that may already have their effects, and Postgres
+    supports `ADD COLUMN IF NOT EXISTS` while SQLite does not.
+
+    So a migration can declare what it needs, and the runner checks. That is
+    explicit and inspectable, where catching the duplicate-column error would
+    be swallowing a failure to find out whether it mattered.
+    """
+    from src import schema
+
+    conn = db.init_db(tmp_path / "guard.db")
+    sql = (
+        "-- if-missing-column: my_roster.played\n"
+        "ALTER TABLE my_roster ADD COLUMN played INTEGER NOT NULL DEFAULT 0;"
+    )
+    # The baseline already created it, so this must be a no-op rather than an
+    # error - and must not raise.
+    assert schema.should_run(conn, sql) is False
+
+    guarded = (
+        "-- if-missing-column: my_roster.nonexistent\n"
+        "ALTER TABLE my_roster ADD COLUMN nonexistent TEXT;"
+    )
+    assert schema.should_run(conn, guarded) is True
+    conn.close()
+
+
+def test_an_unguarded_migration_always_runs(tmp_path):
+    from src import schema
+
+    conn = db.init_db(tmp_path / "plain.db")
+    assert schema.should_run(conn, "CREATE TABLE IF NOT EXISTS x (a TEXT);") is True
+    conn.close()

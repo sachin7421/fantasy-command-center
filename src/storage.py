@@ -438,6 +438,25 @@ class Database:
             return None
         return next(iter(row.values())) if isinstance(row, dict) else row[0]
 
+    def column_exists(self, table: str, column: str) -> bool:
+        """Whether a column is present. Used by guarded migrations.
+
+        `ALTER TABLE ADD COLUMN` is not idempotent and the upgrade path replays
+        every migration, so a migration that adds a column has to be able to
+        ask first. Postgres has ADD COLUMN IF NOT EXISTS and SQLite does not,
+        so the question is asked here rather than in the SQL.
+        """
+        if self.dialect == "sqlite":
+            rows = self.fetchall(f"PRAGMA table_info({table})")
+            return any(str(r["name"]) == column for r in rows)
+        return bool(
+            self.fetchone(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema='public' AND table_name=%s AND column_name=%s",
+                (table, column),
+            )
+        )
+
     def table_exists(self, name: str) -> bool:
         if self.dialect == "sqlite":
             return bool(
