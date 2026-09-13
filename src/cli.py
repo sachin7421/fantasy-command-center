@@ -1852,6 +1852,68 @@ def cmd_streamers(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+def cmd_offer(ctx: Context, args) -> int:
+    """Evaluate a trade somebody offered you.
+
+        fcc offer --give "Puka Nacua" --get "Kyren Williams"
+        fcc offer --give "Puka Nacua,Jake Ferguson" --get "Kyren Williams"
+
+    Your roster comes from the one you entered. Add --their-roster to value
+    their side too, which answers the second question - whether they will
+    actually accept.
+    """
+    from src.season import trade_offer
+
+    season = ctx.season
+    week = args.week if args.week is not None else ctx.current_week()
+    slots = ctx.starting_slots()
+    team_key = ctx.team_key() or ""
+
+    snapshot = ctx.league_snapshot(season, week)
+    if snapshot is None or not snapshot.roster_keys(team_key):
+        print("No roster stored, so there is nothing to measure the trade")
+        print("against. Enter one with `fcc roster --init`, or in the")
+        print("dashboard's This week tab.")
+        return EXIT_FAIL
+
+    names = _names_for(ctx, snapshot.roster_keys(team_key))
+    give = [n.strip() for n in str(args.give or "").split(",") if n.strip()]
+    get = [n.strip() for n in str(args.get or "").split(",") if n.strip()]
+    theirs = [n.strip() for n in str(args.their_roster or "").split(",") if n.strip()]
+
+    if not give or not get:
+        print("Both sides are needed: --give and --get.")
+        return EXIT_FAIL
+
+    verdict = trade_offer.evaluate(
+        ctx.conn, season, week, slots,
+        my_roster=names, i_give=give, i_get=get,
+        their_roster=theirs or None,
+    )
+
+    print(f"\nYou give : {', '.join(give)}")
+    print(f"You get  : {', '.join(get)}\n")
+    for line in verdict.describe():
+        print(f"  {line}")
+
+    if verdict.accept is None:
+        return EXIT_FAIL
+    print("")
+    print(f"  VERDICT: {'take it' if verdict.accept else 'decline'}")
+    return EXIT_OK
+
+
+def _names_for(ctx: Context, keys) -> list[str]:
+    """Player names for a set of keys, for a module that works in names."""
+    from src.yahoo_snapshot import key_clause
+
+    clause, params = key_clause(keys)
+    rows = ctx.conn.fetchall(
+        f"SELECT full_name FROM players WHERE player_key IN ({clause})", params
+    )
+    return [r["full_name"] for r in rows]
+
+
 def cmd_check(ctx: Context, args) -> int:
     """Run the static analysers over the source tree.
 
@@ -2079,6 +2141,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_stream.add_argument("--position", default="DEF")
     p_stream.add_argument("--week", type=int)
 
+    p_offer = sub.add_parser(
+        "offer", help="evaluate a trade somebody offered you"
+    )
+    p_offer.add_argument("--give", required=True,
+                         help="players you would send, comma separated")
+    p_offer.add_argument("--get", required=True,
+                         help="players you would receive, comma separated")
+    p_offer.add_argument("--their-roster", dest="their_roster",
+                         help="their full roster, to value their side too")
+    p_offer.add_argument("--week", type=int)
+
     p_check = sub.add_parser("check", help="run the static analysers")
     p_check.add_argument("--only", help="comma-separated subset, e.g. ruff,mypy")
 
@@ -2107,6 +2180,7 @@ HANDLERS = {
     "playoffs": cmd_playoffs,
     "faab": cmd_faab,
     "check": cmd_check,
+    "offer": cmd_offer,
     "streamers": cmd_streamers,
     "roster": cmd_roster,
     "purge-yahoo": cmd_purge_yahoo,
