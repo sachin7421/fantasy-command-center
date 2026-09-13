@@ -864,3 +864,41 @@ def test_setup_does_not_point_at_a_command_that_crashes():
         "the Yahoo client still reads a table that no longer exists"
     )
     assert "Next: run `fcc sync-settings`" not in inspect.getsource(cli)
+
+
+# --- telling "not provisioned yet" apart from everything else ----------------
+
+def test_access_is_reported_as_not_yet_provisioned(tmp_path):
+    """Approved, signed, countersigned - and the scope is not live yet.
+
+    Yahoo grants Fantasy Sports permission server-side after they have BOTH
+    the signed agreement and the confirmation form, so there is a real window
+    where credentials are perfect and every call is refused. `doctor` reported
+    only "configured", which is true and useless: it looks identical to
+    working, and the raw failure surfaces later inside a scheduled job.
+    """
+    from src.yahoo_client import classify_access_error
+
+    for message in (
+        "401 Unauthorized",
+        "403 Forbidden: insufficient scope",
+        "Please provide valid credentials OAuth oauth_problem=\"...\"",
+    ):
+        assert classify_access_error(Exception(message)) == "not-provisioned"
+
+
+def test_a_rate_limit_is_not_mistaken_for_a_missing_grant():
+    """Yahoo returns 999 for rate limiting. Waiting fixes one, not the other."""
+    from src.yahoo_client import classify_access_error
+
+    assert classify_access_error(Exception("999 rate limited")) == "rate-limited"
+    assert classify_access_error(
+        Exception("Yahoo data unavailable due to rate limiting")
+    ) == "rate-limited"
+
+
+def test_an_unrecognised_failure_is_not_explained_away():
+    """A guess dressed as a diagnosis is worse than saying "unknown"."""
+    from src.yahoo_client import classify_access_error
+
+    assert classify_access_error(Exception("connection reset by peer")) == "error"

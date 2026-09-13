@@ -39,6 +39,36 @@ FLEX_SLOTS = {
 }
 
 
+def classify_access_error(exc: BaseException) -> str:
+    """What a failed Yahoo call actually means, as one of four words.
+
+    There is a real window - after the agreement is signed and countersigned,
+    before Yahoo provisions the scope - where the credentials are perfect and
+    every call is refused. `doctor` reported "configured", which is true and
+    useless: it reads exactly like working, and the raw refusal surfaces later
+    inside a scheduled job with nobody watching.
+
+    Distinguishing them matters because the remedies are opposite. A missing
+    grant is fixed by finishing Yahoo's confirmation form and waiting; a rate
+    limit is fixed by waiting and NOT retrying; a bad token is fixed by
+    re-running setup. Anything unrecognised stays "error", because a guess
+    dressed as a diagnosis is worse than admitting ignorance.
+    """
+    text = str(exc).lower()
+    if "999" in text or "rate limit" in text:
+        return "rate-limited"
+    if any(
+        marker in text
+        for marker in ("401", "403", "unauthorized", "forbidden",
+                       "insufficient scope", "valid credentials",
+                       "oauth_problem")
+    ):
+        return "not-provisioned"
+    if "token" in text and ("expired" in text or "invalid" in text):
+        return "token-expired"
+    return "error"
+
+
 def serialize(obj: Any) -> Any:
     """Convert a yfpy model (or nested structure of them) into plain data."""
     if obj is None or isinstance(obj, (str, int, float, bool)):

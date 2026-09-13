@@ -291,6 +291,39 @@ def _hosted_run() -> bool:
     )
 
 
+def _describe_yahoo_access(ctx: Context) -> str:
+    """One cheap read to find out whether the grant is actually live.
+
+    Credentials existing is not the same as access working. Between signing
+    the agreement and Yahoo provisioning the Fantasy Sports scope there is a
+    window where everything is configured correctly and every call is refused,
+    and reporting "configured" there is indistinguishable from reporting
+    success. That is the failure this project keeps having to dig out, so it
+    gets asked rather than assumed.
+    """
+    from src.yahoo_client import classify_access_error
+
+    try:
+        ctx.yahoo.resolve_season()
+    except Exception as exc:
+        kind = classify_access_error(exc)
+        if kind == "not-provisioned":
+            return (
+                "credentials OK, but Yahoo is refusing the call.\n"
+                "                Fantasy Sports scope is not live on this app yet.\n"
+                "                Finish Yahoo's Developer Application Confirmation\n"
+                "                Form (name, email, Client ID) and wait for them to\n"
+                "                provision it. Do NOT create a new app - that changes\n"
+                "                the Client ID you gave them."
+            )
+        if kind == "rate-limited":
+            return "rate limited by Yahoo - wait, do not retry in a loop"
+        if kind == "token-expired":
+            return "token expired or invalid - run: fcc setup"
+        return f"configured, but the call failed: {exc}"
+    return "working"
+
+
 def cmd_doctor(ctx: Context, args) -> int:
     """Report on every data source and on configuration completeness."""
     from src.sources.sleeper import SleeperSource
@@ -329,7 +362,10 @@ def cmd_doctor(ctx: Context, args) -> int:
         print(f"    [{mark}] {health['source']:<14} {detail}")
 
     has_creds = ctx.yahoo_configured()
-    print(f"\n  yahoo oauth : {'configured' if has_creds else 'NOT configured - run: fcc setup'}")
+    if not has_creds:
+        print("\n  yahoo oauth : NOT configured - run: fcc setup")
+    else:
+        print(f"\n  yahoo oauth : {_describe_yahoo_access(ctx)}")
 
     # The settings whose absence makes something do nothing. Each of these has
     # silently disabled part of the product at least once - a blank my_team_id
