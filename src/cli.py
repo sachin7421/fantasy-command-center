@@ -917,9 +917,21 @@ def cmd_job(ctx: Context, args) -> int:
         team_key = _require_team(ctx)
         if team_key is None:
             return EXIT_FAIL
+        # The opponent half of the monitor was dead code: `run` accepts
+        # opponent_team_key and no caller ever passed one, so "your roster,
+        # your opponent, and the top free agents" was two thirds true. The
+        # opponent comes off the snapshot's matchups, which exist once Yahoo
+        # is connected - and None until then, which is the honest answer
+        # rather than a guess.
+        injury_snapshot = ctx.league_snapshot(season, week)
+        opponent = (
+            injury_snapshot.opponent_of(team_key, week)
+            if injury_snapshot is not None else None
+        )
         injury_report = injuries.run(
             ctx.conn, ctx.league_key, team_key, season, week,
-            snapshot=ctx.league_snapshot(season, week),
+            opponent_team_key=opponent,
+            snapshot=injury_snapshot,
         )
         if injury_report.first_run:
             print("Injury baseline established; changes will be reported from the next run.")

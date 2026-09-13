@@ -16,7 +16,30 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-#: Fitted sigma floor/growth. Early picks are tight; late picks are noisy.
+#: Sigma floor and growth for the ADP distribution. Early picks are tight,
+#: late picks are noisy.
+#:
+#: Described as "fitted" with no artifact behind it, and MEASURED against the
+#: 12,084 FantasyPros ECR rows in this database it runs consistently wide:
+#:
+#:     adp bin      n   observed sd   this model   ratio
+#:       0-25     573          4.20         6.82   1.62x
+#:      25-50     581          7.77        13.44   1.73x
+#:      50-75     572         10.68        20.34   1.90x
+#:     75-100     617         13.79        27.53   2.00x
+#:    100-150    1112         17.40        37.34   2.15x
+#:    150-300    4821         32.12        68.78   2.14x
+#:
+#: Some inflation is RIGHT. ECR stdev measures expert disagreement, which is a
+#: lower bound on the spread of an actual draft room - twelve people with their
+#: own boards, needs and nerve scatter further than a panel of analysts. But
+#: the factor of two is asserted, not derived, and an inflated sigma pulls
+#: every survival probability toward 0.5, which mushes the take-or-wait signal
+#: this module exists to sharpen.
+#:
+#: Left as it is rather than tuned on a lower bound. Recorded so the next
+#: person starts from the measurement instead of rediscovering it, and so the
+#: word "fitted" no longer implies an artifact that does not exist.
 SIGMA_BASE = 3.0
 SIGMA_GROWTH = 0.28
 SIGMA_MIN = 2.0

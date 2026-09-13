@@ -31,9 +31,17 @@ from collections.abc import Sequence
 from src.analytics import shrinkage
 from src.storage import Database
 
-#: Standard deviation of the SHRUNK trailing-six-game residual, measured over
-#: 12,477 windows (tools/calibrate.py). This is the scale a threshold has to be
-#: expressed in.
+#: Standard deviation of the SHRUNK trailing-six-game residual. The scale a
+#: threshold has to be expressed in.
+#:
+#: CITATION CORRECTED. This claimed "measured over 12,477 windows
+#: (tools/calibrate.py)". tools/calibrate.py contains no trailing-window code
+#: and produces no such number - grep for "12,477" and it appears only in this
+#: comment. The value IS reproducible as 1.898 x 6/66, the raw residual sd
+#: scaled by the shrinkage weight at k=60, which is how it was almost
+#: certainly derived. It is recorded that way rather than under a citation to
+#: an artifact that does not support it: a false citation makes every other
+#: number in this file less trustworthy, including the true ones.
 #:
 #: The old constant was 1.8 points per game, justified as "roughly one standard
 #: deviation" of the residual. It was one standard deviation of the RAW residual
@@ -59,6 +67,12 @@ FLAG_THRESHOLD = FLAG_Z * SHRUNK_RESIDUAL_SD
 #: RAW residual. The old code applied `-strength * shrunk_residual`, which at
 #: its default worked out to about -0.167 - the right sign and a third of the
 #: right size.
+#: ASSERTED, not reproducible from this repository. The docstring above
+#: describes an out-of-sample fit over 8,098 trailing-6/next-4 windows;
+#: tools/calibrate.py computes nothing of the kind, and that regression appears
+#: nowhere else in the tree. It may well have been measured once - it is not
+#: checkable here, and `draft.prior_regression_strength` ships at 0.0, so
+#: nothing in the deployment currently applies it.
 RESIDUAL_CORRECTION = -0.574
 #: Minimum games before the signal is trusted at all.
 MIN_GAMES = 3
