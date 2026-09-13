@@ -2176,6 +2176,17 @@ def main(argv: list[str] | None = None) -> int:
             )
         except Exception as exc:  # never let bookkeeping break a job
             log.debug("Could not record the job run: %s", exc)
+        # A rotated refresh token breaks nothing today and everything later.
+        # Said once per run, at the end, where it cannot be mistaken for the
+        # cause of a failure.
+        try:
+            if ctx._yahoo is not None and ctx.yahoo.token_has_rotated():
+                from src.yahoo_client import describe_token_rotation
+
+                print("")
+                print(f"  WARNING: {describe_token_rotation()}")
+        except Exception:  # silent: warning about a warning helps nobody
+            pass
         ctx.conn.close()
 
 

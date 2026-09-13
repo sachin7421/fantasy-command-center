@@ -9,6 +9,8 @@ slots, rosters, draft results, transactions and free agents.
 """
 from __future__ import annotations
 
+import json
+import os
 import logging
 import sys
 from pathlib import Path
@@ -37,6 +39,53 @@ FLEX_SLOTS = {
     "W/R/T/Q": {"QB", "WR", "RB", "TE"},
     "D": {"DEF"},
 }
+
+
+def refresh_token_changed(original_json: Any, current: Any) -> bool:
+    """Whether Yahoo has issued a new REFRESH token since the stored one.
+
+    Yahoo rotates the refresh token on every refresh. The token reaches a
+    runner through a GitHub secret and `save_token_data_to_env_file` is False
+    there, so nothing carries the new one back: the secret keeps the original
+    forever, and when Yahoo eventually invalidates it every scheduled job
+    breaks at once, with the only remedy an interactive setup on a machine
+    with a terminal.
+
+    An ACCESS token rotating is routine and not worth a word. Only the refresh
+    token matters, because only it is stored.
+
+    Never raises. This is called from a `finally`, and a diagnostic that can
+    take down the run it is diagnosing is worse than no diagnostic.
+    """
+    try:
+        if isinstance(original_json, (str, bytes)):
+            original = json.loads(original_json)
+        elif isinstance(original_json, dict):
+            original = original_json
+        else:
+            return False
+        stored = str(original.get("refresh_token") or "")
+        live = str((current or {}).get("refresh_token") or "")
+        return bool(stored and live and stored != live)
+    except Exception:  # silent: a failed comparison must not break the run
+        return False
+
+
+def describe_token_rotation(_current: Any = None) -> str:
+    """What to do about it, without ever printing the token.
+
+    The value is a credential; the message says where to find it, not what it
+    is. `fcc setup` on a machine with a terminal writes the new token to .env,
+    and that file is what the GitHub secret is copied from.
+    """
+    return "\n".join([
+        "Yahoo issued a NEW refresh token and the stored one is now stale.",
+        "     Nothing breaks today - the run that refreshed it worked - but the",
+        "     saved YAHOO_ACCESS_TOKEN_JSON will stop working when Yahoo retires",
+        "     the old one, and every scheduled job fails together when it does.",
+        "     Re-run `fcc setup` on a machine with a terminal, then copy the new",
+        "     YAHOO_ACCESS_TOKEN_JSON out of .env into the GitHub secret.",
+    ])
 
 
 def classify_access_error(exc: BaseException) -> str:
@@ -570,6 +619,26 @@ class YahooClient:
 
             self._index = YahooIdIndex(self.conn)
         return self._index
+
+    def token_has_rotated(self) -> bool:
+        """Whether this run refreshed onto a token the stored secret lacks.
+
+        Checked after the work is done rather than before: a rotation is not a
+        failure, it is a warning that the SAVED credential is now behind.
+        Never raises - it runs in a `finally`.
+        """
+        try:
+            if self._query is None:
+                return False
+            oauth = getattr(self._query, "oauth", None)
+            current = getattr(oauth, "token_dict", None) or getattr(
+                oauth, "token_data", None
+            )
+            return refresh_token_changed(
+                os.environ.get("YAHOO_ACCESS_TOKEN_JSON"), current
+            )
+        except Exception:  # silent: a diagnostic must not break the run
+            return False
 
     def _resolve_yahoo_player(self, p: dict[str, Any]) -> str | None:
         """Our player key for a Yahoo player payload. Writes nothing."""

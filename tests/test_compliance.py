@@ -902,3 +902,46 @@ def test_an_unrecognised_failure_is_not_explained_away():
     from src.yahoo_client import classify_access_error
 
     assert classify_access_error(Exception("connection reset by peer")) == "error"
+
+
+# --- the OAuth refresh token rotates, and we were discarding it -------------
+
+def test_a_rotated_refresh_token_is_detected():
+    """Yahoo returns a NEW refresh token on every refresh, and we threw it away.
+
+    The token arrives from a GitHub secret; `save_token_data_to_env_file` is
+    False on a runner, so nothing carries the rotation back. The stored secret
+    keeps the ORIGINAL forever, and when Yahoo eventually invalidates it every
+    scheduled job breaks at once - with the only remedy an interactive setup on
+    a machine with a terminal.
+
+    Detecting it does not fix it. It turns a silent expiry into a warning that
+    names the remedy while everything still works.
+    """
+    from src.yahoo_client import refresh_token_changed
+
+    original = '{"access_token": "a1", "refresh_token": "r1"}'
+    assert refresh_token_changed(original, {"refresh_token": "r2"}) is True
+    assert refresh_token_changed(original, {"refresh_token": "r1"}) is False
+    # An access token rotating on its own is normal and not worth a word.
+    assert refresh_token_changed(
+        original, {"access_token": "a2", "refresh_token": "r1"}
+    ) is False
+
+
+def test_rotation_detection_survives_junk():
+    """Never raise while checking. This runs in a `finally`."""
+    from src.yahoo_client import refresh_token_changed
+
+    assert refresh_token_changed("not json", {"refresh_token": "r"}) is False
+    assert refresh_token_changed("", {}) is False
+    assert refresh_token_changed(None, None) is False
+
+
+def test_the_warning_never_prints_the_token():
+    """It is a credential. The message says WHERE to get it, not what it is."""
+    from src.yahoo_client import describe_token_rotation
+
+    message = describe_token_rotation({"refresh_token": "super-secret-value"})
+    assert "super-secret-value" not in message
+    assert "YAHOO_ACCESS_TOKEN_JSON" in message
