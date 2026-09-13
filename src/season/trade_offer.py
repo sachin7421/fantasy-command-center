@@ -20,11 +20,12 @@ from dataclasses import dataclass, field
 from src.lineup_solver import best_lineup
 from src.storage import Database
 
-#: Below this, the difference is inside the noise of the projections that
-#: produced it. tools/backtest.py measured a weekly RMSE near 5.6 points, and a
-#: season-long total carries far more than that - so a handful of points is not
-#: a reason to do anything.
-MEANINGFUL = 5.0
+#: Weeks a season-long projection still covers, for sizing the band. Roughly
+#: the remaining regular season at the point trades are actually discussed.
+#: Deliberately not exact: the band is an order-of-magnitude statement, and
+#: pretending to know it to the week would be the very precision this exists
+#: to stop claiming.
+TRADE_HORIZON_WEEKS = 10
 
 
 @dataclass
@@ -83,14 +84,15 @@ class TradeVerdict:
                 "Could not identify: " + ", ".join(self.unmatched),
                 "No verdict - half a trade evaluated is worse than none.",
             ]
+        # The band is stated once, in `reasons`. Printing "(+117.0)" here as
+        # well would put the false decimal back beside the honest range.
         lines = [
-            f"Your starting lineup: {self.my_before:.1f} -> {self.my_after:.1f} "
-            f"({self.my_gain:+.1f})"
+            f"Your starting lineup: {self.my_before:.0f} -> {self.my_after:.0f}"
         ]
         if self.their_gain is not None:
             lines.append(
-                f"Theirs: {self.their_before:.1f} -> {self.their_after:.1f} "
-                f"({self.their_gain:+.1f})"
+                f"Theirs: {self.their_before:.0f} -> {self.their_after:.0f} "
+                f"({self.their_gain:+.0f})"
             )
         lines.extend(self.reasons)
         return lines
@@ -179,13 +181,20 @@ def evaluate(
 
 def _reasons(verdict: TradeVerdict, give: list[_Player], get: list[_Player]) -> list[str]:
     reasons: list[str] = []
-    gain = verdict.my_gain
+    from src.analytics.uncertainty import describe, is_meaningful, season_sd
 
-    if abs(gain) < MEANINGFUL:
+    gain = verdict.my_gain
+    # A season total is many weeks of projection error compounded. Stating it
+    # as "+117.0" claimed a precision two orders of magnitude finer than the
+    # measurement behind it.
+    positions: list[str] = [p.position for p in (give + get) if p.position] or [""]
+    noise = max(season_sd(p, TRADE_HORIZON_WEEKS, compared=True) for p in positions)
+    reasons.append(f"Change to your starting lineup: {describe(gain, noise)}")
+
+    if not is_meaningful(gain, noise):
         reasons.append(
-            f"Within {MEANINGFUL:.0f} points either way - that is inside the "
-            "noise of the projections behind it, so this is a matter of taste "
-            "rather than value."
+            "That is inside the noise of the projections behind it. Decide on "
+            "the players, not on this number."
         )
     elif gain > 0:
         reasons.append("It improves your starting lineup.")

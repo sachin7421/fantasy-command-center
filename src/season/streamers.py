@@ -90,11 +90,30 @@ class StreamReport:
             )
             gain = self.gain
             if gain and gain > 0:
+                from src.analytics.uncertainty import (
+                    difference_sd,
+                    is_meaningful,
+                    is_measured,
+                )
+
                 best = self.options[0]
+                noise = difference_sd(self.position, self.position)
                 lines.append(
                     f"Best in the league is {best.name} at {best.points:.1f}, "
                     f"a {gain:.1f} point difference."
                 )
+                if not is_meaningful(gain, noise):
+                    note = (
+                        f"That gap is inside the noise - two {self.position} "
+                        f"projections differ by about {noise:.0f} points from "
+                        "chance alone. Not a reason to move."
+                    )
+                    if not is_measured(self.position):
+                        note += (
+                            f" ({self.position} projection accuracy has never "
+                            "been measured here; this uses the pooled figure.)"
+                        )
+                    lines.append(note)
             else:
                 lines.append("That is the best projected this week.")
         lines.append(self.caveat)

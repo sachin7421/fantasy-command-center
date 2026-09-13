@@ -65,6 +65,35 @@ class Swap:
     gain: float
     reasons: list[str] = field(default_factory=list)
 
+    @property
+    def uncertainty(self) -> float:
+        """Spread on this comparison. Both sides carry error, so they add."""
+        from src.analytics.uncertainty import difference_sd
+
+        return difference_sd(
+            self.bench_in.position,
+            self.starter_out.position if self.starter_out else None,
+        )
+
+    @property
+    def is_meaningful(self) -> bool:
+        from src.analytics.uncertainty import is_meaningful
+
+        return is_meaningful(self.gain, self.uncertainty)
+
+    @property
+    def gain_text(self) -> str:
+        """The gain with its band, or a plain statement that it is noise.
+
+        "+7.7" to one decimal was a claim to precision the projections cannot
+        support: two players compared carry a combined spread near 8 points,
+        measured out of sample, so that swap was a coin flip presented as a
+        decision.
+        """
+        from src.analytics.uncertainty import describe
+
+        return describe(self.gain, self.uncertainty)
+
     def describe(self) -> str:
         out = self.starter_out.name if self.starter_out else "(empty)"
         line = (
@@ -73,7 +102,7 @@ class Swap:
         )
         if self.starter_out:
             line += f" ({self.starter_out.points:.1f})"
-        line += f"  +{self.gain:.1f}"
+        line += f"  {self.gain_text}"
         if self.reasons:
             line += "\n    " + "; ".join(self.reasons)
         return line
@@ -295,7 +324,21 @@ def run(
         if mode != "neutral":
             reasons.append(f"{mode} tilt applied (you are the {'underdog' if mode=='ceiling' else 'favourite'})")
 
-        if gain >= min_gap or (out_player and not out_player.startable):
+        # `min_gap` was a flat 1.5 points for every position, which is well
+        # inside the noise: the measured spread on a two-player comparison is
+        # near 8. A swap that cannot clear its own uncertainty is not a
+        # recommendation, it is a coin flip with a plus sign on it.
+        #
+        # An unplayable starter is still swapped whatever the gain - a player
+        # on bye scores zero for certain, and certainty is not noise.
+        from src.analytics.uncertainty import difference_sd
+        from src.analytics.uncertainty import is_meaningful as _meaningful
+
+        noise = difference_sd(
+            player.position, out_player.position if out_player else None
+        )
+        worth_saying = _meaningful(gain, noise) and gain >= min_gap
+        if worth_saying or (out_player and not out_player.startable):
             swaps.append(Swap(slot.slot, player, out_player, round(gain, 2), reasons))
         if out_player:
             currently_starting.discard(out_player.player_key)
