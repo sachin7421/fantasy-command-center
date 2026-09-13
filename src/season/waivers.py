@@ -453,7 +453,9 @@ def run(
             # The transaction log is read from the snapshot and never stored.
             # What outlives the run is the learned coefficient - a shrunk
             # dollars-per-point number from which no Yahoo fact is recoverable.
-            records = faab_model.parse_bids(snapshot.transactions)
+            records = faab_model.parse_bids(
+                snapshot.transactions, fetched_week=week
+            )
             if records:
                 faab_model.attach_values(conn, records, season)
 

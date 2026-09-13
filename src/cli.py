@@ -1554,7 +1554,12 @@ def cmd_faab(ctx: Context, args) -> int:
                 print(f"Ignoring unreadable budget entry {pair.strip()!r} "
                       "(expected team:amount, e.g. 3:40).")
 
-    records = faab.parse_bids(snapshot.transactions if snapshot else [])
+    # The week matters: each bid is scaled to what was still ahead of the
+    # buyer when he placed it, which is the same scale the recommendation
+    # below is priced on.
+    records = faab.parse_bids(
+        snapshot.transactions if snapshot else [], fetched_week=week
+    )
     if records:
         faab.attach_values(ctx.conn, records, season)
     profiles = faab.learn_profiles(records, teams, budgets)

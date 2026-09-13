@@ -810,3 +810,53 @@ def test_a_free_agent_pickup_is_not_a_bid(tmp_path):
     bids = faab.parse_bids(log)
 
     assert bids == [], f"invented {len(bids)} bid(s) from free-agent pickups"
+
+
+# --- the scale a bid is learned on must be the scale it is predicted on ------
+
+def test_training_and_prediction_use_the_same_value_scale():
+    """beta was learned on full-season value and applied to rest-of-season.
+
+    `attach_values` set record.value from a week-0 projection minus
+    replacement - the whole season. `waivers.run` passes
+    (points - baseline) * ros_fraction(week). So beta = bid / season_value,
+    and the predicted rival bid came out as bid * ros_fraction: 76% of the
+    truth in week 5, 41% by week 11, 24% by week 14.
+
+    That is systematic underbidding that gets worse exactly when the claims
+    matter most, and it loses players by a dollar in November.
+    """
+    from src.analytics.faab import BidRecord, learn_profiles
+
+    # A manager who paid $20 in week 12 for a player worth 40 points
+    # REST OF SEASON. Whatever scale is stored, the profile has to predict
+    # $20 for the same player in the same spot.
+    records = [
+        BidRecord("t1", "p1", "P", bid=20, value=40.0)
+        for _ in range(8)
+    ]
+    profile = learn_profiles(records, {"t1": "T"})["t1"]
+    assert profile.expected_bid(40.0) == pytest.approx(20.0, abs=2.0), (
+        f"paid $20 for 40 points and the model expects "
+        f"${profile.expected_bid(40.0):.0f} for the same 40 points"
+    )
+
+
+def test_a_bid_week_is_derived_from_its_timestamp():
+    """Rest-of-season value depends on WHEN the bid happened.
+
+    yfpy's Transaction carries a unix timestamp and no week, so the week is
+    derived from it against the week the log was fetched in. Self-calibrating:
+    it needs no season-start date in config to drift out of date.
+    """
+    from src.analytics.faab import week_of
+
+    now = 1_760_000_000          # some point during the season
+    week_now = 6
+    assert week_of(now, now, week_now) == 6
+    assert week_of(now - 7 * 86400, now, week_now) == 5
+    assert week_of(now - 28 * 86400, now, week_now) == 2
+    # Never below week 1, whatever the arithmetic says.
+    assert week_of(now - 400 * 86400, now, week_now) == 1
+    # A missing timestamp falls back to the fetch week rather than guessing.
+    assert week_of(None, now, week_now) == 6

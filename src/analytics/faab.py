@@ -94,17 +94,22 @@ DEFAULT_PARTICIPATION = 0.25
 class BidRecord:
     """One observed winning bid.
 
-    There is deliberately no `week`. It used to be read from payload["week"],
-    which yfpy's Transaction does not have - the model carries a `timestamp`
-    and no week at all - so the field was always 0, and nothing ever read it.
-    A field that is always wrong and never used is worse than a missing one:
-    it invites a future caller to trust it.
+    `week` is DERIVED from the transaction timestamp, not read from the
+    payload - yfpy's Transaction carries a unix timestamp and no week, and an
+    earlier version read a "week" key that does not exist, so it was silently
+    always 0.
+
+    It is back because it is load-bearing: what a player was worth when the
+    bid was placed is his rest-of-season value THAT WEEK, and learning on one
+    scale while predicting on another is what made every predicted rival bid
+    collapse as the season went on.
     """
 
     team_key: str
     player_key: str | None
     player_name: str
     bid: int
+    week: int = 0
     value: float | None = None       # ROS value at the time, if recoverable
 
     @property
@@ -195,7 +200,32 @@ class ManagerProfile:
 
 # --- learning from history ---------------------------------------------------
 
-def parse_bids(transactions: Sequence[dict[str, Any]]) -> list[BidRecord]:
+def week_of(timestamp: Any, fetched_at: float, fetched_week: int) -> int:
+    """Which fantasy week a transaction happened in.
+
+    Measured backwards from the week the log was fetched in, so it needs no
+    season-start date in configuration to drift out of date. Yahoo gives a unix
+    timestamp and no week.
+
+    A missing timestamp falls back to the fetch week rather than guessing: it
+    is the least wrong assumption for a recent log, and inventing week 1 would
+    scale that bid as though the whole season were still ahead of it.
+    """
+    if timestamp in (None, "", 0):
+        return int(fetched_week)
+    try:
+        stamp = float(timestamp)
+    except (TypeError, ValueError):
+        return int(fetched_week)
+    weeks_ago = int((float(fetched_at) - stamp) // (7 * 86400))
+    return max(1, int(fetched_week) - max(0, weeks_ago))
+
+
+def parse_bids(
+    transactions: Sequence[dict[str, Any]],
+    fetched_week: int = 1,
+    fetched_at: float | None = None,
+) -> list[BidRecord]:
     """Winning FAAB bids, out of the Yahoo transaction log.
 
     Takes the log directly rather than reading a `transactions` table. The API
@@ -203,6 +233,9 @@ def parse_bids(transactions: Sequence[dict[str, Any]]) -> list[BidRecord]:
     What survives the run is what this produces: a learned dollars-per-point
     coefficient, which is our own output and carries no Yahoo fact.
     """
+    import time
+
+    now = float(fetched_at) if fetched_at is not None else time.time()
     out: list[BidRecord] = []
     for payload in transactions:
         if not isinstance(payload, dict):
@@ -248,6 +281,7 @@ def parse_bids(transactions: Sequence[dict[str, Any]]) -> list[BidRecord]:
                 player_key=player_key,
                 player_name=player_name or "",
                 bid=bid,
+                week=week_of(payload.get("timestamp"), now, fetched_week),
             )
         )
     return out
@@ -420,7 +454,15 @@ def attach_values(conn: Database, records: Sequence[BidRecord], season: int) -> 
         )
         if row and row["points"] is not None:
             baseline = replacement.get(row["position"], 0.0)
-            record.value = max(0.0, float(row["points"]) - baseline)
+            season_value = max(0.0, float(row["points"]) - baseline)
+            # Scaled to what was still AHEAD of the buyer when he bid. The
+            # caller prices a claim on rest-of-season value, so beta has to be
+            # learned on rest-of-season value too. Learned on the full season
+            # instead, every predicted rival bid came out multiplied by the
+            # remaining fraction: 76% of the truth in week 5, 24% by week 14.
+            from src.season.waivers import ros_fraction
+
+            record.value = season_value * ros_fraction(record.week or 1)
 
 
 def learn_profiles(
