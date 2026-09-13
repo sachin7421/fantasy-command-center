@@ -9,7 +9,6 @@ slots, rosters, draft results, transactions and free agents.
 """
 from __future__ import annotations
 
-import json
 import logging
 import sys
 from pathlib import Path
@@ -204,14 +203,18 @@ class YahooClient:
         return payload
 
     def load_settings(self) -> dict[str, Any]:
-        """Read stored settings without touching the network."""
-        row = self.conn.execute(
-            "SELECT settings_json FROM league_settings WHERE league_key=?",
-            (self.league_key,),
-        ).fetchone()
-        if row is None:
-            return self.fetch_league_settings()
-        return json.loads(row["settings_json"])
+        """This league's settings as Yahoo reports them, for this run.
+
+        It used to read a `league_settings` table, which migration 0004
+        dropped - so this and everything built on it raised a raw SQL error,
+        including the `sync-settings` that `fcc setup` sent every newly
+        approved user to as their very first command.
+
+        Memoised for the run like every other Yahoo call, and stored nowhere.
+        What the application RUNS on is the hand transcription in
+        src/league_bootstrap.py; this exists to compare against it.
+        """
+        return self.fetch_league_settings()
 
     def scoring(self) -> LeagueScoring:
         return build_from_yahoo(self.load_settings())

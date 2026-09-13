@@ -1102,7 +1102,9 @@ def cmd_setup(_ctx, args) -> int:
         "1. Open https://developer.yahoo.com/apps/create/\n"
         "2. Application Type: Installed Application\n"
         "3. Redirect URI: https://localhost:8080\n"
-        "4. API Permissions: Fantasy Sports -> Read (or Read/Write for auto-lineup later)\n"
+        "4. API Permissions: Fantasy Sports -> READ ONLY.\n"
+        "   Not Read/Write. The API agreement is a read-only grant, and this\n"
+        "   application has no method that could write to Yahoo even if asked.\n"
         "5. Create the app, then copy the Client ID (consumer key) and Client Secret.\n"
     )
     env_path = Path(args.env_dir) / ".env"
@@ -1124,7 +1126,10 @@ def cmd_setup(_ctx, args) -> int:
         encoding="utf-8",
     )
     print(f"\nWrote credentials to {env_path.resolve()}")
-    print("Next: run `fcc sync-settings` - a browser window will open once for consent.")
+    print("Next: run `fcc verify-settings` - a browser window opens once for")
+    print("consent, and it checks the scoring rules in src/league_bootstrap.py")
+    print("against what Yahoo reports. It reports any difference rather than")
+    print("storing it; the agreement does not permit keeping Yahoo's copy.")
     return EXIT_OK
 
 

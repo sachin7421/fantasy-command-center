@@ -826,3 +826,41 @@ def test_purge_clears_stored_notification_bodies(tmp_path):
         assert conn.scalar("SELECT COUNT(*) FROM recommendations") == 0
     finally:
         conn.close()
+
+
+def test_setup_never_asks_yahoo_for_write_access():
+    """Obligation 2 is a read-only grant, and setup is where scope is chosen.
+
+    `fcc setup` told the operator to request "Read (or Read/Write for
+    auto-lineup later)". That is the onboarding wizard instructing him to ask
+    Yahoo for more than the agreement allows, at the exact moment Yahoo asks
+    what permissions the app needs.
+    """
+    import inspect
+
+    from src import cli
+
+    source = inspect.getsource(cli)
+    # "Not Read/Write" is the corrected instruction, so the substring alone is
+    # not the test - what matters is that nothing OFFERS write scope.
+    for offer in ("or Read/Write", "Read or Write", "Read/Write for"):
+        assert offer not in source, (
+            f"fcc setup suggests write access to Yahoo: {offer!r}"
+        )
+    assert "READ ONLY" in source, "setup does not say which permission to pick"
+
+
+def test_setup_does_not_point_at_a_command_that_crashes():
+    """It ended by telling the user to run `fcc sync-settings`.
+
+    That command read `league_settings`, which migration 0004 dropped, so the
+    first thing a newly-approved user was told to do raised a raw SQL error.
+    """
+    import inspect
+
+    from src import cli, yahoo_client
+
+    assert "FROM league_settings" not in inspect.getsource(yahoo_client), (
+        "the Yahoo client still reads a table that no longer exists"
+    )
+    assert "Next: run `fcc sync-settings`" not in inspect.getsource(cli)
