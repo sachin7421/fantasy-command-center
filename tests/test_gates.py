@@ -217,3 +217,38 @@ def test_the_yahoo_client_cannot_write_the_manual_roster():
         "src/yahoo_client.py references my_roster; Yahoo league state must "
         "never be written there"
     )
+
+
+# --- a degraded source must reach the user, not just the log ----------------
+
+def test_a_stale_cache_fallback_is_recorded(tmp_path):
+    """`stale` was set and never read anywhere in the tree.
+
+    When a source is unreachable the fetch falls back to whatever is cached,
+    however old, and returns stale=True. Nothing consumed it - so if Sleeper
+    were down for three days, every job would run on 72-hour-old projections,
+    email confident lineup advice, and exit 0. The only trace was a log line
+    in a green step nobody reads.
+
+    That is standard 4's "graceful fallback with a warning" implemented as a
+    fallback WITHOUT a warning that reaches anyone.
+    """
+    from src.sources import base
+
+    base.clear_degradations()
+    base.record_degradation("sleeper", 73.4, stale=True)
+    base.record_degradation("espn", 2.0, stale=False)
+
+    reported = base.degradations()
+    assert len(reported) == 2
+    stale = [d for d in reported if d.stale]
+    assert len(stale) == 1 and stale[0].source == "sleeper"
+    assert "73" in base.describe_degradations()[0]
+
+
+def test_no_degradation_describes_as_nothing(tmp_path):
+    """Silence when everything is fine; a line only when it is not."""
+    from src.sources import base
+
+    base.clear_degradations()
+    assert base.describe_degradations() == []

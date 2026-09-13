@@ -22,6 +22,52 @@ log = logging.getLogger(__name__)
 USER_AGENT = "fantasy-command-center/1.0 (personal league tool)"
 
 
+
+@dataclass(frozen=True)
+class Degradation:
+    """One source that answered from cache because it could not be reached."""
+
+    source: str
+    age_hours: float
+    stale: bool
+
+
+#: Degradations seen during THIS RUN. Module level because the alternative is
+#: threading a reporter through every source, and the point is that nothing
+#: currently has to remember to look.
+_DEGRADATIONS: list[Degradation] = []
+
+
+def record_degradation(source: str, age_hours: float, stale: bool) -> None:
+    _DEGRADATIONS.append(Degradation(source, round(float(age_hours), 1), stale))
+
+
+def degradations() -> list[Degradation]:
+    return list(_DEGRADATIONS)
+
+
+def clear_degradations() -> None:
+    _DEGRADATIONS.clear()
+
+
+def describe_degradations() -> list[str]:
+    """Lines for a human, or [] when every source answered live.
+
+    `FetchResult.stale` was set on every cache fallback and read nowhere in the
+    tree, so a source being down for days looked exactly like a source being
+    up: the numbers were old, the advice was confident, and the exit code was
+    0. This is what makes that visible where somebody is looking.
+    """
+    lines = []
+    for entry in _DEGRADATIONS:
+        marker = "STALE" if entry.stale else "cached"
+        lines.append(
+            f"{entry.source}: unreachable, used a {marker} copy "
+            f"{entry.age_hours:.0f}h old"
+        )
+    return lines
+
+
 class SourceUnavailable(RuntimeError):
     """Raised when a source failed and no usable cache exists."""
 
@@ -106,6 +152,7 @@ class Source:
                 self.name, last_error, cached.fetched_at, age,
                 " [STALE]" if stale else "",
             )
+            record_degradation(self.name, age, stale)
             return FetchResult(cached.payload, True, cached.fetched_at, stale=stale)
 
         raise SourceUnavailable(f"{self.name}: {url} failed and no cache exists: {last_error}")

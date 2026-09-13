@@ -361,6 +361,8 @@ def cmd_doctor(ctx: Context, args) -> int:
         )
         print(f"    [{mark}] {health['source']:<14} {detail}")
 
+    _report_degradations()
+
     has_creds = ctx.yahoo_configured()
     if not has_creds:
         print("\n  yahoo oauth : NOT configured - run: fcc setup")
@@ -442,6 +444,27 @@ def cmd_doctor(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+def _report_degradations() -> None:
+    """Print any source that answered from cache this run.
+
+    `FetchResult.stale` was set on every fallback and read nowhere, so a
+    source being unreachable for days was indistinguishable from one that was
+    fine: old numbers, confident advice, exit 0. Standard 4 asks for a
+    graceful fallback WITH a warning, and the warning went to a log nobody
+    reads.
+    """
+    from src.sources.base import describe_degradations
+
+    lines = describe_degradations()
+    if not lines:
+        return
+    print("")
+    print("  DEGRADED - these answered from cache, not from the source:")
+    for line in lines:
+        print(f"    {line}")
+    print("  Numbers below are as old as that. Anything built on them is too.")
+
+
 def cmd_sync(ctx: Context, args) -> int:
     """Refresh every source that does not need Yahoo auth."""
     from src.sources.sleeper import SleeperSource
@@ -452,6 +475,9 @@ def cmd_sync(ctx: Context, args) -> int:
     sleeper = SleeperSource(ctx.conn)
     sleeper_proj = SleeperProjections(ctx.conn)
 
+    from src.sources import base as source_base
+
+    source_base.clear_degradations()
     print(f"Syncing season {season}...")
     stats = sleeper.sync_players(ctx.idmap, force=args.force)
     print(f"  players     : {stats['seen']:,} seen, {stats['linked_yahoo']:,} carry a yahoo id")
@@ -472,6 +498,11 @@ def cmd_sync(ctx: Context, args) -> int:
     # Defenses need rebuilding from weekly lines; see sync_defense_season.
     def_stats = sleeper_proj.sync_defense_season(ctx.idmap, rules, season, force=args.force)
     print(f"  defense     : {def_stats['defenses']} rebuilt from {def_stats['weeks']} weekly lines")
+
+    # A source that answered from cache is not a source that answered. Without
+    # this the run looks identical whether Sleeper was up or had been down for
+    # three days, and the advice built on it is equally confident either way.
+    _report_degradations()
 
     adp_rows = sleeper_proj.sync_adp(ctx.idmap, season, ppr_value=rules.ppr_value)
     print(f"  adp         : {adp_rows:,} (sleeper)")

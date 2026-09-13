@@ -1168,6 +1168,24 @@ def season_view(cfg, conn, league_key):
                 st.altair_chart(drift, width='stretch')
 
 
+def _draft_is_done(conn, league_key) -> bool:
+    """Whether the draft has been held.
+
+    Picks recorded is the fact that matters, not the calendar: a draft can be
+    postponed, and a date in config that nobody updated would send a manager
+    to the wrong view on the night it mattered most.
+    """
+    try:
+        picks = conn.scalar(
+            "SELECT COUNT(*) FROM draft_picks WHERE league_key=? "
+            "AND player_key IS NOT NULL",
+            (league_key,),
+        ) or 0
+    except Exception:  # silent: no draft table yet means no draft yet
+        return False
+    return picks > 0
+
+
 def main():
     # Gate first: nothing touches the database or renders league data until the
     # password is accepted. Open automatically when no password is configured.
@@ -1181,7 +1199,13 @@ def main():
         "<div class='fcc-brand-sub'>Butt Fumblers</div>",
         unsafe_allow_html=True,
     )
-    mode = st.sidebar.radio("Mode", ["Draft", "Season"], label_visibility="collapsed")
+    # Season once the draft has happened. It defaulted to Draft forever, so
+    # two weeks into the season the first thing on screen was a draft board
+    # for a draft that finished, with no picks left to make.
+    mode = st.sidebar.radio(
+        "Mode", ["Draft", "Season"], label_visibility="collapsed",
+        index=1 if _draft_is_done(conn, league_key) else 0,
+    )
     if mode == "Draft":
         draft_view(cfg, conn, league_key)
     else:
