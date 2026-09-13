@@ -19,7 +19,6 @@ from collections.abc import Iterable
 
 from src import db
 from src.config import Config
-from src.idmap import IdMapper
 from src.scoring import LeagueScoring, build_from_yahoo
 from src.storage import Database
 
@@ -164,7 +163,11 @@ class YahooClient:
         #: shared between runs - a second YahooClient starts empty, which is
         #: what makes "for the duration of a run" true rather than aspirational.
         self._memo: dict[str, Any] = {}
-        self.idmap = IdMapper(self.conn, cfg.get("paths.manual_id_overrides"))
+        # No IdMapper here, deliberately. It was constructed and never used,
+        # and IdMapper.resolve defaults to persist=True - so one line reaching
+        # for it would reinstate exactly the identifier write this refactor
+        # removed, with neither cache_put nor the build checker noticing.
+        # Resolution goes through `self.index`, which reads and never writes.
 
     # -- auth / connection ---------------------------------------------------
 

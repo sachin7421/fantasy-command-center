@@ -413,6 +413,7 @@ def draft_view(cfg, conn, league_key):
                     st.session_state.pop("pick_number", None)
                     st.cache_data.clear()
                     st.rerun()
+        _footer()
         st.stop()
 
     # -- mark drafted ---------------------------------------------------------

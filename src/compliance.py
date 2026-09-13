@@ -162,3 +162,30 @@ def describe_purge(removed: dict[str, int]) -> list[str]:
         lines.append(f"  {name:<24} {count:>7,}")
     lines.append(f"  {'total':<24} {sum(removed.values()):>7,}")
     return lines
+
+
+def purge_log_files(directory) -> int:
+    """Delete log files. Returns how many.
+
+    Obligation 5 has to reach the filesystem, not only the database. Scheduled
+    runs append to logs/<job>.log, and that output carries unmatched Yahoo
+    player names, exception text containing the league key, and yfpy's own
+    request URLs. Emptying the tables while leaving that directory made "every
+    Yahoo identifier removed" false.
+
+    Only *.log is touched. A purge that removes files it was not asked about
+    is a different and worse problem.
+    """
+    from pathlib import Path
+
+    path = Path(directory)
+    if not path.is_dir():
+        return 0
+    removed = 0
+    for entry in sorted(path.glob("*.log")):
+        try:
+            entry.unlink()
+            removed += 1
+        except OSError as exc:
+            log.warning("purge: could not delete %s (%s)", entry, exc)
+    return removed

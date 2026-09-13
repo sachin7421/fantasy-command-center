@@ -945,3 +945,105 @@ def test_the_warning_never_prints_the_token():
     message = describe_token_rotation({"refresh_token": "super-secret-value"})
     assert "super-secret-value" not in message
     assert "YAHOO_ACCESS_TOKEN_JSON" in message
+
+
+# --- redaction, hardened ------------------------------------------------------
+
+@pytest.mark.parametrize("secret,text", [
+    ("Hunter2Secret", "dbname=postgres user=postgres password=Hunter2Secret host=x"),
+    ("Hunter2", "postgres.abc:Hunter2@host:6543/postgres"),
+    ("RT-9f", "https://api.login.yahoo.com/oauth2/get_token?refresh_token=RT-9f"),
+    ("abc123", "...get_token?client_secret=abc123&grant_type=refresh_token"),
+    ("tok-xyz", "Authorization: Bearer tok-xyz"),
+])
+def test_redaction_covers_the_forms_credentials_actually_take(secret, text):
+    """`redact` matched only `user:pass@` after a `://` scheme.
+
+    Every other shape a credential arrives in went through untouched - and it
+    guards job_runs.detail, which `doctor` prints and `fcc migrate` replicates
+    to Supabase. The scheme-less DSN is not hypothetical: storage.py exists
+    precisely because people paste them that way.
+    """
+    from src.db import redact
+
+    cleaned = redact(text)
+    assert secret not in cleaned, f"leaked {secret!r} from {text!r} -> {cleaned!r}"
+
+
+def test_redaction_keeps_what_makes_an_error_useful():
+    from src.db import redact
+
+    cleaned = redact("connection to postgresql://u:p@db.host.com:6543/postgres failed")
+    assert "db.host.com:6543" in cleaned
+    assert "failed" in cleaned
+
+
+# --- the migration must not replicate Yahoo data -----------------------------
+
+def test_migrate_never_copies_a_yahoo_cache_row(tmp_path):
+    """`fcc migrate` bulk-copies source_cache with raw INSERTs.
+
+    That bypasses db.cache_put entirely, so the guard refusing Yahoo never
+    runs - and a SQLite file predating the agreement would have its Yahoo rows
+    pushed to a third-party host.
+    """
+    from src.migrate import row_is_allowed
+
+    assert row_is_allowed("source_cache", {"source": "sleeper"}) is True
+    assert row_is_allowed("source_cache", {"source": "yahoo"}) is False
+    assert row_is_allowed("source_cache", {"source": "Yahoo_Fantasy"}) is False
+    assert row_is_allowed("player_id_map", {"source": "yahoo"}) is False
+    assert row_is_allowed("player_id_map", {"source": "sleeper"}) is True
+    assert row_is_allowed("players", {"full_name": "anyone"}) is True
+
+
+# --- the client must not be able to write identifiers at all -----------------
+
+def test_the_yahoo_client_holds_no_id_writer():
+    """It constructed an IdMapper it never used.
+
+    IdMapper.resolve defaults to persist=True and writes player_id_map. One
+    line - self.idmap.resolve(source="yahoo", ...) - would reinstate exactly
+    the identifier write the refactor removed, and neither cache_put nor the
+    build checker would notice. A loaded gun on the wall.
+    """
+    import inspect
+
+    from src import yahoo_client
+
+    source = inspect.getsource(yahoo_client)
+    assert "self.idmap" not in source, (
+        "YahooClient still holds an IdMapper, which can write player_id_map"
+    )
+
+
+def test_log_files_are_never_committed():
+    """Scheduled runs append Yahoo player names and API URLs to logs/.
+
+    jobs/install_schedule.* redirect every run into logs/<job>.log, which
+    captures unmatched Yahoo player names, exception text carrying the league
+    key, and yfpy's own request URLs. The repository is public.
+    """
+    from pathlib import Path
+
+    ignored = Path(".gitignore").read_text(encoding="utf-8")
+    assert "logs/" in ignored, "logs/ is not gitignored and can hold Yahoo data"
+
+
+def test_purge_clears_the_log_directory(tmp_path, monkeypatch):
+    """Obligation 5 has to reach the filesystem, not only the database.
+
+    `purge_yahoo` emptied tables and left logs/ untouched - so "every Yahoo
+    identifier removed" was false while a directory of them sat on disk.
+    """
+    from src import compliance
+
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "waivers.log").write_text("unmatched: Josh Allen\n", encoding="utf-8")
+    (logs / "keep.txt").write_text("not a log", encoding="utf-8")
+
+    removed = compliance.purge_log_files(logs)
+    assert removed == 1
+    assert not (logs / "waivers.log").exists()
+    assert (logs / "keep.txt").exists(), "purge deleted something that is not a log"

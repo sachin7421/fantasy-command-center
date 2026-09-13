@@ -436,7 +436,24 @@ def describe_backend() -> str:
     return f"sqlite ({DEFAULT_DB_PATH})"
 
 
-_CREDENTIAL_IN_URL = re.compile(r"(?<=://)[^/\s:@]+:[^/\s@]+(?=@)")
+#: Every shape a credential arrives in, not just one. This guards
+#: job_runs.detail, which `doctor` prints and `fcc migrate` replicates to a
+#: third-party host - so a miss here travels.
+#:
+#: The scheme-less DSN is not hypothetical: storage.py exists precisely
+#: because people paste connection strings without the scheme, and the
+#: original pattern required `://` to anchor on.
+_REDACTIONS = (
+    # user:password@host, with or without a scheme in front
+    (re.compile(r"(?<=://)[^/\s:@]+:[^/\s@]+(?=@)"), "***:***"),
+    (re.compile(r"\b[\w.-]+:[^/\s@]{3,}(?=@[\w.-]+[:/])"), "***:***"),
+    # libpq keyword form
+    (re.compile(r"(?i)\bpassword\s*=\s*\S+"), "password=***"),
+    # anything token-shaped in a query string or header
+    (re.compile(r"(?i)\b(access_token|refresh_token|client_secret|api_key|"
+                r"apikey|secret|token)\s*=\s*[^\s&]+"), r"\1=***"),
+    (re.compile(r"(?i)\bBearer\s+\S+"), "Bearer ***"),
+)
 
 
 def redact(text: str | None) -> str | None:
@@ -452,7 +469,9 @@ def redact(text: str | None) -> str | None:
     """
     if not text:
         return text
-    return _CREDENTIAL_IN_URL.sub("***:***", text)
+    for pattern, replacement in _REDACTIONS:
+        text = pattern.sub(replacement, text)
+    return text
 
 
 def record_job_run(

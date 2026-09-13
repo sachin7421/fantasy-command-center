@@ -144,6 +144,7 @@ class Context:
         if cached is not None and cached.week == int(week):
             return cached
         snapshot = self.yahoo.collect_snapshot(season, week)
+        failed: list[str] = []
         teams = list(snapshot.budgets)
         for team_id in teams:
             try:
@@ -153,6 +154,23 @@ class Context:
                 )
             except Exception as exc:
                 log.warning("Roster fetch failed for team %s: %s", team_id, exc)
+                failed.append(str(team_id))
+
+        # Losing YOUR roster is not a degraded run, it is a wrong one: every
+        # status change reads as "not my problem", the waiver report values
+        # claims against nothing, and all of it exits 0. A rate limit lands
+        # mid-sequence far more often than at the first call, which is exactly
+        # where the silent branch was.
+        mine = str(self.team_key() or "")
+        if mine and mine in failed:
+            raise RuntimeError(
+                f"Yahoo roster fetch failed for your own team ({mine}). "
+                "Refusing to continue: every job downstream would report an "
+                "empty roster as though you had no players."
+            )
+        if failed:
+            print(f"  rosters: {len(failed)} team(s) unavailable ({', '.join(failed)})"
+                  " - rival-facing advice is incomplete.")
         self._snapshot = snapshot
         return snapshot
 
@@ -1735,7 +1753,10 @@ def cmd_purge_yahoo(ctx: Context, args) -> int:
         print("Re-run with --confirm to proceed.")
         return EXIT_FAIL
 
+    from src.compliance import purge_log_files
+
     removed = purge_yahoo(ctx.conn)
+    removed["logs/*.log"] = purge_log_files("logs")
     print("Yahoo data purged:")
     for line in describe_purge(removed):
         print(line)

@@ -76,6 +76,33 @@ def _row_values(row: Any, columns: Sequence[str]) -> tuple:
     return tuple(row[c] for c in columns)
 
 
+#: Rows that must not cross into the hosted database.
+#:
+#: `copy_table` uses raw batched INSERTs, which bypasses db.cache_put entirely -
+#: so the guard that refuses to cache Yahoo never runs here. A SQLite file
+#: predating the agreement would have had its Yahoo rows pushed to a
+#: third-party host by a command whose whole job is to move data.
+_FORBIDDEN_SOURCES = ("yahoo",)
+
+
+def row_is_allowed(table: str, row) -> bool:
+    """Whether one row may be migrated.
+
+    Only tables carrying a `source` column can hold Yahoo data by provenance;
+    everything else is ours by construction.
+    """
+    if table not in ("source_cache", "player_id_map", "projections",
+                     "projection_history"):
+        return True
+    try:
+        source = str(row["source"] or "").lower()
+    # silent: the row has no `source` column, so it cannot be Yahoo's by
+    # provenance - which is the only thing this function decides
+    except Exception:
+        return True
+    return not any(bad in source for bad in _FORBIDDEN_SOURCES)
+
+
 def copy_table(
     source: Database,
     target: Database,
@@ -142,13 +169,25 @@ def copy_table(
         batch = []
         return count
 
+    skipped = 0
     for row in cursor:
         read += 1
+        # A raw INSERT bypasses db.cache_put, so the guard refusing to store
+        # Yahoo never runs here. Filtered at the row, because provenance lives
+        # in a column rather than in the table name.
+        if not row_is_allowed(table, row):
+            skipped += 1
+            continue
         batch.append(_row_values(row, columns))
         if len(batch) >= BATCH:
             written += flush()
     written += flush()
-    return {"read": read, "written": written}
+    if skipped:
+        log.warning(
+            "%s: %d Yahoo-sourced row(s) not migrated (API agreement)",
+            table, skipped,
+        )
+    return {"read": read, "written": written, "skipped": skipped}
 
 
 def migrate(
