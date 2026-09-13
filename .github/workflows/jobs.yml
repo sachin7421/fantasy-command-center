@@ -15,7 +15,11 @@ on:
     - cron: "0 11 * * 2"   # Tue 07:00 ET - waiver analyzer
     - cron: "0 12 * * *"   # daily 08:00 ET - injury monitor
     - cron: "0 14 * * 4"   # Thu 10:00 ET - lineup (TNF lock)
-    - cron: "0 13 * * 0"   # Sun 09:00 ET - lineup
+    # 10:30 ET, not 09:00. Thursday 10:00 to Sunday 09:00 is 71 hours and
+    # the dedup window is 72, so an unchanged Thursday recommendation
+    # silently suppressed Sunday's - the last email before kickoff, and
+    # the one that matters most.
+    - cron: "30 14 * * 0"   # Sun 10:30 ET - lineup
     - cron: "0 11 * * 3"   # Wed 07:00 ET - bye / horizon planner
     - cron: "0 12 * * 1"   # Mon 08:00 ET - recap + trade scout
     - cron: "0 11 * * 4"   # Thu 07:00 ET - deadline reminders

@@ -60,6 +60,15 @@ class Notification:
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
+class EmailNotConfigured(RuntimeError):
+    """Email is switched on and cannot possibly send.
+
+    A distinct type because the caller must treat it as a delivery FAILURE.
+    Returning False collapsed it into "nothing to send", which is the one
+    reading that loses the message.
+    """
+
+
 class Notifier:
     def __init__(self, cfg: Config, conn: Database):
         self.cfg = cfg
@@ -207,12 +216,23 @@ class Notifier:
         username = env("SMTP_USERNAME") or from_addr
         password = env("SMTP_PASSWORD")
 
+        # Raised, not logged-and-skipped. `sent: False, errors: {}` is the
+        # worst possible answer: the caller checks `errors`, finds none, treats
+        # the run as a success, exits 0 and advances the injury baseline - so
+        # the alert is consumed and nobody ever saw it. A REVOKED password
+        # raises and is handled correctly; a DELETED secret, which is what
+        # rotation looks like halfway through, used to land here silently.
+        #
+        # log.info made it worse: the configured level is WARNING, so the one
+        # trace was invisible too.
         if not (host and to_addr and from_addr):
-            log.info("Email enabled but SMTP settings are incomplete; skipping.")
-            return False
+            raise EmailNotConfigured(
+                "email is enabled but host, to_address or from_address is missing"
+            )
         if not password:
-            log.info("Email enabled but SMTP_PASSWORD is not set; skipping.")
-            return False
+            raise EmailNotConfigured(
+                "email is enabled but SMTP_PASSWORD is not set"
+            )
 
         dashboard_url = self.cfg.get("notifications.dashboard_url")
         subject_prefix = {"high": "[Fantasy] ACTION - ", "low": "[Fantasy] "}.get(

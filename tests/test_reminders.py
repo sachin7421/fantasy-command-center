@@ -5,6 +5,8 @@ Reminders are the one output driven purely by the clock, so the tests pin
 """
 from __future__ import annotations
 
+import os
+
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -198,3 +200,84 @@ def test_plain_text_alternative_is_readable():
     text = email_render.render_text("Week 2 waivers", ["__CLAIMS__", "  ADD X / DROP Y"])
     assert "CLAIMS" in text
     assert "ADD X" in text
+
+
+# --- delivery that fails quietly -------------------------------------------
+
+def test_a_missing_smtp_secret_is_an_error_not_a_shrug(tmp_path):
+    """`sent: False, errors: {}` is the worst possible answer.
+
+    Incomplete SMTP settings logged at INFO - below the configured WARNING
+    level, so invisible - and returned False with no error. The caller checks
+    `errors`, finds none, treats the run as a success, exits 0, and advances
+    the injury baseline. The alert is consumed and nobody ever saw it.
+
+    A REVOKED password raises and is handled correctly. A DELETED secret, which
+    is what rotation looks like halfway through, lands in the silent branch.
+    """
+    from src.config import Config
+    from src.notify import Notification, Notifier
+
+    config = tmp_path / "c.yaml"
+    config.write_text(
+        "notifications:\n"
+        "  email:\n"
+        "    enabled: true\n"
+        "    to_address: \"someone@example.com\"\n"
+        "  desktop:\n    enabled: false\n"
+        "  discord:\n    enabled: false\n",
+        encoding="utf-8",
+    )
+    cfg = Config.load(str(config))
+    for key in ("SMTP_PASSWORD", "SMTP_USERNAME", "NOTIFY_TO_ADDR"):
+        os.environ.pop(key, None)
+
+    from src import db
+
+    conn = db.init_db(tmp_path / "n.db", force_sqlite=True)
+    try:
+        result = Notifier(cfg, conn).send(
+            Notification(title="t", lines=["l"], job="injuries")
+        )
+    finally:
+        conn.close()
+    assert result["errors"], (
+        "a missing SMTP secret produced no error, so the caller cannot tell "
+        f"it from a delivered message: {result}"
+    )
+
+
+def test_the_two_lineup_runs_are_not_deduplicated_against_each_other():
+    """Thursday 10:00 to Sunday 09:00 is 71 hours; the window is 72.
+
+    The dedup key is content-based and deliberately excludes timestamps, so an
+    unchanged Thursday recommendation suppresses Sunday's - the last email
+    before kickoff, and the one that matters most. It is also
+    non-deterministic: a small projection refresh changes the key and the mail
+    arrives, so the failure depends on rounding.
+    """
+    import datetime as dt
+    import re
+    from pathlib import Path
+
+    from src.config import Config
+
+    workflow = Path(".github/workflows/jobs.yml").read_text(encoding="utf-8")
+    crons = re.findall(r'cron:\s*"(\d+) (\d+) \* \* (\d)"\s*#[^\n]*lineup', workflow)
+    assert len(crons) >= 2, "expected two scheduled lineup runs"
+
+    def when(minute, hour, weekday):
+        # A reference week; only the gap between them matters.
+        base = dt.datetime(2026, 9, 14, tzinfo=dt.UTC)  # a Monday
+        return base + dt.timedelta(days=int(weekday) or 7, hours=int(hour),
+                                   minutes=int(minute))
+
+    from itertools import pairwise
+
+    times = sorted(when(*c) for c in crons)
+    gap_hours = min((b - a).total_seconds() / 3600 for a, b in pairwise(times))
+    window = float(Config.load("config.yaml").get("notifications.dedup_window_hours", 72))
+    assert gap_hours > window, (
+        f"lineup runs are {gap_hours:.0f}h apart and the dedup window is "
+        f"{window:.0f}h, so the later email can be suppressed silently"
+    )
