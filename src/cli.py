@@ -1811,6 +1811,47 @@ def cmd_roster(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+def cmd_streamers(ctx: Context, args) -> int:
+    """Rank a streamable position for one week.
+
+    Defence and tight end are the two slots a no-kicker league actually
+    churns, and the waiver report answers the wrong question for them: it
+    ranks by rest-of-season value, and a defence you will drop on Tuesday is
+    worth exactly what it scores on Sunday.
+    """
+    from src.season import streamers
+
+    season = ctx.season
+    week = args.week if args.week is not None else ctx.current_week()
+    position = str(args.position or "DEF").upper()
+
+    snapshot = ctx.league_snapshot(season, week)
+    team_key = ctx.team_key() or ""
+    mine = streamers.my_keys_at(ctx.conn, snapshot, team_key, position)
+
+    report = streamers.rank(ctx.conn, season, week, position, mine=mine)
+    if not report.has_data:
+        print(f"No week {week} projections for any {position}.")
+        print("Run `fcc sync` - weekly lines arrive with it.")
+        return EXIT_FAIL
+
+    print(f"\n{position} - week {week}, best projected first\n")
+    for option in report.options:
+        marker = "  <- yours" if option.is_mine else ""
+        print(f"  {option.rank:>3}. {option.name[:26]:<26} {option.team:<4} "
+              f"{option.points:>5.1f}{marker}")
+
+    print("")
+    for line in report.describe():
+        print(f"  {line}")
+
+    if not mine:
+        print("")
+        print("  You have no " + position + " on the stored roster. Paste one with")
+        print("  `fcc roster --init`, or in the dashboard's This week tab.")
+    return EXIT_OK
+
+
 def cmd_check(ctx: Context, args) -> int:
     """Run the static analysers over the source tree.
 
@@ -2032,6 +2073,12 @@ def build_parser() -> argparse.ArgumentParser:
                           help="write a template to fill in")
     p_roster.add_argument("--week", type=int)
 
+    p_stream = sub.add_parser(
+        "streamers", help="rank a streamable position (DEF, TE) for one week"
+    )
+    p_stream.add_argument("--position", default="DEF")
+    p_stream.add_argument("--week", type=int)
+
     p_check = sub.add_parser("check", help="run the static analysers")
     p_check.add_argument("--only", help="comma-separated subset, e.g. ruff,mypy")
 
@@ -2060,6 +2107,7 @@ HANDLERS = {
     "playoffs": cmd_playoffs,
     "faab": cmd_faab,
     "check": cmd_check,
+    "streamers": cmd_streamers,
     "roster": cmd_roster,
     "purge-yahoo": cmd_purge_yahoo,
     "test-notify": cmd_test_notify,
