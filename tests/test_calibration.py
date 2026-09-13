@@ -81,3 +81,69 @@ def test_the_bust_tail_is_modelled_at_all():
     """A bare gamma puts 2-6x too little mass below two points."""
     for position in ("QB", "RB", "WR", "TE"):
         assert distributions.BUST_PROBABILITY[position] > 0.02
+
+
+# --- the assumed spread, checked against what actually happened --------------
+
+#: Measured by tools/backtest.py over 2,198 paired 2025 player-weeks - a
+#: projection made before a week against the points scored in it. The first
+#: non-circular measurement in this project: every earlier performance claim
+#: scored both sides with our own projections.
+#:
+#:   pos  n    mean proj  sd(error)  bias    r
+#:   QB   242  17.02      6.94       +0.39   0.32
+#:   RB   586   8.12      5.87       -0.11   0.66
+#:   WR   914   6.64      5.48       +0.25   0.53
+#:   TE   456   4.56      4.52       +0.87   0.51
+MEASURED_ERROR_SD = {"QB": 6.94, "RB": 5.87, "WR": 5.48, "TE": 4.52}
+MEAN_PROJECTION = {"QB": 17.02, "RB": 8.12, "WR": 6.64, "TE": 4.56}
+
+
+def test_the_assumed_spread_is_close_to_the_measured_one():
+    """A structural critique that measurement did not bear out.
+
+    The quant review argued the lineup model is systematically overconfident:
+    `VOLATILITY_FIT` fits dispersion around a REALIZED season mean, which is a
+    different quantity from the spread around a PROJECTION and carries no
+    projection error at all. That reasoning is correct.
+
+    The predicted consequence was not. Measured against 2025:
+
+        QB  model 8.14  measured 6.94  -> 18% too WIDE
+        RB  model 6.11  measured 5.87  ->  4% too wide
+        WR  model 5.40  measured 5.48  ->  1% too narrow
+        TE  model 3.73  measured 4.52  -> 21% too narrow
+
+    Within a fifth either way, and the direction varies by position rather
+    than running one way. The two quantities happen to be similar in size, so
+    the wrong estimand is not costing much - which is why this is measured
+    rather than argued.
+
+    The band is deliberately loose. It is a drift alarm, not a calibration:
+    one season of one source is not evidence enough to overwrite constants
+    fitted on 22,175 player-weeks.
+    """
+    from src.projections import effective_volatility
+
+    for position, measured in MEASURED_ERROR_SD.items():
+        assumed = effective_volatility(position, week=1) * MEAN_PROJECTION[position]
+        ratio = measured / assumed
+        assert 0.6 <= ratio <= 1.6, (
+            f"{position}: the model assumes sd {assumed:.2f} and 2025 measured "
+            f"{measured:.2f} ({ratio:.2f}x). Re-run tools/backtest.py - either "
+            "the constants moved or the projections changed character."
+        )
+
+
+def test_tight_ends_are_the_one_position_worth_watching():
+    """TE is 21% too narrow AND projected 0.87 low, both pointing the same way.
+
+    Neither is large alone. Together they mean a tight end's floor is
+    overstated and his upside understated, which is the wrong way round for
+    the position most often streamed. Recorded so the next person measuring
+    starts here rather than rediscovering it.
+    """
+    assert MEASURED_ERROR_SD["TE"] / MEAN_PROJECTION["TE"] > 0.9, (
+        "TE weekly outcome spread is nearly its entire mean - a TE projection "
+        "is barely more than a guess, and the model should say so"
+    )
