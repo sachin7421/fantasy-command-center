@@ -1379,3 +1379,60 @@ def test_the_optimiser_never_moves_a_player_whose_game_is_over(tmp_path):
     assert "Already Played" not in moved, (
         "recommended starting a player whose game is already over"
     )
+
+
+def test_the_recap_never_pairs_players_who_could_not_swap(tmp_path):
+    """The Monday email said "Jordan Love (22.5) benched while Rome Odunze
+    (6.2) started, -16.3".
+
+    Love is a quarterback and Odunze started at W/R/T. A QB cannot occupy a
+    flex, so that is an instruction nobody could have executed - and it blames
+    the manager for a decision he was never able to make.
+
+    It came from zipping two independently sorted lists: the best benched
+    player against the worst wrongly-started one, with no check that either
+    could take the other's slot. lineup.py fixed exactly this and recap.py
+    kept it.
+    """
+    from src.season import recap
+    from tests.conftest import LeagueBuilder
+
+    conn = db.init_db(tmp_path / "recap2.db")
+    players = [
+        ("qb1|QB", "Started QB", "QB", 15.4, "QB"),
+        ("wr1|WR", "Started WR", "WR", 6.2, "W/R/T"),
+        ("qb2|QB", "Benched QB", "QB", 22.5, "BN"),
+        ("rb1|RB", "Benched RB", "RB", 12.1, "BN"),
+    ]
+    for key, name, pos, pts, _slot in players:
+        _player(conn, key, name, pos, 200.0)
+        conn.execute(
+            "INSERT INTO player_week_actuals(player_key, season, week, points, "
+            "source, recorded_at) VALUES (?,?,?,?,?,?)",
+            (key, SEASON, WEEK, pts, "nflverse", db.utcnow()),
+        )
+    conn.commit()
+
+    build = LeagueBuilder(LEAGUE, SEASON, WEEK)
+    for key, _n, _p, _pts, slot in players:
+        build.roster(MY_TEAM, key, slot, "Butt Fumblers")
+
+    report = recap.run(
+        conn, LEAGUE, MY_TEAM, SEASON, WEEK, {"QB": 1, "W/R/T": 1},
+        snapshot=build.build(),
+    )
+    conn.close()
+
+    for mistake in report.mistakes:
+        assert mistake.cost > 0, (
+            f"reported a NEGATIVE cost as a mistake: {mistake.benched} "
+            f"({mistake.benched_points}) over {mistake.started} "
+            f"({mistake.started_points})"
+        )
+
+    pairs = {(m.benched, m.started) for m in report.mistakes}
+    assert ("Benched QB", "Started WR") not in pairs, (
+        "paired a quarterback against a flex starter - an impossible swap"
+    )
+    # The real mistake IS available: QB for QB.
+    assert ("Benched QB", "Started QB") in pairs

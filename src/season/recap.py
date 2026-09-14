@@ -60,6 +60,9 @@ class _Scored:
     position: str
     points: float
     started: bool
+    #: The slot this player actually occupied, so a mistake can be reported
+    #: against the slot rather than against an arbitrary other starter.
+    slot: str | None = None
     #: Whether a real score was recorded. Distinguishes a genuine zero from a
     #: week that has not been played or synced.
     scored: bool = False
@@ -120,6 +123,7 @@ def _actual_week_scores(
             # as benched rather than started: crediting an unknown as a starter
             # would inflate what the lineup actually scored.
             started=_was_started(slot_of.get(r["player_key"])),
+            slot=slot_of.get(r["player_key"]),
         )
         for r in rows
     ]
@@ -161,27 +165,53 @@ def run(
         sum(s.player.points for s in optimal.slots if s.player), 2
     )
 
-    optimal_keys = {s.player.player_key for s in optimal.slots if s.player}
-    should_have_started = [p for p in roster if p.player_key in optimal_keys and not p.started]
-    wrongly_started = sorted(
-        [p for p in started if p.player_key not in optimal_keys],
-        key=lambda p: p.points,
-    )
-    # Deliberately NOT strict: there is no reason the number of players who
-    # should have started equals the number who wrongly did, and the shorter
-    # list is the number of real mistakes.
-    for benched, actual_starter in zip(
-        sorted(should_have_started, key=lambda p: p.points, reverse=True),
-        wrongly_started, strict=False,
-    ):
+    # Compared SLOT BY SLOT, not by zipping two sorted lists.
+    #
+    # The old version paired the best benched player against the worst
+    # wrongly-started one with no check that either could take the other's
+    # slot, and sent this out: "Jordan Love (22.5) on bench while Rome Odunze
+    # (6.2) started, -16.3". Love is a quarterback; Odunze started at W/R/T. A
+    # QB cannot occupy a flex, so that is an instruction nobody could have
+    # executed - it blamed the manager for a decision he was never able to
+    # make. It also produced "-3.3" costs: a benched player who scored LESS
+    # than the starter, reported as a mistake.
+    #
+    # The optimal lineup is already slot-assigned and already legal, so
+    # walking it against what was actually started can only ever produce a
+    # swap that was possible.
+    actual_by_slot: dict[str, list[_Scored]] = {}
+    for player in started:
+        actual_by_slot.setdefault((player.slot or "").upper(), []).append(player)
+
+    for assigned in optimal.slots:
+        candidate = assigned.player
+        if candidate is None:
+            continue
+        slot = (assigned.slot or "").upper()
+        occupants = actual_by_slot.get(slot) or []
+        if not occupants:
+            continue
+        # Whoever actually held this slot and is not the optimal choice.
+        displaced = next(
+            (p for p in occupants if p.player_key != candidate.player_key), None
+        )
+        if displaced is None:
+            continue
+        occupants.remove(displaced)
+        # Only a LOSS is a mistake. A swap that would have scored fewer points
+        # is not something the manager got wrong.
+        if candidate.points <= displaced.points:
+            continue
         report.mistakes.append(
             BenchMistake(
-                benched=benched.name,
-                benched_points=benched.points,
-                started=actual_starter.name,
-                started_points=actual_starter.points,
+                benched=candidate.name,
+                benched_points=candidate.points,
+                started=displaced.name,
+                started_points=displaced.points,
             )
         )
+
+    report.mistakes.sort(key=lambda m: m.cost, reverse=True)
     return report
 
 
@@ -214,9 +244,15 @@ def to_notification(report: RecapReport, season: int) -> Notification | None:
         lines.append("")
         lines.append("__WHAT IT COST__")
         for m in report.mistakes:
+            # "-{cost}" rendered as "--3.3" whenever cost was negative, which
+            # it could be before mistakes were restricted to actual losses.
+            # Saying "cost you N" removes the ambiguity entirely: a reader
+            # should not have to work out whether a minus sign is a subtraction
+            # or a direction.
             lines.append(
-                f"  {m.benched} ({m.benched_points:.1f}) on bench while "
-                f"{m.started} ({m.started_points:.1f}) started  -{m.cost:.1f}"
+                f"  {m.benched} ({m.benched_points:.1f}) on the bench, "
+                f"{m.started} ({m.started_points:.1f}) started in his slot "
+                f"- cost you {m.cost:.1f}"
             )
     else:
         lines.append("")
