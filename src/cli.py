@@ -322,7 +322,12 @@ def _describe_yahoo_access(ctx: Context) -> str:
     from src.yahoo_client import classify_access_error
 
     try:
-        ctx.yahoo.resolve_season()
+        # A call that unavoidably reaches Yahoo. `resolve_season()` was used
+        # here and returns `league.season` straight from config when it is set,
+        # so the probe never touched the network and reported "working" on an
+        # account with no completed OAuth consent - the exact false green this
+        # function exists to prevent, reproduced inside it.
+        ctx.yahoo.fetch_teams()
     except Exception as exc:
         kind = classify_access_error(exc)
         if kind == "not-provisioned":
@@ -334,6 +339,14 @@ def _describe_yahoo_access(ctx: Context) -> str:
                 "                provision it. Do NOT create a new app - that changes\n"
                 "                the Client ID you gave them."
             )
+        if kind == "no-consent":
+            return "\n".join([
+                "credentials stored, but consent was never completed.",
+                "                Run `fcc setup` in a TERMINAL, not through a",
+                "                script or a scheduled job: Yahoo opens a browser",
+                "                and asks you to paste a verifier code back.",
+                "                Until that happens there is no token to call with.",
+            ])
         if kind == "rate-limited":
             return "rate limited by Yahoo - wait, do not retry in a loop"
         if kind == "token-expired":

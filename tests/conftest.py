@@ -257,3 +257,31 @@ def _no_ambient_roster(monkeypatch, tmp_path):
         return tmp_path / "no-roster.txt"
 
     monkeypatch.setattr(manual_roster, "roster_path", absent)
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_yahoo(monkeypatch, request):
+    """No test may reach Yahoo, or depend on whether this machine can.
+
+    The moment real credentials landed in .env, four FAAB tests started trying
+    to authenticate: they had been exercising the "not configured" path by
+    accident, and the suite's result now depended on the developer's OAuth
+    state rather than on the code. Same reasoning as the SQLite pin and the
+    roster-file redirect above.
+
+    A test that WANTS Yahoo behaviour injects its own fake client, which still
+    works - only the ambient credentials are hidden.
+    """
+    for key in ("YAHOO_CONSUMER_KEY", "YAHOO_CONSUMER_SECRET",
+                "YAHOO_ACCESS_TOKEN_JSON"):
+        monkeypatch.delenv(key, raising=False)
+
+    # A test of `yahoo_configured` itself must see the real implementation -
+    # stubbing it there would test the stub. Mark with
+    # @pytest.mark.real_yahoo_config to opt out.
+    if request.node.get_closest_marker("real_yahoo_config"):
+        return
+
+    from src import cli
+
+    monkeypatch.setattr(cli.Context, "yahoo_configured", lambda self: False)

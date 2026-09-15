@@ -86,5 +86,8 @@ warn_redundant_casts = true
 exclude = ["\\.venv", "data"]
 
 [tool.pytest.ini_options]
+markers = [
+    "real_yahoo_config: sees the real yahoo_configured(), not the test stub",
+]
 testpaths = ["tests"]
 filterwarnings = ["error::SyntaxWarning"]

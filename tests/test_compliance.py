@@ -1047,3 +1047,44 @@ def test_purge_clears_the_log_directory(tmp_path, monkeypatch):
     assert removed == 1
     assert not (logs / "waivers.log").exists()
     assert (logs / "keep.txt").exists(), "purge deleted something that is not a log"
+
+
+def test_the_access_probe_must_actually_call_yahoo():
+    """`doctor` reported "working" without making a single authenticated call.
+
+    The probe used `resolve_season()`, which returns `league.season` straight
+    from config when it is set - and it is set. So the check never touched the
+    network, and a green line meant nothing at all. That is the precise failure
+    this probe was written to prevent, reproduced inside the probe.
+    """
+    import inspect
+
+    from src import cli
+
+    source = inspect.getsource(cli._describe_yahoo_access)
+    # The CALL, not a mention - the comment explaining why resolve_season is
+    # wrong necessarily contains its name. Same trap as banning "Read/Write"
+    # in text that says "Not Read/Write".
+    assert "ctx.yahoo.resolve_season()" not in source, (
+        "the probe calls resolve_season, which short-circuits on config and "
+        "never reaches Yahoo"
+    )
+    assert "ctx.yahoo.fetch_teams()" in source, (
+        "the probe must make a call that unavoidably hits the API"
+    )
+
+
+def test_an_incomplete_consent_is_named_rather_than_leaked():
+    """yfpy asks for the verifier with input(), which EOFs off a terminal.
+
+    `doctor` surfaced that as "configured, but the call failed: EOF when
+    reading a line" - a Python error shown to somebody who wants to know what
+    to do. The state is specific and the remedy is specific: consent was never
+    completed, and it has to be done where a browser can open.
+    """
+    from src.yahoo_client import classify_access_error
+
+    for message in ("EOF when reading a line",
+                    "Enter verifier :",
+                    "EOFError"):
+        assert classify_access_error(Exception(message)) == "no-consent"

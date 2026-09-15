@@ -341,6 +341,7 @@ def test_an_explicit_db_path_never_opens_postgres(tmp_path):
     assert conn.dialect == "sqlite"
 
 
+@pytest.mark.real_yahoo_config
 def test_a_commented_out_credential_is_not_configured(tmp_path, monkeypatch):
     """The shipped .env carries commented placeholders; they are not credentials."""
     from src.cli import Context

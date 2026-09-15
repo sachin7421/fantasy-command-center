@@ -103,6 +103,12 @@ def classify_access_error(exc: BaseException) -> str:
     dressed as a diagnosis is worse than admitting ignorance.
     """
     text = str(exc).lower()
+    # yfpy asks for the OAuth verifier with input(), which raises EOFError
+    # anywhere without a terminal. The credentials are fine; consent was never
+    # completed. Distinct from a bad token, which setup also fixes but for a
+    # different reason, and from a missing grant, which setup cannot fix.
+    if "eof when reading" in text or "enter verifier" in text or "eoferror" in text:
+        return "no-consent"
     if "999" in text or "rate limit" in text:
         return "rate-limited"
     if any(
