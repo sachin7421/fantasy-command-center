@@ -339,6 +339,17 @@ def _describe_yahoo_access(ctx: Context) -> str:
                 "                provision it. Do NOT create a new app - that changes\n"
                 "                the Client ID you gave them."
             )
+        if kind == "stale-scope":
+            return "\n".join([
+                "the token predates your Fantasy Sports permission.",
+                "                Yahoo granted the scope AFTER this token was",
+                "                minted, and refreshing cannot add a scope that",
+                "                was never in it. Delete the YAHOO_ACCESS_TOKEN,",
+                "                YAHOO_REFRESH_TOKEN, YAHOO_GUID, YAHOO_TOKEN_TIME",
+                "                and YAHOO_TOKEN_TYPE lines from .env - keep the",
+                "                consumer key and secret - then re-run a Yahoo",
+                "                command in a terminal to consent again.",
+            ])
         if kind == "no-consent":
             return "\n".join([
                 "credentials stored, but consent was never completed.",

@@ -107,6 +107,13 @@ def classify_access_error(exc: BaseException) -> str:
     # anywhere without a terminal. The credentials are fine; consent was never
     # completed. Distinct from a bad token, which setup also fixes but for a
     # different reason, and from a missing grant, which setup cannot fix.
+    # A VALID token that lacks the Fantasy Sports scope - minted before Yahoo
+    # attached the permission. Refreshing cannot add a scope that was never
+    # granted, so this needs a fresh consent rather than patience. It contains
+    # "valid credentials", so without this branch it is mistaken for a missing
+    # grant and the user is told to wait for something already done.
+    if "additional_authorization_required" in text:
+        return "stale-scope"
     if "eof when reading" in text or "enter verifier" in text or "eoferror" in text:
         return "no-consent"
     if "999" in text or "rate limit" in text:

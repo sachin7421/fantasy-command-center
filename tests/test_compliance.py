@@ -1088,3 +1088,22 @@ def test_an_incomplete_consent_is_named_rather_than_leaked():
                     "Enter verifier :",
                     "EOFError"):
         assert classify_access_error(Exception(message)) == "no-consent"
+
+
+def test_a_token_minted_before_the_scope_is_named_exactly():
+    """Yahoo's wording for it is "additional_authorization_required".
+
+    It means the token is VALID and lacks the Fantasy Sports scope - minted
+    before Yahoo attached the permission. Refreshing cannot add a scope that
+    was never granted, so the remedy is a fresh consent, not waiting.
+
+    Lumping it in with "not provisioned" would have sent the user to wait for
+    something that had already happened.
+    """
+    from src.yahoo_client import classify_access_error
+
+    message = (
+        'Please provide valid credentials. OAuth '
+        'oauth_problem="additional_authorization_required", realm="yahooapis.com"'
+    )
+    assert classify_access_error(Exception(message)) == "stale-scope"
