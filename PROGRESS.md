@@ -9,7 +9,7 @@ and are not maintained by anything - the gate's output is.
 ```
 lint         ok      0.1s
 types        ok      0.7s
-tests        ok     36.4s      541 passed, 1 skipped
+tests        ok     34.0s      560 passed, 1 skipped
 degradation  ok      0.3s
 yahoo        ok      0.1s
 dead code    ok      0.5s
@@ -30,7 +30,9 @@ The app is registered and consent completes, but every data call fails with
 developer console directly: app `hnkXi0Gh` (Client ID begins `dj0yJmk9bzB0`) shows
 only OpenID Connect permissions (Email, Profile). **No Fantasy Sports group exists on
 the app at all**, so there is no box to tick. yfpy never sends a `scope` parameter
-(`yahoo_oauth/oauth.py:99`), so nothing in code can request it. The remedy is Yahoo
+(`yahoo_oauth/oauth.py:99`). **Asking for it explicitly does not help either -
+proven 17 Sep:** `scope=fspt-r` at the authorization endpoint returns
+`error=invalid_scope`, while `openid` on the same app is accepted. The remedy is Yahoo
 support attaching the scope, then a **fresh consent** signed in as the Yahoo account
 that owns league 796511 - the old token cannot gain a scope by refreshing.
 
@@ -85,12 +87,21 @@ request. Rotate once Fantasy access works.
 - **`doctor` tells the truth** - calls Yahoo for real (`9467f3d`), names a token that
   predates its scope (`d19a8f7`), and no longer hangs on a verifier prompt when there
   is no token (`8d5e2bd`).
+- **Daily scope check** (`f3d304b`) - `fcc yahoo-scope` asks Yahoo each morning
+  (after the injury run on GitHub, Client ID in its own `YAHOO_CLIENT_ID` secret)
+  and notifies the day Fantasy Sports is attached. `doctor` says the same thing.
+- **Sunday lineup cron** (`311ad60`) - the job picker no longer matched the moved
+  Sunday cron; fixed before its first Sunday, with a test on every cron.
 - Recap no longer blames you for swaps you could not have made (`d88e9ae`).
 
 ## Open - needs the user
 
-- [ ] **Yahoo support: attach the Fantasy Sports scope** to app `hnkXi0Gh`. Then run
-      `fcc setup` in a terminal, signed in as the league-owning Yahoo account.
+- [ ] **Yahoo support: attach the Fantasy Sports scope** to app `hnkXi0Gh`. Emailed
+      twice 15 Sep, no reply. A third email (the `invalid_scope` evidence, cc
+      fantasyapiapplications@yahoosports.com) is DRAFTED in Gmail, not sent. When the
+      scope arrives the daily check notifies; then consent in a terminal.
+- [ ] **Push.** The 17 Sep commits are local. The Sunday cron fix must reach GitHub
+      before Sun 20 Sep 10:30 ET, and the daily scope check only runs once pushed.
 - [ ] **Was the exposed Supabase data read?** Nine tables were open until 15 Sep.
       Answerable from the PostgREST logs; not yet checked.
 - [ ] **Email untested.** `test-notify` sends a real email; last recorded run failed.
@@ -98,6 +109,8 @@ request. Rotate once Fantasy access works.
 - [ ] Rotate the Yahoo Client Secret, **after** Fantasy access works (see above).
 
 ## Open - code
+
+- [ ] **Paste-driven waivers and playoff odds** - planned 17 Sep, awaiting approval.
 
 - [ ] **The review-and-guardrails pass was cut short on 16 Sep** after its first
       finding (`points_actual`). The rest of the codebase has not had that pass.
