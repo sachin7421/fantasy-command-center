@@ -263,19 +263,29 @@ class Context:
         a naive `in` test reported that placeholder as configured - which would
         have sent every scheduled run off to authenticate with nothing.
         """
-        if (os.environ.get("YAHOO_CONSUMER_KEY") or "").strip():
-            return True
+        return self.yahoo_client_id() is not None
+
+    def yahoo_client_id(self) -> str | None:
+        """The app's Client ID (YAHOO_CONSUMER_KEY), from the environment or .env.
+
+        Same two places and the same commented-template rule as
+        `yahoo_configured`, which is defined in terms of this.
+        """
+        from_env = (os.environ.get("YAHOO_CONSUMER_KEY") or "").strip()
+        if from_env:
+            return from_env
         env_file = Path(self.cfg.get("paths.env_dir", ".")) / ".env"
         if not env_file.exists():
-            return False
+            return None
         for line in env_file.read_text(encoding="utf-8", errors="ignore").splitlines():
             line = line.strip()
             if line.startswith("#") or "=" not in line:
                 continue
             key, _, value = line.partition("=")
-            if key.strip() == "YAHOO_CONSUMER_KEY" and value.strip().strip("\"'"):
-                return True
-        return False
+            value = value.strip().strip("\"'")
+            if key.strip() == "YAHOO_CONSUMER_KEY" and value:
+                return value
+        return None
 
     def team_key(self) -> str | None:
         configured = self.cfg.get("league.my_team_id")
@@ -319,7 +329,34 @@ def _describe_yahoo_access(ctx: Context) -> str:
     success. That is the failure this project keeps having to dig out, so it
     gets asked rather than assumed.
     """
+    from src import yahoo_client
     from src.yahoo_client import classify_access_error, has_stored_token
+
+    # Yahoo can say whether the app has the scope without anyone signing in,
+    # and when it does not, nothing below can help: consent cannot grant a
+    # scope the app lacks, and the old message sent the user to re-run setup.
+    client_id = ctx.yahoo_client_id()
+    scope = yahoo_client.probe_fantasy_scope(client_id) if client_id else None
+    if scope is not None and scope.verdict == "not-attached":
+        return "\n".join([
+            "Yahoo has not attached Fantasy Sports to this app yet.",
+            "                Checked just now: asking for scope fspt-r returns",
+            "                invalid_scope. Nothing on this side can fix that -",
+            "                re-running setup or consent will fail the same way.",
+            "                It is Yahoo's to attach.",
+        ])
+    if scope is not None and scope.verdict == "bad-client":
+        return (
+            f"Yahoo does not recognise this Client ID ({scope.detail}).\n"
+            "                Check YAHOO_CONSUMER_KEY against the app page."
+        )
+    if scope is None or scope.verdict == "unknown":
+        scope_note = (
+            "                (could not check the Fantasy scope: "
+            f"{scope.detail if scope else 'no Client ID'})"
+        )
+    else:
+        scope_note = "                Yahoo now accepts the Fantasy Sports scope."
 
     # Asked BEFORE any call, because the call is what starts consent. Without
     # this, `doctor` prints "Enter verifier :" and waits on stdin - a health
@@ -327,6 +364,7 @@ def _describe_yahoo_access(ctx: Context) -> str:
     if not has_stored_token(ctx.cfg):
         return "\n".join([
             "credentials stored, but consent was never completed.",
+            scope_note,
             "                Run `fcc setup` in a TERMINAL, not through a",
             "                script or a scheduled job: Yahoo opens a browser",
             "                and asks you to paste a verifier code back.",
@@ -376,6 +414,55 @@ def _describe_yahoo_access(ctx: Context) -> str:
             return "token expired or invalid - run: fcc setup"
         return f"configured, but the call failed: {exc}"
     return "working"
+
+
+def announce_yahoo_scope(ctx: Context) -> int:
+    """Tell the user the morning Yahoo attaches Fantasy Sports.
+
+    Yahoo said "access is live" days before it was, and has not answered
+    since. Finding out otherwise means someone remembering to run `doctor`.
+    This asks Yahoo once and speaks only when there is something to do: the
+    scope has arrived and no token exists yet. Once consent is done it goes
+    quiet, and `doctor` covers the rest. The notifier's dedup window keeps a
+    repeat from arriving more than every few days.
+
+    With no Client ID it FAILS rather than passing. The scheduled runner has
+    no YAHOO_CONSUMER_KEY secret today, and a check that silently skipped
+    there would look exactly like "not attached yet", forever.
+    """
+    from src import yahoo_client
+
+    client_id = ctx.yahoo_client_id()
+    if not client_id:
+        print(
+            "yahoo scope : cannot check - no YAHOO_CONSUMER_KEY here. On GitHub, "
+            "add it as a repository secret (the Client ID only; not the secret)."
+        )
+        return EXIT_FAIL
+
+    scope = yahoo_client.probe_fantasy_scope(client_id)
+    print(f"yahoo scope : {scope.verdict}" + (f" ({scope.detail})" if scope.detail else ""))
+    if scope.verdict != "attached" or yahoo_client.has_stored_token(ctx.cfg):
+        return EXIT_OK
+
+    ctx.notifier().send(Notification(
+        title="Yahoo attached Fantasy Sports access",
+        lines=[
+            "Yahoo now accepts the Fantasy Sports scope for your app.",
+            "One step left, and it needs you at a computer: run a Yahoo "
+            "command in a terminal (for example `fcc doctor`) and approve "
+            "access in the browser, signed in as the Yahoo account that owns "
+            "the league.",
+        ],
+        job="yahoo-scope",
+        urgency="high",
+    ))
+    return EXIT_OK
+
+
+def cmd_yahoo_scope(ctx: Context, args) -> int:
+    """`fcc yahoo-scope`: see announce_yahoo_scope."""
+    return announce_yahoo_scope(ctx)
 
 
 def cmd_doctor(ctx: Context, args) -> int:
@@ -2102,6 +2189,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("doctor", help="check sources, config and stored data")
+    sub.add_parser("yahoo-scope", help="ask Yahoo whether Fantasy Sports is attached; notify when it is")
 
     p_setup = sub.add_parser("setup", help="one-time Yahoo credential setup")
     p_setup.add_argument("--env-dir", default=".")
@@ -2234,6 +2322,7 @@ def build_parser() -> argparse.ArgumentParser:
 # passed while `sync-league` had no handler at all.
 HANDLERS = {
     "doctor": cmd_doctor,
+    "yahoo-scope": cmd_yahoo_scope,
     "sync": cmd_sync,
     "sync-league": cmd_sync_league,
     "sync-settings": cmd_sync_settings,

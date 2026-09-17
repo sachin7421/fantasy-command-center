@@ -363,6 +363,7 @@ def test_a_commented_out_credential_is_not_configured(tmp_path, monkeypatch):
     )
     ctx = Context(str(tmp_path / "config.yaml"), str(tmp_path / "t.db"))
     assert ctx.yahoo_configured() is True
+    assert ctx.yahoo_client_id() == "a-real-looking-key"
 
 
 def test_sync_league_refuses_rather_than_authenticating_with_nothing(tmp_path, capsys):

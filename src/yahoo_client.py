@@ -14,8 +14,8 @@ import os
 import logging
 import sys
 from pathlib import Path
-from typing import Any
-from collections.abc import Iterable
+from typing import Any, NamedTuple
+from collections.abc import Callable, Iterable
 
 from src import db
 from src.config import Config
@@ -87,8 +87,11 @@ def describe_token_rotation(_current: Any = None) -> str:
     ])
 
 
-#: The env vars yfpy writes once consent completes.
-_TOKEN_KEYS = ("YAHOO_ACCESS_TOKEN", "YAHOO_REFRESH_TOKEN")
+#: Where a consent token can live. The first two are what yfpy writes locally;
+#: the JSON form is what GitHub Actions supplies, and leaving it out made every
+#: scheduled `doctor` report "consent was never completed" on a runner holding
+#: a good token.
+_TOKEN_KEYS = ("YAHOO_ACCESS_TOKEN", "YAHOO_REFRESH_TOKEN", "YAHOO_ACCESS_TOKEN_JSON")
 
 
 def has_stored_token(cfg: Config | None = None) -> bool:
@@ -120,6 +123,95 @@ def has_stored_token(cfg: Config | None = None) -> bool:
         if sep and name.strip() in _TOKEN_KEYS and value.strip().strip("\"'"):
             return True
     return False
+
+
+AUTHORIZE_URL = "https://api.login.yahoo.com/oauth2/request_auth"
+
+#: Fantasy Sports, read-only. The only scope this project uses.
+FANTASY_READ_SCOPE = "fspt-r"
+
+
+class ScopeCheck(NamedTuple):
+    """Yahoo's answer on whether the app has Fantasy Sports.
+
+    verdict is one of: attached, not-attached, bad-client, unknown.
+    detail is Yahoo's error code or the network failure, for the message.
+    """
+
+    verdict: str
+    detail: str
+
+
+def probe_fantasy_scope(
+    client_id: str,
+    get: Callable[..., Any] | None = None,
+    timeout: float = 10.0,
+    attempts: int = 2,
+) -> ScopeCheck:
+    """Ask Yahoo whether this app may request Fantasy Sports - with no sign-in.
+
+    Yahoo's authorization endpoint validates the requested scope against the
+    app BEFORE it shows a login page. Without the scope it redirects to
+    `/oauth2/error?...&error=invalid_scope`; with it, it redirects to
+    login.yahoo.com. Both observed against the real endpoint on 17 Sep 2026.
+
+    That makes "has Yahoo attached it yet" one unauthenticated GET, which a
+    scheduled job can ask every morning. Before this, the only way to find out
+    was a person completing consent in a browser and reading the failure.
+
+    Redirects are not followed: the answer IS the redirect. Uses only the client
+    ID, which Yahoo itself puts in every authorization URL - never the secret.
+    A network failure is retried, then reported as `unknown` with a warning,
+    never as `not-attached`: an outage must not read as Yahoo's answer.
+    """
+    if get is None:
+        import requests
+
+        get = requests.get
+    params = {
+        "client_id": client_id,
+        "redirect_uri": "oob",
+        "response_type": "code",
+        "scope": FANTASY_READ_SCOPE,
+    }
+    failure = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            resp = get(AUTHORIZE_URL, params=params, allow_redirects=False, timeout=timeout)
+        except Exception as exc:
+            failure = f"{type(exc).__name__}: {exc}"
+            log.warning(
+                "Yahoo scope check attempt %d/%d failed: %s", attempt, attempts, failure
+            )
+            continue
+        return _read_scope_redirect(resp)
+    return ScopeCheck("unknown", failure)
+
+
+def _read_scope_redirect(resp: Any) -> ScopeCheck:
+    """Turn the authorization endpoint's redirect into a verdict."""
+    import urllib.parse
+
+    location = str(resp.headers.get("Location") or "")
+    if resp.status_code not in (301, 302, 303, 307, 308) or not location:
+        log.warning(
+            "Yahoo scope check got an unrecognised answer (HTTP %s, no redirect)",
+            resp.status_code,
+        )
+        return ScopeCheck("unknown", f"HTTP {resp.status_code} without a redirect")
+    parsed = urllib.parse.urlparse(location)
+    error = urllib.parse.parse_qs(parsed.query).get("error", [""])[0]
+    if error == "invalid_scope":
+        return ScopeCheck("not-attached", error)
+    if error in ("unauthorized_client", "invalid_client"):
+        return ScopeCheck("bad-client", error)
+    if error:
+        log.warning("Yahoo scope check returned an unexpected error: %s", error)
+        return ScopeCheck("unknown", error)
+    if parsed.hostname and parsed.hostname.endswith("login.yahoo.com"):
+        return ScopeCheck("attached", "")
+    log.warning("Yahoo scope check redirected somewhere unexpected: %s", parsed.hostname)
+    return ScopeCheck("unknown", f"redirect to {parsed.hostname}")
 
 
 def classify_access_error(exc: BaseException) -> str:

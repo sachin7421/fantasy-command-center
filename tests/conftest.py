@@ -292,3 +292,6 @@ def _no_ambient_yahoo(monkeypatch, request):
     from src import cli
 
     monkeypatch.setattr(cli.Context, "yahoo_configured", lambda self: False)
+    # The Client ID reader goes straight to .env as well, and a real ID there
+    # turns `doctor`'s scope check into a live request to Yahoo from the suite.
+    monkeypatch.setattr(cli.Context, "yahoo_client_id", lambda self: None)

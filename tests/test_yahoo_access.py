@@ -88,6 +88,9 @@ def test_probe_never_builds_a_query_without_a_token(tmp_path, monkeypatch):
         cfg = _Cfg(tmp_path)
         yahoo = _Exploding()
 
+        def yahoo_client_id(self):
+            return None  # no Client ID, so no scope check either
+
     verdict = _describe_yahoo_access(_Ctx())
     assert "consent was never completed" in verdict
 
@@ -108,5 +111,8 @@ def test_probe_does_not_read_stdin(tmp_path, monkeypatch):
     class _Ctx:
         cfg = _Cfg(tmp_path)
         yahoo = None
+
+        def yahoo_client_id(self):
+            return None  # no Client ID, so no scope check either
 
     assert "consent was never completed" in _describe_yahoo_access(_Ctx())

@@ -111,6 +111,20 @@ jobs:
         if: steps.pick.outputs.job == 'lineup' || steps.pick.outputs.job == 'waivers'
         run: python fcc.py reminders
 
+      - name: Has Yahoo attached Fantasy Sports yet?
+        # One unauthenticated request a morning, riding the daily injury run.
+        # Notifies the day Yahoo attaches the scope, and goes quiet once a
+        # token exists. always() so a failed job above does not hide it, and
+        # a failure here comes after the job has already run.
+        #
+        # The Client ID arrives under its own secret, scoped to this step. As
+        # YAHOO_CONSUMER_KEY it would make every job above consider Yahoo
+        # configured and try to authenticate with no token.
+        if: always() && steps.pick.outputs.job == 'injuries'
+        env:
+          YAHOO_CONSUMER_KEY: ${{ secrets.YAHOO_CLIENT_ID }}
+        run: python fcc.py yahoo-scope
+
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
