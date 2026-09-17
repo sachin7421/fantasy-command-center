@@ -9,7 +9,7 @@ and are not maintained by anything - the gate's output is.
 ```
 lint         ok      0.1s
 types        ok      0.7s
-tests        ok     34.0s      560 passed, 1 skipped
+tests        ok     36.7s      601 passed, 1 skipped
 degradation  ok      0.3s
 yahoo        ok      0.1s
 dead code    ok      0.5s
@@ -67,7 +67,7 @@ request. Rotate once Fantasy access works.
 | Dashboard | **Done** | Streamlit + Supabase |
 | Injuries / byes / lineup / recap | **Done** | Run off the pasted roster |
 | Yahoo compliance | **Done** | Yahoo tables dropped; `tools/check_yahoo_persistence.py` in the gate |
-| Waivers / FAAB | **Built, blocked on Yahoo scope** | Runs off the snapshot |
+| Waivers / FAAB | **Works from a pasted wire** | `fcc waivers --wire-file`, or the paste box on the dashboard's This week tab. Never stored. Rival FAAB profiles still need Yahoo |
 | Playoff odds | **Built, blocked on Yahoo scope** | Matchups on the snapshot, not a table |
 | Trades | **Partial** | `fcc offer` evaluates any N-for-M offer against your starting lineup; `trades` job still proposes 1-for-1 only |
 
@@ -92,6 +92,12 @@ request. Rotate once Fantasy access works.
   and notifies the day Fantasy Sports is attached. `doctor` says the same thing.
 - **Sunday lineup cron** (`311ad60`) - the job picker no longer matched the moved
   Sunday cron; fixed before its first Sunday, with a test on every cron.
+- **Jobs no longer start a Yahoo sign-in** (`d01f175`) - with a Client ID and no
+  token every season job and `fcc sync` crashed on "Enter verifier". Consent is
+  `fcc verify-settings` in a terminal; jobs need a token.
+- **Waivers from a pasted wire** (`7969f34`, dashboard in the next commit) - plus
+  three report fixes: free agents no longer get FAAB bids, no invented "0%
+  rostered", handcuffs only count if on the wire.
 - Recap no longer blames you for swaps you could not have made (`d88e9ae`).
 
 ## Open - needs the user
@@ -100,8 +106,6 @@ request. Rotate once Fantasy access works.
       twice 15 Sep, no reply. A third email (the `invalid_scope` evidence, cc
       fantasyapiapplications@yahoosports.com) is DRAFTED in Gmail, not sent. When the
       scope arrives the daily check notifies; then consent in a terminal.
-- [ ] **Push.** The 17 Sep commits are local. The Sunday cron fix must reach GitHub
-      before Sun 20 Sep 10:30 ET, and the daily scope check only runs once pushed.
 - [ ] **Was the exposed Supabase data read?** Nine tables were open until 15 Sep.
       Answerable from the PostgREST logs; not yet checked.
 - [ ] **Email untested.** `test-notify` sends a real email; last recorded run failed.
@@ -110,7 +114,8 @@ request. Rotate once Fantasy access works.
 
 ## Open - code
 
-- [ ] **Paste-driven waivers and playoff odds** - planned 17 Sep, awaiting approval.
+- [ ] **Playoff odds from a paste** - approved 17 Sep with waivers. Needs a real paste
+      of the standings page and of the league schedule before the parser is designed.
 
 - [ ] **The review-and-guardrails pass was cut short on 16 Sep** after its first
       finding (`points_actual`). The rest of the codebase has not had that pass.
