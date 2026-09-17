@@ -93,6 +93,65 @@ def should_run(conn: Database, sql: str) -> bool:
         return True
 
 
+def enforce_rls(conn: Database) -> list[str]:
+    """Turn row-level security on for every public table. Postgres only.
+
+    Supabase exposes the whole `public` schema over PostgREST, where the anon
+    key is public by design and RLS is the ONLY thing standing between a
+    stranger and the data. With it off, "anyone with your project URL can read,
+    edit, and delete all data in this table" - Supabase's own words, and it was
+    true of nine tables here, including `my_roster` and `job_runs`.
+
+    Enabling RLS with NO policy is the correct end state, not a half-measure:
+    every reader this application has is the `postgres` role, which carries
+    rolbypassrls, so RLS is invisible to us; for anon and authenticated, "on,
+    no policy" denies everything. Adding a policy would reopen the hole.
+
+    This is a loop rather than a migration on purpose. Thirteen tables were
+    secured once by hand, then nine more were added over the following months
+    and none of them inherited it - because nothing made that automatic. A
+    migration would fix those nine and miss the tenth exactly the same way.
+    Running every time makes the guarantee "all tables", not "the tables we
+    remembered". It is idempotent and costs one query when there is nothing
+    to do.
+
+    Returns the tables it changed, so callers can report them.
+    """
+    if not conn.is_postgres:
+        return []
+    try:
+        rows = conn.fetchall(
+            "SELECT tablename FROM pg_tables "
+            "WHERE schemaname = 'public' AND NOT rowsecurity "
+            "ORDER BY tablename"
+        )
+    except Exception as exc:
+        # Not fatal: a database that refuses this query is one where we cannot
+        # tell, and refusing to start would take the app down over a check.
+        # Loud, though - a silent skip here is how the hole stayed open.
+        log.warning("Could not check row-level security (%s); tables may be exposed", exc)
+        return []
+
+    secured: list[str] = []
+    for row in rows:
+        table = row[0] if not isinstance(row, dict) else row["tablename"]
+        # Identifiers come from pg_tables, not from user input, and are quoted.
+        try:
+            conn.execute(f'ALTER TABLE public."{table}" ENABLE ROW LEVEL SECURITY')
+        except Exception as exc:
+            log.warning("Could not enable row-level security on %s (%s)", table, exc)
+            continue
+        secured.append(str(table))
+
+    if secured:
+        conn.commit()
+        log.warning(
+            "Enabled row-level security on %d previously exposed table(s): %s",
+            len(secured), ", ".join(secured),
+        )
+    return secured
+
+
 def apply(conn: Database, baseline: str) -> list[int]:
     """Bring `conn` up to date. Returns the migrations that ran.
 
@@ -124,6 +183,9 @@ def apply(conn: Database, baseline: str) -> list[int]:
         for number, _ in migrations:
             _stamp(conn, number)
         conn.commit()
+        # A brand new database is the case that most needs this: the baseline
+        # creates the tables and nothing else would ever secure them.
+        enforce_rls(conn)
         return ran
 
     for number, path in migrations:
@@ -143,6 +205,8 @@ def apply(conn: Database, baseline: str) -> list[int]:
         # to an existing database, and this is how new tables reach it.
         conn.executescript(baseline)
     conn.commit()
+    # After the baseline, because that is what creates any new table.
+    enforce_rls(conn)
     return ran
 
 
