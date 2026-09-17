@@ -9,7 +9,7 @@ So the app sounded exactly as certain about a 40-point edge as about a
 2-point one. The 2-point one is noise, and a tool that spends its credibility
 on coin flips is not believed about the things that matter.
 
-The numbers here are MEASURED, not assumed - 2,198 paired 2025 player-weeks,
+The numbers here are MEASURED, not assumed - 2,205 paired 2025 player-weeks,
 a projection made before a week against the points scored in it. Where there
 was no measurement there is no invention: defences had zero paired
 player-weeks, so they get the pooled figure and a note saying so.
@@ -22,20 +22,27 @@ import math
 #: From tools/backtest.py over the 2025 season.
 #:
 #:   pos  n    mean proj  sd(error)  bias    r
-#:   QB   242  17.02      6.94       +0.39   0.32
-#:   RB   586   8.12      5.87       -0.11   0.66
-#:   WR   914   6.64      5.48       +0.25   0.53
-#:   TE   456   4.56      4.52       +0.87   0.51
+#:   QB   242  17.02      7.07       +0.49   0.32
+#:   RB   593   8.13      5.88       -0.19   0.66
+#:   WR   914   6.64      5.49       +0.24   0.52
+#:   TE   456   4.56      4.51       +0.87   0.51
+#:
+#: Refit after `points_actual` was corrected. The ground truth these were
+#: originally measured against omitted fumbles and two-point conversions, so
+#: the "measured" spread was measured against a number that was itself wrong.
+#: QB moved most (6.94 -> 7.07), which is the expected direction: quarterbacks
+#: fumble more than anyone, mostly on strip sacks, and every one of those was
+#: previously scored as though it cost nothing.
 MEASURED_WEEKLY_SD: dict[str, float] = {
-    "QB": 6.94,
-    "RB": 5.87,
-    "WR": 5.48,
-    "TE": 4.52,
+    "QB": 7.07,
+    "RB": 5.88,
+    "WR": 5.49,
+    "TE": 4.51,
 }
 
 #: The pooled figure, used for positions the backtest could not measure.
 #: Defence and kicker had zero paired player-weeks in 2025.
-POOLED_WEEKLY_SD = 5.60
+POOLED_WEEKLY_SD = 5.62
 
 #: How many standard deviations a difference must clear to be worth acting on.
 #: One sigma is about 68% - roughly "more likely than not, by a margin". Two

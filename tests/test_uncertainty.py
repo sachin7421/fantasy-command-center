@@ -15,13 +15,16 @@ import pytest
 
 
 def test_the_spread_comes_from_the_backtest_not_from_a_guess():
-    """Measured over 2,198 paired 2025 player-weeks; see tools/backtest.py."""
+    """Measured over 2,205 paired 2025 player-weeks; see tools/backtest.py.
+
+    Refit after points_actual gained fumbles and two-point conversions.
+    """
     from src.analytics.uncertainty import weekly_sd
 
-    assert weekly_sd("QB") == pytest.approx(6.94)
-    assert weekly_sd("RB") == pytest.approx(5.87)
-    assert weekly_sd("WR") == pytest.approx(5.48)
-    assert weekly_sd("TE") == pytest.approx(4.52)
+    assert weekly_sd("QB") == pytest.approx(7.07)
+    assert weekly_sd("RB") == pytest.approx(5.88)
+    assert weekly_sd("WR") == pytest.approx(5.49)
+    assert weekly_sd("TE") == pytest.approx(4.51)
 
 
 def test_an_unmeasured_position_falls_back_to_the_overall_figure():
@@ -32,9 +35,9 @@ def test_an_unmeasured_position_falls_back_to_the_overall_figure():
     """
     from src.analytics.uncertainty import weekly_sd
 
-    assert weekly_sd("DEF") == pytest.approx(5.60)
-    assert weekly_sd("K") == pytest.approx(5.60)
-    assert weekly_sd(None) == pytest.approx(5.60)
+    assert weekly_sd("DEF") == pytest.approx(5.62)
+    assert weekly_sd("K") == pytest.approx(5.62)
+    assert weekly_sd(None) == pytest.approx(5.62)
 
 
 def test_comparing_two_players_combines_both_errors():
@@ -46,8 +49,8 @@ def test_comparing_two_players_combines_both_errors():
     from src.analytics.uncertainty import difference_sd
 
     combined = difference_sd("RB", "WR")
-    assert combined == pytest.approx((5.87**2 + 5.48**2) ** 0.5, abs=0.01)
-    assert combined > max(5.87, 5.48)
+    assert combined == pytest.approx((5.88**2 + 5.49**2) ** 0.5, abs=0.01)
+    assert combined > max(5.88, 5.49)
 
 
 def test_a_multi_week_total_grows_with_the_square_root_of_weeks():

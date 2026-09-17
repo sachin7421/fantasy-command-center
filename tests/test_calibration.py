@@ -15,6 +15,7 @@ from __future__ import annotations
 import pytest
 
 from src.analytics import distributions, priors
+from src.analytics.uncertainty import MEASURED_WEEKLY_SD
 from src import projections
 
 
@@ -85,18 +86,16 @@ def test_the_bust_tail_is_modelled_at_all():
 
 # --- the assumed spread, checked against what actually happened --------------
 
-#: Measured by tools/backtest.py over 2,198 paired 2025 player-weeks - a
+#: Measured by tools/backtest.py over 2,205 paired 2025 player-weeks - a
 #: projection made before a week against the points scored in it. The first
 #: non-circular measurement in this project: every earlier performance claim
 #: scored both sides with our own projections.
 #:
-#:   pos  n    mean proj  sd(error)  bias    r
-#:   QB   242  17.02      6.94       +0.39   0.32
-#:   RB   586   8.12      5.87       -0.11   0.66
-#:   WR   914   6.64      5.48       +0.25   0.53
-#:   TE   456   4.56      4.52       +0.87   0.51
-MEASURED_ERROR_SD = {"QB": 6.94, "RB": 5.87, "WR": 5.48, "TE": 4.52}
-MEAN_PROJECTION = {"QB": 17.02, "RB": 8.12, "WR": 6.64, "TE": 4.56}
+#: The spread is imported rather than copied. This file used to hold its own
+#: copy, which went stale the day `points_actual` gained fumbles and the
+#: source constants were refit - and stayed green, because the band is loose.
+MEASURED_ERROR_SD = MEASURED_WEEKLY_SD
+MEAN_PROJECTION = {"QB": 17.02, "RB": 8.13, "WR": 6.64, "TE": 4.56}
 
 
 def test_the_assumed_spread_is_close_to_the_measured_one():
@@ -109,10 +108,10 @@ def test_the_assumed_spread_is_close_to_the_measured_one():
 
     The predicted consequence was not. Measured against 2025:
 
-        QB  model 8.14  measured 6.94  -> 18% too WIDE
-        RB  model 6.11  measured 5.87  ->  4% too wide
-        WR  model 5.40  measured 5.48  ->  1% too narrow
-        TE  model 3.73  measured 4.52  -> 21% too narrow
+        QB  model 8.14  measured 7.07  -> 15% too WIDE
+        RB  model 6.11  measured 5.88  ->  4% too wide
+        WR  model 5.40  measured 5.49  ->  2% too narrow
+        TE  model 3.73  measured 4.51  -> 21% too narrow
 
     Within a fifth either way, and the direction varies by position rather
     than running one way. The two quantities happen to be similar in size, so

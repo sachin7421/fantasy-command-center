@@ -47,6 +47,30 @@ def _rows(frame) -> list[dict[str, Any]]:
     return frame.to_dict("records")
 
 
+#: Categories this league scores that nflverse's ff_opportunity does not carry.
+#: Both are return touchdowns, worth +6 each and genuinely absent from the
+#: dataset - checked, not assumed. They are listed so the warning below reports
+#: only NEW gaps: an alert that fires every run for a known, unfixable reason is
+#: one people learn to scroll past, and then it cannot tell them anything.
+KNOWN_MISSING_STATS = frozenset({"ret_td", "off_fum_ret_td"})
+
+
+def _warn_scoring_gaps(scoring, stat_line: dict[str, float]) -> None:
+    """Say out loud which scored categories this ingest cannot supply.
+
+    `points_actual` is the ground truth every projection is graded against, and
+    a category missing from the stat line scores zero exactly as if it never
+    happened. Five were missing for months without any number looking wrong.
+    """
+    gaps = set(scoring.scoring_gaps(stat_line.keys())) - KNOWN_MISSING_STATS
+    if gaps:
+        log.warning(
+            "points_actual is missing %d scored categor%s: %s - "
+            "every actual is wrong whenever one of these happens",
+            len(gaps), "y" if len(gaps) == 1 else "ies", ", ".join(sorted(gaps)),
+        )
+
+
 def _f(value) -> float | None:
     try:
         return None if value is None else float(value)
@@ -115,6 +139,20 @@ class UsageSource(Source):
             if week is None:
                 continue
 
+            # Fumbles and two-point conversions are scored by this league and
+            # were absent from both lines, so `points_actual` - described below
+            # as the ground truth every projection is graded against - was
+            # simply wrong whenever either happened. Measured over 2025: 4.0% of
+            # player-weeks affected, up to 4.0 points on a single week (Jared
+            # Goff wk17 -4.0, Justin Fields wk5 +4.0). The aggregate bias is
+            # only -0.016 pts/week because fumbles and conversions nearly
+            # cancel, which is exactly why it survived: it is invisible in the
+            # average and wrong in the individual week a lineup is decided on.
+            two_pt_exp = (
+                (_f(row.get("pass_two_point_conv_exp")) or 0.0)
+                + (_f(row.get("rec_two_point_conv_exp")) or 0.0)
+                + (_f(row.get("rush_two_point_conv_exp")) or 0.0)
+            )
             expected_line = {
                 "pass_yds": _f(row.get("pass_yards_gained_exp")) or 0.0,
                 "pass_td": _f(row.get("pass_touchdown_exp")) or 0.0,
@@ -124,7 +162,21 @@ class UsageSource(Source):
                 "rec": _f(row.get("receptions_exp")) or 0.0,
                 "rec_yds": _f(row.get("rec_yards_gained_exp")) or 0.0,
                 "rec_td": _f(row.get("rec_touchdown_exp")) or 0.0,
+                "two_pt": two_pt_exp,
+                # No fumble_lost_exp exists in this dataset. Left at zero rather
+                # than invented, which biases EXPECTED slightly high - stated
+                # here because an unstated zero reads as "does not happen".
             }
+            # Yahoo charges -1 for any fumble and a FURTHER -1 when it is lost,
+            # so a lost fumble is -2 and a self-recovered one is -1. nflverse
+            # publishes only the lost ones, so `fum` is filled from the same
+            # figure: correct for every lost fumble, and still missing the
+            # self-recovered ones. Strictly closer than the zero it replaces,
+            # and the residual gap is one-directional and named.
+            fumbles_lost = (
+                (_f(row.get("rec_fumble_lost")) or 0.0)
+                + (_f(row.get("rush_fumble_lost")) or 0.0)
+            )
             actual_line = {
                 "pass_yds": _f(row.get("pass_yards_gained")) or 0.0,
                 "pass_td": _f(row.get("pass_touchdown")) or 0.0,
@@ -134,6 +186,16 @@ class UsageSource(Source):
                 "rec": _f(row.get("receptions")) or 0.0,
                 "rec_yds": _f(row.get("rec_yards_gained")) or 0.0,
                 "rec_td": _f(row.get("rec_touchdown")) or 0.0,
+                "fum": fumbles_lost,
+                "fum_lost": fumbles_lost,
+                "two_pt": (
+                    (_f(row.get("pass_two_point_conv")) or 0.0)
+                    + (_f(row.get("rec_two_point_conv")) or 0.0)
+                    + (_f(row.get("rush_two_point_conv")) or 0.0)
+                ),
+                # Return touchdowns (ret_td, off_fum_ret_td: +6 each) are NOT in
+                # this dataset at all. Not faked - they stay missing, and
+                # `scoring_gaps()` below is what stops that being forgotten.
             }
 
             team = normalize_team(row.get("posteam"))
@@ -159,6 +221,11 @@ class UsageSource(Source):
                     recorded_at,
                 ),
             )
+            if stats["stored"] == 0:
+                # Once per sync, on the first real row, so the declaration is
+                # checked against the line actually built rather than a list
+                # someone kept in their head.
+                _warn_scoring_gaps(scoring, actual_line)
             # The same number is the ground truth every projection is graded
             # against, so record it where the accuracy model looks for it.
             db.record_actual(

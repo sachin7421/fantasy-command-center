@@ -177,6 +177,38 @@ class LeagueScoring:
         """Total fantasy points for a canonical stat line under these rules."""
         return round(sum(self.breakdown(stat_line, position_type).values()), 4)
 
+    def scoring_gaps(
+        self, supplied: Iterable[str], position_type: str = "O"
+    ) -> list[str]:
+        """Categories this league pays for that a caller never supplies.
+
+        A stat line is a plain dict, so an omitted category is indistinguishable
+        from one that genuinely did not happen: a missing `fum` key and a player
+        who did not fumble both score zero. That is how five scored categories
+        stayed missing from the ingest that produces `points_actual` - the
+        number every projection in this project is graded against - without one
+        test or one number ever looking wrong.
+
+        The aggregate hid it too. Measured over 2025 the omission moved the
+        average by -0.016 points a week, because fumbles and two-point
+        conversions nearly cancel; individual weeks were off by up to 4.0. A
+        check on the mean would have passed.
+
+        So the ingest declares what it supplies and asks what that misses.
+        Returns canonical names, so a caller can log or fail on them.
+        """
+        have = {str(s) for s in supplied}
+        return sorted(
+            cat.canonical
+            for cat in self.categories
+            if cat.enabled
+            and not cat.display_only
+            and cat.canonical
+            and cat.modifier
+            and cat.position_type in ("*", position_type)
+            and cat.canonical not in have
+        )
+
     def breakdown(
         self, stat_line: dict[str, float], position_type: str | None = None
     ) -> dict[str, float]:
