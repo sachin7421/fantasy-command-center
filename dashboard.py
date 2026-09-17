@@ -10,6 +10,7 @@ palette.
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import sys
@@ -1021,11 +1022,79 @@ def _this_week(cfg, conn, league_key, season, slots):
                 unsafe_allow_html=True)
     st.dataframe(rows, width="stretch", hide_index=True)
 
+    _waivers_from_paste(cfg, conn, league_key, season, int(week), slots,
+                        team_key, snapshot)
+
     gaps = snapshot.describe_gaps()
     if gaps:
         st.caption(
-            gaps + " Waivers and the trade scout need Yahoo API access."
+            gaps + " Waivers work from a pasted wire above; the trade scout "
+            "needs Yahoo API access."
         )
+
+
+def _waivers_from_paste(cfg, conn, league_key, season, week, slots, team_key, snapshot):
+    """Waiver claims from a pasted Yahoo Players page. Nothing here is stored.
+
+    The wire is league-wide Yahoo state, so unlike the roster above it is used
+    for this run and discarded. The logic lives in src/manual_wire.py and
+    src/season/waivers.py, which are tested; this only collects the paste and
+    shows the result.
+    """
+    from src import manual_wire
+    from src.season import waivers
+
+    st.markdown("<div class='fcc-section'>Waiver wire</div>", unsafe_allow_html=True)
+    with st.expander("Paste the waiver wire", expanded=False):
+        st.caption(
+            "On Yahoo, open Players with the filter set to Available - one "
+            "position at a time works best - select the page, copy, and paste "
+            "it below. Paste several pages one after another. It is used for "
+            "this check only and not saved."
+        )
+        text = st.text_area("Wire", height=200, label_visibility="collapsed",
+                            key="wire_paste")
+        budget = st.number_input("FAAB left", min_value=0, max_value=1000,
+                                 value=100, step=1, key="wire_budget")
+        if not st.button("Find claims", key="wire_go"):
+            return
+
+    # A copy, so the wire never lands on the snapshot the lineup above used.
+    run_snapshot = copy.copy(snapshot)
+    wire = manual_wire.attach_wire(conn, run_snapshot, team_key, [text])
+    if not (wire.player_keys or wire.unmatched or wire.already_rostered):
+        st.error(
+            "No available players in that paste. Each player on the Players "
+            "page has an FA or W (date) line; the roster page does not."
+        )
+        return
+
+    st.caption(
+        f"{len(wire.player_keys)} available - {len(run_snapshot.free_adds)} free "
+        f"adds, {len(wire.player_keys) - len(run_snapshot.free_adds)} on waivers."
+    )
+    if wire.unmatched:
+        st.warning("Not matched, so not considered: " + ", ".join(wire.unmatched))
+    if wire.already_rostered:
+        st.caption("Already on your roster, skipped: " + ", ".join(wire.already_rostered))
+
+    margin = float(cfg.get("season.waiver_value_margin", 25.0))
+    report = waivers.run(
+        conn, league_key, team_key, season, week, snapshot=run_snapshot,
+        uses_faab=True, budget_left=int(budget), value_margin=margin,
+        starting_slots=slots,
+    )
+    if not report.claims:
+        st.success(
+            f"No claim improves your starting lineup by {margin:.0f}+ "
+            "rest-of-season points."
+        )
+    for claim in report.claims:
+        st.markdown(f"**{claim.priority}.** " + claim.describe(uses_faab=True)
+                    .replace("\n    ", "  \n&nbsp;&nbsp;&nbsp;&nbsp;"))
+    for cuff in report.handcuffs:
+        st.caption(f"Open handcuff: {cuff['handcuff']} backs up your "
+                   f"{cuff['starter']} ({cuff['team']})")
 
 
 def season_view(cfg, conn, league_key):
