@@ -272,8 +272,15 @@ def _no_ambient_yahoo(monkeypatch, request):
     A test that WANTS Yahoo behaviour injects its own fake client, which still
     works - only the ambient credentials are hidden.
     """
+    # Includes the names yfpy actually WRITES after consent. The first three
+    # were the ones this project sets by hand, so the list quietly missed the
+    # tokens a completed OAuth run leaves behind - and `has_stored_token` reads
+    # exactly those, so its tests would have passed or failed according to
+    # whether the developer happened to be logged in.
     for key in ("YAHOO_CONSUMER_KEY", "YAHOO_CONSUMER_SECRET",
-                "YAHOO_ACCESS_TOKEN_JSON"):
+                "YAHOO_ACCESS_TOKEN_JSON", "YAHOO_ACCESS_TOKEN",
+                "YAHOO_REFRESH_TOKEN", "YAHOO_GUID", "YAHOO_TOKEN_TIME",
+                "YAHOO_TOKEN_TYPE"):
         monkeypatch.delenv(key, raising=False)
 
     # A test of `yahoo_configured` itself must see the real implementation -

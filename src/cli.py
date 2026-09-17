@@ -319,7 +319,19 @@ def _describe_yahoo_access(ctx: Context) -> str:
     success. That is the failure this project keeps having to dig out, so it
     gets asked rather than assumed.
     """
-    from src.yahoo_client import classify_access_error
+    from src.yahoo_client import classify_access_error, has_stored_token
+
+    # Asked BEFORE any call, because the call is what starts consent. Without
+    # this, `doctor` prints "Enter verifier :" and waits on stdin - a health
+    # check that hangs a scheduled job and reports the hang as a Yahoo problem.
+    if not has_stored_token(ctx.cfg):
+        return "\n".join([
+            "credentials stored, but consent was never completed.",
+            "                Run `fcc setup` in a TERMINAL, not through a",
+            "                script or a scheduled job: Yahoo opens a browser",
+            "                and asks you to paste a verifier code back.",
+            "                Until that happens there is no token to call with.",
+        ])
 
     try:
         # A call that unavoidably reaches Yahoo. `resolve_season()` was used

@@ -87,6 +87,41 @@ def describe_token_rotation(_current: Any = None) -> str:
     ])
 
 
+#: The env vars yfpy writes once consent completes.
+_TOKEN_KEYS = ("YAHOO_ACCESS_TOKEN", "YAHOO_REFRESH_TOKEN")
+
+
+def has_stored_token(cfg: Config | None = None) -> bool:
+    """Whether a consent token exists - WITHOUT starting consent to find out.
+
+    `doctor` used to answer this by calling `fetch_teams()`, which builds the
+    yfpy query, which starts the OAuth flow when there is no token. So a health
+    check printed "Enter verifier :" and blocked on stdin. `browser_callback`
+    does not save you: it only decides whether a BROWSER opens, and with no TTY
+    yfpy still falls back to prompting for a verifier on stdin. On a scheduled
+    run that is a job hanging until it times out, reported as a Yahoo outage.
+
+    A diagnostic must never be the thing that changes state or blocks. Presence
+    of a token is a file-and-environment question, so it is answered that way.
+
+    Only ever asks IF a value is present. The value itself is never read into a
+    return, logged, or compared against anything.
+    """
+    if any(os.environ.get(k) for k in _TOKEN_KEYS):
+        return True
+    env_dir = Path(cfg.get("paths.env_dir", ".") if cfg else ".")
+    env_file = env_dir / ".env"
+    try:
+        text = env_file.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    for line in text.splitlines():
+        name, sep, value = line.partition("=")
+        if sep and name.strip() in _TOKEN_KEYS and value.strip().strip("\"'"):
+            return True
+    return False
+
+
 def classify_access_error(exc: BaseException) -> str:
     """What a failed Yahoo call actually means, as one of four words.
 
