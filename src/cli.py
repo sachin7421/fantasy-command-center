@@ -138,7 +138,7 @@ class Context:
         Memoised per Context, so `doctor`, the job itself and any follow-on
         step share one fetch instead of paying for three.
         """
-        if not self.yahoo_configured():
+        if not self.yahoo_ready():
             return self.manual_snapshot(season, week)
         cached = getattr(self, "_snapshot", None)
         if cached is not None and cached.week == int(week):
@@ -182,7 +182,7 @@ class Context:
         eight weeks left that is eight calls, which is worth paying once for a
         simulation and not worth paying on every injury check.
         """
-        if not self.yahoo_configured():
+        if not self.yahoo_ready():
             return None
         snapshot = self.yahoo.new_snapshot(season, week)
         try:
@@ -264,6 +264,19 @@ class Context:
         have sent every scheduled run off to authenticate with nothing.
         """
         return self.yahoo_client_id() is not None
+
+    def yahoo_ready(self) -> bool:
+        """Credentials AND a consent token: Yahoo can be called without a prompt.
+
+        `yahoo_configured` answers "is there a Client ID", and every job used it
+        to mean "Yahoo is usable". With a Client ID and no token, the first call
+        starts consent, yfpy prompts for a verifier, and the job dies on
+        EOFError before it reaches the typed-in roster. Consent is started on
+        purpose, in a terminal, by `fcc verify-settings`; jobs need a token.
+        """
+        from src.yahoo_client import has_stored_token
+
+        return self.yahoo_configured() and has_stored_token(self.cfg)
 
     def yahoo_client_id(self) -> str | None:
         """The app's Client ID (YAHOO_CONSUMER_KEY), from the environment or .env.
@@ -365,8 +378,8 @@ def _describe_yahoo_access(ctx: Context) -> str:
         return "\n".join([
             "credentials stored, but consent was never completed.",
             scope_note,
-            "                Run `fcc setup` in a TERMINAL, not through a",
-            "                script or a scheduled job: Yahoo opens a browser",
+            "                Run `fcc verify-settings` in a TERMINAL, not through",
+            "                a script or a scheduled job: Yahoo opens a browser",
             "                and asks you to paste a verifier code back.",
             "                Until that happens there is no token to call with.",
         ])
@@ -403,8 +416,8 @@ def _describe_yahoo_access(ctx: Context) -> str:
         if kind == "no-consent":
             return "\n".join([
                 "credentials stored, but consent was never completed.",
-                "                Run `fcc setup` in a TERMINAL, not through a",
-                "                script or a scheduled job: Yahoo opens a browser",
+                "                Run `fcc verify-settings` in a TERMINAL, not through",
+                "                a script or a scheduled job: Yahoo opens a browser",
                 "                and asks you to paste a verifier code back.",
                 "                Until that happens there is no token to call with.",
             ])
@@ -449,10 +462,9 @@ def announce_yahoo_scope(ctx: Context) -> int:
         title="Yahoo attached Fantasy Sports access",
         lines=[
             "Yahoo now accepts the Fantasy Sports scope for your app.",
-            "One step left, and it needs you at a computer: run a Yahoo "
-            "command in a terminal (for example `fcc doctor`) and approve "
-            "access in the browser, signed in as the Yahoo account that owns "
-            "the league.",
+            "One step left, and it needs you at a computer: run "
+            "`fcc verify-settings` in a terminal and approve access in the "
+            "browser, signed in as the Yahoo account that owns the league.",
         ],
         job="yahoo-scope",
         urgency="high",
@@ -700,11 +712,24 @@ def cmd_sync(ctx: Context, args) -> int:
     # The league's own state, which only Yahoo has. Skipped rather than failed
     # when credentials are absent, so `fcc sync` keeps working before access is
     # granted - which is exactly the state this project has been in.
-    if ctx.yahoo_configured():
-        sync_yahoo_league(ctx, season, week or 1, force=args.force)
+    _sync_yahoo_if_ready(ctx, season, week or 1, force=args.force)
+    return EXIT_OK
+
+
+def _sync_yahoo_if_ready(ctx: Context, season: int, week: int, force: bool) -> None:
+    """The league half of `fcc sync`, only when it cannot start a sign-in.
+
+    Skipped rather than failed, so `fcc sync` keeps working before access is
+    granted - which is exactly the state this project has been in.
+    """
+    if ctx.yahoo_ready():
+        sync_yahoo_league(ctx, season, week, force=force)
+    elif ctx.yahoo_configured():
+        print("  yahoo       : skipped (credentials, but no consent token yet;")
+        print("                run `fcc verify-settings` in a terminal once Yahoo")
+        print("                has attached Fantasy Sports - see `fcc doctor`)")
     else:
         print("  yahoo       : skipped (no credentials; run: fcc setup)")
-    return EXIT_OK
 
 
 def sync_yahoo_league(ctx: Context, season: int, week: int, force: bool = False) -> dict:
