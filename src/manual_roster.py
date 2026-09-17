@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 from src.storage import Database
@@ -220,21 +221,12 @@ def _parse_table(lines: list[str], anchors: list[int]) -> list[tuple[str | None,
     return out
 
 
-def load_roster(
-    conn: Database,
-    text: str,
-    *,
-    league_key: str,
-    season: int,
-    week: int,
-    team_key: str,
-    team_name: str | None = None,
-) -> tuple[LeagueSnapshot, list[str]]:
-    """Turn pasted names into a snapshot. Returns (snapshot, unmatched names).
+def name_resolver(conn: Database) -> Callable[[list[str], str | None], str | None]:
+    """A function from pasted words (and an optional slot) to our player key.
 
-    Unmatched names are RETURNED rather than logged and forgotten. A roster
-    short by one produces a confident lineup recommendation for a team that is
-    not yours, which is worse than refusing to answer.
+    Shared by the roster paste and the wire paste: both come off Yahoo pages,
+    and a matching rule that differed between them would place a player on one
+    and lose him on the other.
     """
     # Indexed two ways. A hyphen collapses to nothing on one side and to a
     # space on the other - "Amon-Ra St. Brown" against "Amon Ra St Brown" -
@@ -272,12 +264,6 @@ def load_roster(
                 if alias:
                     defences.setdefault(alias, row["player_key"])
 
-    snapshot = LeagueSnapshot(
-        league_key=league_key, season=int(season), week=int(week)
-    )
-    snapshot.is_manual = True
-    unmatched: list[str] = []
-    settled = settled_names(text)
 
     def resolve(words: list[str], slot: str | None) -> str | None:
         """Longest prefix of `words` that names a player we know.
@@ -303,6 +289,34 @@ def load_roster(
                 if found:
                     return found
         return None
+
+    return resolve
+
+
+def load_roster(
+    conn: Database,
+    text: str,
+    *,
+    league_key: str,
+    season: int,
+    week: int,
+    team_key: str,
+    team_name: str | None = None,
+) -> tuple[LeagueSnapshot, list[str]]:
+    """Turn pasted names into a snapshot. Returns (snapshot, unmatched names).
+
+    Unmatched names are RETURNED rather than logged and forgotten. A roster
+    short by one produces a confident lineup recommendation for a team that is
+    not yours, which is worse than refusing to answer.
+    """
+    snapshot = LeagueSnapshot(
+        league_key=league_key, season=int(season), week=int(week)
+    )
+    snapshot.is_manual = True
+    unmatched: list[str] = []
+    settled = settled_names(text)
+
+    resolve = name_resolver(conn)
 
     for slot, name in parse_lines(text):
         player_key = resolve(name.split(), slot)

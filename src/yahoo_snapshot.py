@@ -85,6 +85,10 @@ class LeagueSnapshot:
     week: int
     rosters: list[RosterSpot] = field(default_factory=list)
     free_agents: list[str] = field(default_factory=list)
+    #: The subset of `free_agents` that can be added NOW, with no claim and no
+    #: bid ("FA" on the Players page, as against "W (date)"). Empty means the
+    #: split is unknown, and every available player is priced as a claim.
+    free_adds: set[str] = field(default_factory=set)
     budgets: dict[str, TeamBudget] = field(default_factory=dict)
     transactions: list[dict[str, Any]] = field(default_factory=list)
     #: (week, team_key, opponent_key) - one row per GAME, not per team. Yahoo

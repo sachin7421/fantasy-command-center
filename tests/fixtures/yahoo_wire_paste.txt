@@ -1,0 +1,755 @@
+# The Yahoo Players page (filter: Available), pasted 17 Sep 2026 - its STRUCTURE.
+#
+# Every Yahoo-generated value is a placeholder: projections, ranks, rostered
+# percentages, stat lines, the waiver-clear date and the team's record. Those
+# are Yahoo's data and this repository is public (obligation 1). What is left
+# is the shape of the page, which is what the parser has to cope with, and the
+# names of NFL players, which are public facts.
+#
+# The page footer is kept on purpose: its Trade Hub box names two players with
+# no team/position line, and neither may be read as available.
+
+Offense
+Roster Status
+GP*
+Bye
+Fan Pts
+Pre-Season
+Actual
+% Ros
+Yds
+TD
+Int
+Att*
+Yds
+TD
+Tgt*
+Rec
+Yds
+TD
+TD
+2PT
+Tot
+Lost
+
+
+C.J. Stroud
+C.J. StroudVideo ForecastPlayer Note
+Hou - QB
+Sun 1:00 pm vs Cin
+W (Jan 1)
+0
+0
+0
+0
+0
+0%
+0
+0
+0
+0
+0
+0
+-
+-
+-
+-
+-
+0
+0
+0
+
+
+Carson Wentz
+Carson WentzVideo ForecastNew Player Note
+Min - QB
+Sun 1:00 pm @ Chi
+FA
+0
+0
+0
+0
+0
+0%
+0
+0
+0
+0
+0
+0
+-
+-
+-
+-
+-
+0
+0
+0
+
+
+Daniel Jones
+Daniel JonesPlayer Note
+Ind - QB
+Sun 8:20 pm @ KC
+FA
+0
+0
+0
+0
+0
+0%
+0
+0
+0
+0
+0
+0
+-
+-
+-
+-
+-
+0
+0
+0
+
+
+Drew Lock
+Drew LockVideo ForecastNew Player Note
+Sea - QB
+Sun 4:25 pm @ Ari
+FA
+0
+0
+0
+0
+0
+0%
+0
+0
+0
+0
+0
+0
+-
+-
+-
+-
+-
+0
+0
+0
+
+
+Aaron Rodgers
+Aaron RodgersPlayer Note
+Pit - QB
+Sun 1:00 pm @ NE
+FA
+0
+0
+0
+0
+0
+0%
+0
+0
+0
+0
+0
+0
+-
+-
+-
+-
+-
+0
+0
+0
+
+
+Jacoby Brissett
+Jacoby BrissettVideo ForecastPlayer Note
+Ari - QB
+Sun 4:25 pm vs Sea
+FA
+0
+0
+0
+0
+0
+0%
+0
+0
+0
+0
+0
+0
+-
+-
+-
+-
+-
+0
+0
+0
+
+
+Geno Smith
+Geno SmithPlayer Note
+NYJ - QB
+Sun 1:00 pm vs GB
+FA
+0
+0
+0
+0
+0
+0%
+0
+0
+0
+0
+0
+0
+-
+-
+-
+-
+-
+0
+0
+0
+
+
+Deshaun Watson
+Deshaun WatsonVideo ForecastPlayer Note
+Cle - QB
+Sun 1:00 pm @ TB
+FA
+0
+0
+0
+0
+0
+0%
+0
+0
+0
+0
+0
+0
+-
+-
+-
+-
+-
+0
+0
+0
+
+
+Kirk Cousins
+Kirk CousinsPlayer Note
+LV - QB
+Sun 4:05 pm @ LAC
+FA
+0
+0
+0
+0
+0
+0%
+0
+0
+0
+0
+0
+0
+-
+-
+-
+-
+-
+0
+0
+0
+
+
+Cooper Rush
+Cooper RushVideo ForecastNew Player Note
+Atl - QB
+Sun 1:00 pm vs Car
+FA
+0
+0
+0
+0
+0
+0%
+0
+0
+0
+0
+0
+0
+-
+-
+-
+-
+-
+0
+0
+0
+
+
+Cam Ward
+Cam WardVideo ForecastPlayer Note
+Ten - QB
+Sun 1:00 pm vs Phi
+FA
+0
+0
+0
+0
+0
+0%
+0
+0
+0
+0
+0
+0
+-
+-
+-
+-
+-
+0
+0
+0
+
+
+Jayden Reed
+Jayden ReedPlayer Note
+GB - WR
+Sun 1:00 pm @ NYJ
+W (Jan 1)
+0
+0
+0
+0
+0
+0%
+-
+-
+-
+0
+0
+0
+0
+0
+0
+0
+-
+0
+0
+0
+
+
+Tua Tagovailoa
+Tua TagovailoaQVideo ForecastNew Player Note
+Atl - QB
+Sun 1:00 pm vs Car
+FA
+0
+0
+0
+0
+0
+0%
+0
+0
+0
+0
+0
+0
+-
+-
+-
+-
+-
+-
+0
+-
+
+
+Ryan Flournoy
+Ryan FlournoyPlayer Note
+Dal - WR
+Sun 4:25 pm vs Was
+FA
+0
+0
+0
+0
+0
+0%
+-
+-
+-
+0
+0
+0
+0
+0
+0
+0
+-
+0
+0
+0
+
+
+Malik Washington
+Malik WashingtonPlayer Note
+Mia - WR
+Sun 4:25 pm @ SF
+FA
+0
+0
+0
+0
+0
+0%
+-
+-
+-
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+
+
+DeMario Douglas
+DeMario DouglasPlayer Note
+NE - WR
+Sun 1:00 pm vs Pit
+FA
+0
+0
+0
+0
+0
+0%
+-
+-
+-
+0
+0
+0
+0
+0
+0
+0
+-
+0
+0
+0
+
+
+Adonai Mitchell
+Adonai MitchellPlayer Note
+NYJ - WR
+Sun 1:00 pm vs GB
+FA
+0
+0
+0
+0
+0
+0%
+-
+-
+-
+0
+0
+0
+0
+0
+0
+0
+-
+0
+0
+0
+
+
+George Holani
+George HolaniVideo ForecastPlayer Note
+Sea - RB
+Sun 4:25 pm @ Ari
+FA
+0
+0
+0
+0
+0
+0%
+-
+-
+-
+0
+0
+0
+0
+0
+0
+0
+-
+0
+0
+0
+
+
+Pat Freiermuth
+Pat FreiermuthVideo ForecastPlayer Note
+Pit - TE
+Sun 1:00 pm @ NE
+FA
+0
+0
+0
+0
+0
+0%
+-
+-
+-
+-
+-
+-
+0
+0
+0
+0
+-
+0
+0
+0
+
+
+Jalen Nailor
+Jalen NailorVideo ForecastPlayer Note
+LV - WR
+Sun 4:05 pm @ LAC
+W (Jan 1)
+0
+0
+0
+0
+0
+0%
+-
+-
+-
+0
+0
+0
+0
+0
+0
+0
+-
+0
+0
+0
+
+
+Keenan Allen
+Keenan AllenVideo ForecastNew Player Note
+Ind - WR
+Sun 8:20 pm @ KC
+W (Jan 1)
+0
+0
+0
+0
+0
+0%
+-
+-
+-
+-
+-
+-
+0
+0
+0
+0
+-
+0
+0
+0
+
+
+Brenton Strange
+Brenton StrangeVideo ForecastPlayer Note
+Jax - TE
+Sun 4:05 pm @ Den
+FA
+0
+0
+0
+0
+0
+0%
+-
+-
+-
+-
+-
+-
+0
+0
+0
+0
+-
+0
+0
+0
+
+
+AJ Barner
+AJ BarnerPlayer Note
+Sea - TE
+Sun 4:25 pm @ Ari
+W (Jan 1)
+0
+0
+0
+0
+0
+0%
+-
+-
+-
+0
+0
+0
+0
+0
+0
+0
+-
+0
+0
+0
+
+
+Greg Dulcich
+Greg DulcichPlayer Note
+Mia - TE
+Sun 4:25 pm @ SF
+FA
+0
+0
+0
+0
+0
+0%
+-
+-
+-
+-
+-
+-
+0
+0
+0
+0
+-
+0
+0
+0
+
+
+Tre' Harris
+Tre' HarrisPlayer Note
+LAC - WR
+Sun 4:05 pm vs LV
+FA
+0
+0
+0
+0
+0
+0%
+-
+-
+-
+0
+0
+0
+0
+0
+0
+0
+-
+0
+0
+0
+Previous 25 Next 25
+Add Player Drop Player Trade On Watch List Not Watching
+
+All Free Agents will be placed on Waivers when their game for the week is scheduled to begin. Free Agents on a bye week will be placed on Waivers when the last game of the week is scheduled to begin.
+Legends and Glossaries
+Legend
+
+Stats
+
+Positions
+
+Advanced Stats Glossary
+
+
+The Fine Print
+Projections Powered by Rotowire. Week 2 stats may change if Stat corrections are applied by Thursday, Sep 24. All game times are shown in EDT. Asterisks (*) denote non-scoring stats.
+Team analysis
+Find the best moves for your team
+|
+Hide
+Butt Fumblers logo
+Butt Fumblers
+0-0-0
+  |
+Nth Place
+  |
+Manager
+Strengths
+Neutral
+Weaknesses
+Unlock your team's positional strengths and more!
+Subscribe now
+Research Assistant  |
+Trade Hub
+Add/drop suggestions
+Trade suggestions
+Photo of Jayden ReedPhoto of Chig Okonkwo
+Jayden Reed
+Chig Okonkwo
+Compare
+
+Yahoo Sports - NBC Sports Network - Paid Fantasy Terms - Feedback - Terms and Privacy Policy - Privacy Dashboard  - About Our Ads - Help
+Certain Data by Sportradar, Rotowire, FTN, BAKER Engine and THE BLITZ
+
+Guillotine trademarks are used with Fantasy Life's permission.
+
+© 2026 Yahoo Fantasy Sports LLC. All rights reserved.

@@ -512,8 +512,9 @@ def run(
         reasons = []
         if candidate.trending_add > 5000:
             reasons.append(f"trending: {candidate.trending_add:,} adds in 24h")
-        if candidate.pct_owned < 40 and gain > 0:
-            reasons.append(f"only {candidate.pct_owned:.0f}% rostered")
+        # No ownership reason: nothing supplies it. `load_free_agents` sets
+        # pct_owned to 0.0 for everyone, so "only 0% rostered" was printed on
+        # every positive claim - a reason invented for each player.
         if drop and drop.injury_status in STASH_STATUSES:
             reasons.append(f"drop candidate is {drop.injury_status}")
 
@@ -523,7 +524,11 @@ def run(
             value_gain=round(gain, 1),
             reasons=reasons,
         )
-        if uses_faab:
+        if candidate.player_key in snapshot.free_adds:
+            # Added immediately, first come first served. Pricing it as a FAAB
+            # claim recommends spending money on a player who costs nothing.
+            claim.reasons.insert(0, "free agent: add now, no bid needed")
+        elif uses_faab:
             # Prefer a bid derived from how this league ACTUALLY bids, and fall
             # back to the heuristic until enough auctions have been observed.
             advice = None
@@ -587,6 +592,12 @@ def run(
         )
         if not h["rostered"]
     ]
+    if snapshot.is_manual:
+        # A typed-in snapshot knows one roster, so "not rostered" meant "not
+        # on MY team" and every backup in the league looked free. Only the wire
+        # says who is actually available; with no wire, say nothing.
+        on_wire = set(snapshot.free_agents)
+        report.handcuffs = [h for h in report.handcuffs if h["handcuff_key"] in on_wire]
 
     # Expected-points regression. The waiver wire is exactly where this pays:
     # a free agent scoring below what his usage implies is the cheapest player
@@ -619,9 +630,12 @@ def _waiver_title(report: WaiverReport) -> str:
         return f"Nothing worth claiming (wk {report.week})"
 
     top = report.claims[0]
-    head = f"Claim {top.add.name}"
-    if report.uses_faab and top.bid_rec:
-        head += f", bid ${top.bid_rec}"
+    if top.bid_rec is None and any(r.startswith("free agent") for r in top.reasons):
+        head = f"Add {top.add.name} now"
+    else:
+        head = f"Claim {top.add.name}"
+        if report.uses_faab and top.bid_rec:
+            head += f", bid ${top.bid_rec}"
     if len(report.claims) > 1:
         head += f" (+{len(report.claims) - 1} more)"
     return f"{head} — wk {report.week} waivers"

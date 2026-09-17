@@ -477,6 +477,64 @@ def cmd_yahoo_scope(ctx: Context, args) -> int:
     return announce_yahoo_scope(ctx)
 
 
+def _attach_pasted_wire(
+    ctx: Context, snapshot, team_key: str, paths: list[str]
+) -> int | None:
+    """Put a pasted waiver wire on a typed-in snapshot. None means carry on.
+
+    Returns an exit code when the waiver job should stop instead: EXIT_OK when
+    there is simply no wire to look at (said out loud, and not a failure - the
+    scheduled Tuesday run would otherwise fail every week over something only
+    the manager can supply), EXIT_FAIL when a file was given and could not be
+    used.
+
+    The wire is Yahoo league state. It is read here, used for this run, and
+    never stored.
+    """
+    from src import manual_wire
+
+    if not snapshot.is_manual:
+        if paths:
+            print("wire        : Yahoo is connected, so its wire is used; the pasted "
+                  "one is ignored.")
+        return None
+
+    if not paths:
+        print("wire        : none. Yahoo is not connected, so there is no waiver wire")
+        print("              to compare against - an empty report here would mean")
+        print("              nothing was looked at, not that nothing is worth claiming.")
+        print("              Copy Yahoo's Players page (filter: Available) into a file")
+        print("              and run: fcc waivers --wire-file wire.txt")
+        print("              Repeat --wire-file for more pages. It is not stored.")
+        return EXIT_OK
+
+    texts: list[str] = []
+    for path in paths:
+        try:
+            texts.append(Path(path).read_text(encoding="utf-8"))
+        except OSError as exc:
+            print(f"wire        : cannot read {path} ({exc})")
+            return EXIT_FAIL
+
+    wire = manual_wire.attach_wire(ctx.conn, snapshot, str(team_key), texts)
+    if not wire.player_keys and not wire.unmatched and not wire.already_rostered:
+        print(f"wire        : no available players found in {', '.join(paths)}.")
+        print("              Expected Yahoo's Players page, where each player has an")
+        print("              FA or W (date) line. The roster page does not.")
+        return EXIT_FAIL
+
+    free_adds = len(snapshot.free_adds)
+    print(f"wire        : {len(wire.player_keys)} available "
+          f"({free_adds} free add{'' if free_adds == 1 else 's'}, "
+          f"{len(wire.player_keys) - free_adds} on waivers), "
+          f"from {len(paths)} paste{'' if len(paths) == 1 else 's'}")
+    if wire.unmatched:
+        print(f"              not matched, so not considered: {', '.join(wire.unmatched)}")
+    if wire.already_rostered:
+        print(f"              already on your roster, skipped: {', '.join(wire.already_rostered)}")
+    return None
+
+
 def cmd_doctor(ctx: Context, args) -> int:
     """Report on every data source and on configuration completeness."""
     from src.sources.sleeper import SleeperSource
@@ -1124,6 +1182,11 @@ def cmd_job(ctx: Context, args) -> int:
             print("no rosters to compare against. The API agreement forbids")
             print("storing them. Run `fcc setup` to connect Yahoo.")
             return EXIT_FAIL
+        stop = _attach_pasted_wire(
+            ctx, snapshot, team_key, list(getattr(args, "wire_file", None) or [])
+        )
+        if stop is not None:
+            return stop
         waiver_report = waivers.run(
             ctx.conn, ctx.league_key, team_key, season, week,
             snapshot=snapshot,
@@ -2253,6 +2316,11 @@ def build_parser() -> argparse.ArgumentParser:
         p_job.add_argument("--week", type=int)
         p_job.add_argument("--dry-run", action="store_true")
         p_job.add_argument("--budget", type=int, help="FAAB budget remaining")
+        if job == "waivers":
+            p_job.add_argument(
+                "--wire-file", action="append", default=[],
+                help="a paste of Yahoo's Players page (Available); repeat for more pages",
+            )
         p_job.set_defaults(job=job)
 
     p_daily = sub.add_parser("daily", help="sync and run everything due today")
