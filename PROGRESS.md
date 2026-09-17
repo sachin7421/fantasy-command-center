@@ -1,43 +1,54 @@
 # Progress
 
-Resume point for any future session. Updated 2026-08-26. Draft is **Tue 8 Sep 2026,
-8:30pm EDT — 13 days away.**
+Resume point for any future session. **Updated 2026-09-17.** The draft happened on
+8 Sep; the project is in **season mode**.
 
-Run `python tools/gate.py` first. If it is green, the state below is accurate.
+Run `python tools/gate.py` first. The figures below were true when this was written
+and are not maintained by anything - the gate's output is.
 
 ```
 lint         ok      0.1s
-types        ok      1.1s
-tests        ok     16.5s      388 tests: 387 passed, 1 skipped
-degradation  ok      0.2s
+types        ok      0.7s
+tests        ok     36.4s      541 passed, 1 skipped
+degradation  ok      0.3s
+yahoo        ok      0.1s
 dead code    ok      0.5s
 security     ok      1.4s
 ```
+
+If this file disagrees with `git log`, the log is right. This file went three weeks
+and ~40 commits stale once (26 Aug - 16 Sep); update it in the same session as the work.
 
 ---
 
 ## The one thing to read before anything else
 
-**Protocol D is not satisfied, and everything downstream of it is already built.**
+**Yahoo API access is half-live, and the missing half is on Yahoo's side.**
 
-The acceptance test that D names — reproducing Yahoo's *displayed* weekly points for
-10 real players — is the single skipped test in the suite:
+The app is registered and consent completes, but every data call fails with
+`oauth_problem="additional_authorization_required"`. Confirmed 15 Sep by reading the
+developer console directly: app `hnkXi0Gh` (Client ID begins `dj0yJmk9bzB0`) shows
+only OpenID Connect permissions (Email, Profile). **No Fantasy Sports group exists on
+the app at all**, so there is no box to tick. yfpy never sends a `scope` parameter
+(`yahoo_oauth/oauth.py:99`), so nothing in code can request it. The remedy is Yahoo
+support attaching the scope, then a **fresh consent** signed in as the Yahoo account
+that owns league 796511 - the old token cannot gain a scope by refreshing.
 
-```
-SKIPPED tests/test_acceptance.py:79: Needs live Yahoo access to read back
-Yahoo's own computed weekly points.
-```
+Until then:
 
-It cannot run without Yahoo API access, which is not approved yet. The scoring engine
-is instead verified against **32 hand-computed tests** in `tests/test_scoring.py`,
-covering this league's two overrides (interceptions −1, fumbles −1 *and* fumbles lost
-−1), half-PPR receptions read from settings rather than hardcoded, points-allowed
-bucket exclusivity, and kicker distance bands.
+- **Protocol D is still unsatisfied.** `tests/test_acceptance.py` (reproduce Yahoo's
+  displayed weekly points for 10 players) is the single skipped test. The scoring
+  engine is verified against hand-computed tests only.
+- Waivers/FAAB, playoff odds, and opponent rosters need a live `LeagueSnapshot`
+  and degrade with a message rather than using stale data (compliance obligation 1
+  deliberately overrides standard 4 for Yahoo).
+- Season mode works on **your pasted roster** (`my_roster`, via the dashboard's
+  "This week" paste box or the CLI).
 
-That is a genuinely weaker guarantee than D asks for: hand-computed tests prove the
-engine matches *my* reading of the rules, not that it matches *Yahoo's arithmetic*.
-The gap closes the moment Yahoo access lands, and closing it is the highest-value
-thing that access unlocks.
+Also from that session: loading the app page put the **Client Secret** into a
+transcript. Deliberately not rotated yet - Yahoo has no regenerate button, so rotating
+means recreating the app, which mints a new Client ID and discards the pending scope
+request. Rotate once Fantasy access works.
 
 ---
 
@@ -45,55 +56,70 @@ thing that access unlocks.
 
 | Phase | State | Evidence |
 |---|---|---|
-| Storage / schema | **Done** | Dual SQLite+Postgres, versioned migrations, 41 tests |
-| ID mapping | **Done** | 23 tests |
-| Scoring engine | **Done, acceptance test blocked** | 32 tests hand-computed; see above |
-| Projections + blending | **Done** | 16 tests, 5 sources healthy |
-| VORP / draft board | **Done** | 3,134 players on the live board |
-| Draft assistant | **Done** | 36 simulated drafts, 6,480 picks, 0 failures |
-| Dashboard | **Done** | Live on Streamlit + Supabase |
-| Injuries | **Done** | Ran clean 2026-08-26 |
-| Byes / lineup / recap | **Done** | Tested; not exercised in-season |
-| Waivers / FAAB | **Blocked — Yahoo** | `rosters`, `free_agents`, `transactions`, `team_budgets` all 0 rows |
-| Playoff odds | **Not built** | `matchups`, `standings_history` have no writer — this is missing code, not missing Yahoo |
-| Trade scout | **Partial** | 1-for-1 only; not wired to the sell-high signal in `regression.py` |
+| Storage / schema | **Done** | SQLite + Postgres, numbered migrations; RLS enforced on every apply |
+| ID mapping | **Done** | Yahoo IDs memory-only, rebuilt by name each run |
+| Scoring engine | **Done, acceptance test blocked** | Hand-computed tests; rules in `config.yaml` |
+| Projections + blending | **Done** | Backtested: r 0.67, RMSE 5.63 over 2,205 2025 player-weeks |
+| Confidence bands | **Done** | `src/analytics/uncertainty.py`, measured sigma per position |
+| VORP / draft board / draft assistant | **Done, used** | Draft night 8 Sep |
+| Dashboard | **Done** | Streamlit + Supabase |
+| Injuries / byes / lineup / recap | **Done** | Run off the pasted roster |
+| Yahoo compliance | **Done** | Yahoo tables dropped; `tools/check_yahoo_persistence.py` in the gate |
+| Waivers / FAAB | **Built, blocked on Yahoo scope** | Runs off the snapshot |
+| Playoff odds | **Built, blocked on Yahoo scope** | Matchups on the snapshot, not a table |
+| Trades | **Partial** | `fcc offer` evaluates any N-for-M offer against your starting lineup; `trades` job still proposes 1-for-1 only |
 
-## Live data (2026-08-26)
+## Done since the last update (26 Aug - 17 Sep)
 
-```
-players               3,291      rosters            0   <- Yahoo
-projections           7,430      free_agents        0   <- Yahoo
-projections_blended   3,830      transactions       0   <- Yahoo
-adp                   9,875      team_budgets       0   <- Yahoo
-injuries              1,610      draft_picks        0
-```
+- **Compliance with the signed Yahoo agreement** - nothing Yahoo-derived persisted,
+  `fcc purge-yahoo`, attribution, a gate that fails on writes to Yahoo tables.
+- **First non-circular measurement** (`tools/backtest.py`) - projections before a week
+  vs points scored in it. Replaces the circular "beats ADP" benchmark.
+- **Row-level security** (`2610524`) - Supabase flagged 9 tables world-readable and
+  writable. `enforce_rls()` now secures every public table on each schema apply.
+  Verified against the live project: 0 of 22 exposed.
+- **`points_actual` was missing fumbles and two-point conversions** (`7adc71c`) -
+  4.0% of player-weeks wrong by up to 4.0 points. Fixed, re-synced (Goff 2025 wk17:
+  10.08 -> 6.08), sigma refit (QB 6.94 -> 7.07, pooled 5.60 -> 5.62). A coverage test
+  now fails the build if a scored category stops reaching the ground truth.
+- **`doctor` tells the truth** - calls Yahoo for real (`9467f3d`), names a token that
+  predates its scope (`d19a8f7`), and no longer hangs on a verifier prompt when there
+  is no token (`8d5e2bd`).
+- Recap no longer blames you for swaps you could not have made (`d88e9ae`).
 
-## Open — needs the user
+## Open - needs the user
 
-- [ ] **Manual UI rehearsal.** 15 rounds in the real dashboard under time pressure.
-      The simulator drives the logic, not the Streamlit layer, and that layer is where
-      the worst bug so far lived (`disabled=not is_mine` locked the user out of his own
-      pick). **Highest remaining risk to draft night.**
-- [ ] **Email untested.** `test-notify` has one recorded failure, not re-run because it
-      sends a real email.
+- [ ] **Yahoo support: attach the Fantasy Sports scope** to app `hnkXi0Gh`. Then run
+      `fcc setup` in a terminal, signed in as the league-owning Yahoo account.
+- [ ] **Was the exposed Supabase data read?** Nine tables were open until 15 Sep.
+      Answerable from the PostgREST logs; not yet checked.
+- [ ] **Email untested.** `test-notify` sends a real email; last recorded run failed.
 - [ ] **Repo is public** with a proprietary LICENSE.
-- [ ] Yahoo API approval (external).
+- [ ] Rotate the Yahoo Client Secret, **after** Fantasy access works (see above).
 
-## Open — code
+## Open - code
 
-- [ ] `matchups` / `standings_history` sync → unblocks playoff odds
-- [ ] Trade scout: 2-for-1, and wire to the buy-low/sell-high signal
-- [ ] **Replace the circular benchmark.** Both benchmarks score us *and* our opponents
-      with our own projections, which measures self-consistency, not edge. A backtest
-      against realized points is the only thing that settles it.
-- [ ] `draft_results` table has no writer — believed dead, unverified
+- [ ] **The review-and-guardrails pass was cut short on 16 Sep** after its first
+      finding (`points_actual`). The rest of the codebase has not had that pass.
+- [ ] `trades` job: 2-for-1 proposals, and wiring to the buy-low / sell-high signal
+      in `src/analytics/regression.py` (not referenced by `src/season/trades.py`).
+- [ ] Protocol D acceptance test, the moment Yahoo returns data.
+- [ ] `mypy tests` reports one error (`tests/test_gates.py:119`, `_write` redefined).
+      The gate type-checks `src`, `dashboard.py` and `fcc.py` only.
 
 ## Known-weak claims
 
 Written down so no future session repeats them as fact:
 
-- "Beats naive ADP by 118 points" and "best roster in 36/36 drafts" are **circular**.
-- Model constants in `src/analytics/` are calibrated on 22,175 player-weeks (2022–25)
-  via `tools/calibrate.py` — real, but in-sample.
-- `src/league_bootstrap.py` settings were transcribed by hand from the Yahoo settings
+- "Beats naive ADP by 118 points" and "best roster in 36/36 drafts" are **circular**
+  (both scored opponents with our own projections). The backtest is the real number.
+- **QB projections barely predict week to week** (r = 0.32), so the optimiser's QB
+  calls are close to noise.
+- **TE spread is modelled 21% too narrow and projected 0.87 low**, both pointing the
+  same way: a TE's floor is overstated and upside understated.
+- `points_actual` still omits **return TDs** (not in nflverse) and **self-recovered
+  fumbles** (nflverse publishes only lost ones). Named in `KNOWN_MISSING_STATS`.
+- Model constants in `src/analytics/` are fitted on 22,175 player-weeks (2022-25),
+  in-sample. The backtest covers one season of one source.
+- League settings in `config.yaml` were transcribed by hand from the Yahoo settings
   page, not read from the API.
