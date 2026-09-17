@@ -9,7 +9,7 @@ and are not maintained by anything - the gate's output is.
 ```
 lint         ok      0.1s
 types        ok      0.7s
-tests        ok     36.7s      601 passed, 1 skipped
+tests        ok     37.8s      594 passed, 1 skipped
 degradation  ok      0.3s
 yahoo        ok      0.1s
 dead code    ok      0.5s
