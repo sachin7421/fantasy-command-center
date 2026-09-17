@@ -70,7 +70,7 @@ jobs:
             "0 11 * * 2") echo "job=waivers"  >> "$GITHUB_OUTPUT" ;;
             "0 12 * * *") echo "job=injuries" >> "$GITHUB_OUTPUT" ;;
             "0 14 * * 4") echo "job=lineup"   >> "$GITHUB_OUTPUT" ;;
-            "0 13 * * 0") echo "job=lineup"   >> "$GITHUB_OUTPUT" ;;
+            "30 14 * * 0") echo "job=lineup"  >> "$GITHUB_OUTPUT" ;;
             "0 11 * * 3") echo "job=byes"     >> "$GITHUB_OUTPUT" ;;
             "0 12 * * 1") echo "job=recap"    >> "$GITHUB_OUTPUT" ;;
             "0 11 * * 4") echo "job=reminders" >> "$GITHUB_OUTPUT" ;;
