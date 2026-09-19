@@ -176,6 +176,8 @@ class SleeperProjections(Source):
         force: bool = False,
     ) -> dict[str, int]:
         """Store league-scored projections for every player we can resolve."""
+        projections: list[tuple] = []
+        history: list[tuple] = []
         stats = {"fetched": 0, "stored": 0, "unmatched": 0}
         week_key = week or 0
         fetched_at = db.utcnow()
@@ -208,23 +210,29 @@ class SleeperProjections(Source):
                 continue
             points = scoring.score(stat_line)
 
-            self.conn.execute(
-                "INSERT INTO projections(player_key, source, season, week, stats_json, "
-                "points, fetched_at) VALUES (?,?,?,?,?,?,?) "
-                "ON CONFLICT(player_key, source, season, week) DO UPDATE SET "
-                "stats_json=excluded.stats_json, points=excluded.points, "
-                "fetched_at=excluded.fetched_at",
-                (
-                    match.player_key, "sleeper", season, week_key,
-                    _json(stat_line), points, fetched_at,
-                ),
-            )
+            # Collected rather than written here: one statement per player
+            # over a 20ms link is minutes of waiting, and this loop runs for
+            # every player in the league.
+            projections.append((
+                match.player_key, "sleeper", season, week_key,
+                _json(stat_line), points, fetched_at,
+            ))
             # Append-only copy, so projection drift across the season survives.
-            db.record_projection_history(
-                self.conn, match.player_key, "sleeper", season, week_key,
+            history.append((
+                match.player_key, "sleeper", season, week_key,
                 points, _json(stat_line), fetched_at,
-            )
+            ))
             stats["stored"] += 1
+
+        self.conn.executemany(
+            "INSERT INTO projections(player_key, source, season, week, stats_json, "
+            "points, fetched_at) VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT(player_key, source, season, week) DO UPDATE SET "
+            "stats_json=excluded.stats_json, points=excluded.points, "
+            "fetched_at=excluded.fetched_at",
+            projections,
+        )
+        db.record_projection_history_many(self.conn, history)
         self.conn.commit()
         return stats
 
@@ -273,20 +281,21 @@ class SleeperProjections(Source):
                     bucket[key] = bucket.get(key, 0.0) + value
 
         fetched_at = db.utcnow()
-        stored = 0
+        rows = []
         for player_key, total_points in points.items():
             stats_line = totals.get(player_key, {})
             stats_line["_weeks_summed"] = counted.get(player_key, 0)
-            self.conn.execute(
-                "INSERT INTO projections(player_key, source, season, week, stats_json, "
-                "points, fetched_at) VALUES (?,?,?,?,?,?,?) "
-                "ON CONFLICT(player_key, source, season, week) DO UPDATE SET "
-                "stats_json=excluded.stats_json, points=excluded.points, "
-                "fetched_at=excluded.fetched_at",
-                (player_key, "sleeper", season, 0, _json(stats_line),
-                 round(total_points, 2), fetched_at),
-            )
-            stored += 1
+            rows.append((player_key, "sleeper", season, 0, _json(stats_line),
+                         round(total_points, 2), fetched_at))
+        self.conn.executemany(
+            "INSERT INTO projections(player_key, source, season, week, stats_json, "
+            "points, fetched_at) VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT(player_key, source, season, week) DO UPDATE SET "
+            "stats_json=excluded.stats_json, points=excluded.points, "
+            "fetched_at=excluded.fetched_at",
+            rows,
+        )
+        stored = len(rows)
         self.conn.commit()
         return {"defenses": stored, "weeks": weeks}
 
@@ -298,6 +307,7 @@ class SleeperProjections(Source):
         field = pick_adp_field(ppr_value, superflex)
         fetched_at = db.utcnow()
         stored = 0
+        rows: list[tuple] = []
 
         for entry in self.fetch(season, None, POSITIONS, force):
             raw = entry.get("stats") or {}
@@ -326,19 +336,21 @@ class SleeperProjections(Source):
             ]
             stdev = _stdev(variants) if len(variants) > 1 else None
 
-            self.conn.execute(
-                "INSERT INTO adp(player_key, source, adp, stdev, best, worst, fetched_at) "
-                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(player_key, source, fetched_at) "
-                "DO UPDATE SET adp=excluded.adp, stdev=excluded.stdev, "
-                "best=excluded.best, worst=excluded.worst",
-                (
-                    match.player_key, "sleeper", float(adp), stdev,
-                    min(variants) if variants else None,
-                    max(variants) if variants else None,
-                    fetched_at,
-                ),
-            )
+            rows.append((
+                match.player_key, "sleeper", float(adp), stdev,
+                min(variants) if variants else None,
+                max(variants) if variants else None,
+                fetched_at,
+            ))
             stored += 1
+
+        self.conn.executemany(
+            "INSERT INTO adp(player_key, source, adp, stdev, best, worst, fetched_at) "
+            "VALUES (?,?,?,?,?,?,?) ON CONFLICT(player_key, source, fetched_at) "
+            "DO UPDATE SET adp=excluded.adp, stdev=excluded.stdev, "
+            "best=excluded.best, worst=excluded.worst",
+            rows,
+        )
         self.conn.commit()
         return stored
 

@@ -28,7 +28,7 @@ from contextlib import contextmanager
 from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator, Sequence
 
 from src.storage import Database, connect as _connect, database_url, is_postgres_url
 
@@ -612,6 +612,21 @@ def record_projection_history(
         "stats_json, observed_at) VALUES (?,?,?,?,?,?,?) "
         "ON CONFLICT(player_key, source, season, week, observed_at) DO NOTHING",
         (player_key, source, season, week, points, stats_json, observed_at or utcnow()),
+    )
+
+
+def record_projection_history_many(conn: Database, rows: Iterable[Sequence]) -> None:
+    """Append many observations at once.
+
+    Rows are (player_key, source, season, week, points, stats_json, observed_at).
+    The single-row version costs a round trip each, and the projection sync
+    calls it once per player - see Database.executemany.
+    """
+    conn.executemany(
+        "INSERT INTO projection_history(player_key, source, season, week, points, "
+        "stats_json, observed_at) VALUES (?,?,?,?,?,?,?) "
+        "ON CONFLICT(player_key, source, season, week, observed_at) DO NOTHING",
+        rows,
     )
 
 

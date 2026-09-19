@@ -157,37 +157,45 @@ class SleeperSource(Source):
         an nflverse stat line resolve to the same canonical key without guessing.
         """
         stats = {"seen": 0, "linked_yahoo": 0, "linked_gsis": 0, "matched": 0, "new": 0}
+
+        # Asked once rather than per player. This used to be a SELECT inside
+        # the loop, and with ~3,300 players over a 20ms link that alone was
+        # more than a minute of waiting - see IdMapper.upsert_players.
+        known_yahoo = {
+            str(row["yahoo_id"]): row["player_key"]
+            for row in self.conn.fetchall(
+                "SELECT yahoo_id, player_key FROM players WHERE yahoo_id IS NOT NULL"
+            )
+        }
+
+        records = []
         for p in self.fantasy_players(force=force):
             stats["seen"] += 1
-
-            # Prefer linking onto an existing canonical player via yahoo_id.
-            existing_key = None
-            if p.yahoo_id:
-                row = self.conn.execute(
-                    "SELECT player_key FROM players WHERE yahoo_id=?", (p.yahoo_id,)
-                ).fetchone()
-                if row:
-                    existing_key = row["player_key"]
-                    stats["matched"] += 1
-
-            key = idmap.upsert_player(
-                full_name=p.full_name,
-                position=p.position,
-                team=p.team,
-                sleeper_id=p.sleeper_id,
-                yahoo_id=p.yahoo_id,
-                espn_id=p.espn_id,
-                gsis_id=p.gsis_id,
-            )
             if p.yahoo_id:
                 stats["linked_yahoo"] += 1
+                if str(p.yahoo_id) in known_yahoo:
+                    stats["matched"] += 1
+                else:
+                    stats["new"] += 1
+            else:
+                stats["new"] += 1
             if p.gsis_id:
                 stats["linked_gsis"] += 1
-            if existing_key is None:
-                stats["new"] += 1
 
-            # Keep the Sleeper id resolvable even when names disagree later.
-            idmap.record_mapping("sleeper", p.sleeper_id, key, "exact", 1.0)
+            # The Sleeper id goes in as a source id, so it stays resolvable
+            # even when names disagree later - upsert_players writes the
+            # player_id_map row for every id it is given.
+            records.append({
+                "full_name": p.full_name,
+                "position": p.position,
+                "team": p.team,
+                "sleeper_id": p.sleeper_id,
+                "yahoo_id": p.yahoo_id,
+                "espn_id": p.espn_id,
+                "gsis_id": p.gsis_id,
+            })
+
+        idmap.upsert_players(records)
         self.conn.commit()
         return stats
 
@@ -195,6 +203,7 @@ class SleeperSource(Source):
         """Record the current injury state of every player carrying one."""
         observed_at = db.utcnow()
         count = 0
+        rows: list[tuple] = []
         for p in self.fantasy_players(force=force):
             if not p.injury_status:
                 continue
@@ -204,17 +213,19 @@ class SleeperSource(Source):
             )
             if not result.player_key:
                 continue
-            self.conn.execute(
-                "INSERT INTO injuries(player_key, status, practice, body_part, note, source, "
-                "observed_at) VALUES (?,?,?,?,?,?,?) "
-                "ON CONFLICT(player_key, source, observed_at) DO UPDATE SET "
-                "status=excluded.status, body_part=excluded.body_part, note=excluded.note",
-                (
-                    result.player_key, p.injury_status, None, p.injury_body_part,
-                    p.injury_notes, self.name, observed_at,
-                ),
-            )
+            rows.append((
+                result.player_key, p.injury_status, None, p.injury_body_part,
+                p.injury_notes, self.name, observed_at,
+            ))
             count += 1
+
+        self.conn.executemany(
+            "INSERT INTO injuries(player_key, status, practice, body_part, note, source, "
+            "observed_at) VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT(player_key, source, observed_at) DO UPDATE SET "
+            "status=excluded.status, body_part=excluded.body_part, note=excluded.note",
+            rows,
+        )
         self.conn.commit()
         return count
 
