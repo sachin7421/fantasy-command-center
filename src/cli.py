@@ -687,27 +687,40 @@ def cmd_sync(ctx: Context, args) -> int:
     sleeper_proj = SleeperProjections(ctx.conn)
 
     from src.sources import base as source_base
+    from src.timing import PhaseTimer
+
+    # Timed because an untimed phase is one nobody can make faster: sync
+    # overran the 20-minute job timeout on two consecutive mornings and the
+    # output named ten phases without a second against any of them.
+    timer = PhaseTimer()
 
     source_base.clear_degradations()
     print(f"Syncing season {season}...")
-    stats = sleeper.sync_players(ctx.idmap, force=args.force)
+    with timer.phase("players"):
+        stats = sleeper.sync_players(ctx.idmap, force=args.force)
     print(f"  players     : {stats['seen']:,} seen, {stats['linked_yahoo']:,} carry a yahoo id")
 
-    injuries = sleeper.sync_injuries(ctx.idmap)
+    with timer.phase("injuries"):
+        injuries = sleeper.sync_injuries(ctx.idmap)
     print(f"  injuries    : {injuries:,}")
 
-    trending = sleeper.sync_trending(
-        ctx.idmap,
-        lookback_hours=int(ctx.cfg.get("sources.sleeper.trending_lookback_hours", 24)),
-        limit=int(ctx.cfg.get("sources.sleeper.trending_limit", 50)),
-    )
+    with timer.phase("trending"):
+        trending = sleeper.sync_trending(
+            ctx.idmap,
+            lookback_hours=int(ctx.cfg.get("sources.sleeper.trending_lookback_hours", 24)),
+            limit=int(ctx.cfg.get("sources.sleeper.trending_limit", 50)),
+        )
     print(f"  trending    : {trending}")
 
-    season_stats = sleeper_proj.sync(ctx.idmap, rules, season, force=args.force)
+    with timer.phase("season proj"):
+        season_stats = sleeper_proj.sync(ctx.idmap, rules, season, force=args.force)
     print(f"  season proj : {season_stats['stored']:,} stored, {season_stats['unmatched']} unmatched")
 
     # Defenses need rebuilding from weekly lines; see sync_defense_season.
-    def_stats = sleeper_proj.sync_defense_season(ctx.idmap, rules, season, force=args.force)
+    with timer.phase("defense"):
+        def_stats = sleeper_proj.sync_defense_season(
+            ctx.idmap, rules, season, force=args.force
+        )
     print(f"  defense     : {def_stats['defenses']} rebuilt from {def_stats['weeks']} weekly lines")
 
     # A source that answered from cache is not a source that answered. Without
@@ -715,7 +728,8 @@ def cmd_sync(ctx: Context, args) -> int:
     # three days, and the advice built on it is equally confident either way.
     _report_degradations()
 
-    adp_rows = sleeper_proj.sync_adp(ctx.idmap, season, ppr_value=rules.ppr_value)
+    with timer.phase("adp"):
+        adp_rows = sleeper_proj.sync_adp(ctx.idmap, season, ppr_value=rules.ppr_value)
     print(f"  adp         : {adp_rows:,} (sleeper)")
 
     if ctx.cfg.get("sources.espn.enabled", True):
@@ -723,7 +737,8 @@ def cmd_sync(ctx: Context, args) -> int:
 
         espn = EspnSource(ctx.conn)
         try:
-            espn_stats = espn.sync(ctx.idmap, rules, season, force=args.force)
+            with timer.phase("espn proj"):
+                espn_stats = espn.sync(ctx.idmap, rules, season, force=args.force)
             print(f"  espn proj   : {espn_stats['stored']:,} stored, "
                   f"{espn_stats['unmatched']} unmatched")
         except Exception as exc:
@@ -735,7 +750,8 @@ def cmd_sync(ctx: Context, args) -> int:
 
         fp = FantasyProsSource(ctx.conn, ctx.cfg.get("sources.fantasypros.csv_dir"))
         try:
-            fp_stats = fp.sync(ctx.idmap, force=args.force)
+            with timer.phase("ecr"):
+                fp_stats = fp.sync(ctx.idmap, force=args.force)
             print(f"  ecr         : {fp_stats['stored']:,} stored, "
                   f"{fp_stats['unmatched']} unmatched, {fp_stats['byes']:,} byes set")
         except Exception as exc:
@@ -747,7 +763,8 @@ def cmd_sync(ctx: Context, args) -> int:
 
         nv = NflverseSource(ctx.conn)
         try:
-            byes = nv.sync_bye_weeks(season, force=args.force)
+            with timer.phase("byes"):
+                byes = nv.sync_bye_weeks(season, force=args.force)
             print(f"  byes        : {byes:,} players updated from the NFL schedule")
         except Exception as exc:
             log.warning("nflverse sync skipped: %s", exc)
@@ -755,22 +772,30 @@ def cmd_sync(ctx: Context, args) -> int:
 
     week = args.week if args.week is not None else ctx.current_week()
     if week:
-        weekly = sleeper_proj.sync(ctx.idmap, rules, season, week=week, force=args.force)
+        with timer.phase("weekly proj"):
+            weekly = sleeper_proj.sync(
+                ctx.idmap, rules, season, week=week, force=args.force
+            )
         print(f"  week {week} proj: {weekly['stored']:,} stored")
 
-    blended = proj.blend_all(
-        ctx.conn, season, 0,
-        weights=ctx.cfg.get("projections.weights"),
-        band_sd=float(ctx.cfg.get("projections.uncertainty_band_sd", 1.0)),
-    )
+    with timer.phase("blending"):
+        blended = proj.blend_all(
+            ctx.conn, season, 0,
+            weights=ctx.cfg.get("projections.weights"),
+            band_sd=float(ctx.cfg.get("projections.uncertainty_band_sd", 1.0)),
+        )
     print(f"  blended     : {blended:,} season projections")
     if week:
-        proj.blend_all(ctx.conn, season, week, weights=ctx.cfg.get("projections.weights"))
+        with timer.phase("blending"):
+            proj.blend_all(
+                ctx.conn, season, week, weights=ctx.cfg.get("projections.weights")
+            )
 
     # The league's own state, which only Yahoo has. Skipped rather than failed
     # when credentials are absent, so `fcc sync` keeps working before access is
     # granted - which is exactly the state this project has been in.
     _sync_yahoo_if_ready(ctx, season, week or 1, force=args.force)
+    print(f"  timings     : {timer.summary()}")
     return EXIT_OK
 
 
