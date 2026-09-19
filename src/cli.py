@@ -2441,6 +2441,37 @@ HANDLERS = {
 }
 
 
+def _report_scope_without_db(config_path: str, exc: BaseException) -> int:
+    """Print the Fantasy-scope verdict with no database. Cannot notify."""
+    from src import yahoo_client
+
+    print(f"(database unavailable: {exc})")
+    client_id = (os.environ.get("YAHOO_CONSUMER_KEY") or "").strip()
+    if not client_id:
+        try:
+            env_dir = Path(Config.load(config_path).get("paths.env_dir", "."))
+        except Exception:  # silent: with no config, the working directory is right
+            env_dir = Path()
+        env_file = env_dir / ".env"
+        lines = env_file.read_text(encoding="utf-8").splitlines() if env_file.exists() else []
+        for line in lines:
+            name, sep, value = line.partition("=")
+            if sep and name.strip() == "YAHOO_CONSUMER_KEY":
+                client_id = value.strip().strip("\"'")
+                break
+    if not client_id:
+        print("yahoo scope : cannot check - no YAHOO_CONSUMER_KEY here.")
+        return EXIT_FAIL
+
+    scope = yahoo_client.probe_fantasy_scope(client_id)
+    print(f"yahoo scope : {scope.verdict}" + (f" ({scope.detail})" if scope.detail else ""))
+    if scope.verdict == "attached":
+        print("              Yahoo has attached Fantasy Sports. Run "
+              "`fcc verify-settings` in a terminal to consent.")
+        print("              (No database, so no notification was sent.)")
+    return EXIT_OK
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(
@@ -2454,6 +2485,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         ctx = Context(args.config, args.db)
     except Exception as exc:
+        if args.command == "yahoo-scope":
+            # Yahoo's answer needs no database, and this check exists to keep
+            # reporting when things are broken. On 18 and 19 Sep it died here:
+            # `fcc sync` had overrun the job timeout and its orphan still held
+            # locks, so building a Context raised a statement timeout and the
+            # one step that could still have said something exited 2.
+            return _report_scope_without_db(args.config, exc)
         print(f"Startup failed: {exc}", file=sys.stderr)
         return EXIT_FAIL
 

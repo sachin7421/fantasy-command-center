@@ -274,3 +274,47 @@ def test_announce_without_a_client_id_says_so_rather_than_passing(tmp_path, caps
     ctx.notifier = _Notifier  # type: ignore[attr-defined]
     assert cli.announce_yahoo_scope(ctx) == cli.EXIT_FAIL
     assert "YAHOO_CONSUMER_KEY" in capsys.readouterr().out
+
+
+# --- the check must survive a database that is busy --------------------------
+
+
+def test_the_scope_check_answers_even_with_no_database(tmp_path, monkeypatch, capsys):
+    """It died at startup on GitHub, 18 and 19 Sep.
+
+    `fcc sync` had overrun the job timeout and its orphan still held locks, so
+    building a Context raised "canceling statement due to statement timeout"
+    and the run reported exit 2. Yahoo's answer needs no database at all: the
+    check that exists to survive a Yahoo outage must also survive ours. It
+    cannot notify without one, and says so.
+    """
+    from src import cli, yahoo_client
+
+    def _no_context(*a, **k):
+        raise RuntimeError("canceling statement due to statement timeout")
+
+    monkeypatch.setattr(cli, "Context", _no_context)
+    monkeypatch.setattr(
+        yahoo_client, "probe_fantasy_scope",
+        lambda client_id, **kw: yahoo_client.ScopeCheck("not-attached", "invalid_scope"),
+    )
+    monkeypatch.setenv("YAHOO_CONSUMER_KEY", "some-client-id")
+    (tmp_path / "config.yaml").write_text("league:\n  league_id: \"1\"\n", encoding="utf-8")
+
+    code = cli.main(["--config", str(tmp_path / "config.yaml"), "yahoo-scope"])
+    out = capsys.readouterr().out
+    assert code == cli.EXIT_OK
+    assert "not-attached" in out
+    assert "database" in out.lower()
+
+
+def test_another_command_still_fails_when_the_database_is_gone(tmp_path, monkeypatch, capsys):
+    """Only the scope check gets this door: every other command needs data."""
+    from src import cli
+
+    def _no_context(*a, **k):
+        raise RuntimeError("canceling statement due to statement timeout")
+
+    monkeypatch.setattr(cli, "Context", _no_context)
+    (tmp_path / "config.yaml").write_text("league:\n  league_id: \"1\"\n", encoding="utf-8")
+    assert cli.main(["--config", str(tmp_path / "config.yaml"), "rank"]) == cli.EXIT_FAIL
