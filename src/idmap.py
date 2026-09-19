@@ -126,6 +126,10 @@ class IdMapper:
         self._index_dirty = True
         self._by_key: dict[str, dict[str, Any]] = {}
         self._by_norm_name: dict[str, list[dict[str, Any]]] = {}
+        #: source -> {source_id: (player_key, method, confidence)}, loaded on
+        #: first use and written through, so a sync does not pay a round trip
+        #: per row to ask what it already resolved.
+        self._mapping_cache: dict[str, dict[str, tuple[str, str, float]]] = {}
 
     # -- overrides -----------------------------------------------------------
 
@@ -230,6 +234,126 @@ class IdMapper:
         self._index_dirty = True
         return key
 
+    #: Columns a later pass may fill in but must never blank out.
+    _MERGED_COLUMNS = (
+        "full_name", "first_name", "last_name", "position", "team", "bye_week",
+        "status", "yahoo_id", "yahoo_key", "sleeper_id", "gsis_id", "espn_id",
+    )
+
+    #: source name -> the column its id lives in, for player_id_map rows.
+    _ID_SOURCES = (
+        ("yahoo", "yahoo_id"), ("sleeper", "sleeper_id"),
+        ("nflverse", "gsis_id"), ("espn", "espn_id"),
+    )
+
+    def upsert_players(self, records: Iterable[dict[str, Any]]) -> list[str]:
+        """Register many players at once. Returns their keys, in order.
+
+        `upsert_player` costs six to eight statements per player - a lookup,
+        an insert or update, and a write per source id - and `sync_players`
+        runs it over ~3,300 players. Against a database 20ms away that is
+        minutes of waiting, and it is the reason `fcc sync` outgrew its job
+        timeout. Nothing in that loop needs an answer before the next row: the
+        key is computed in Python.
+
+        Same guarantees as the single-row path. COALESCE(excluded.x, players.x)
+        is the merge rule in SQL: a pass that knows nothing about a column
+        leaves what is stored, so one source never erases another's id.
+        """
+        rows: list[tuple] = []
+        mappings: list[tuple] = []
+        keys: list[str] = []
+        now = utcnow()
+
+        for record in records:
+            key = make_player_key(
+                record.get("full_name", ""), record.get("position"), record.get("team")
+            )
+            keys.append(key)
+            values: dict[str, Any] = {
+                "player_key": key,
+                "full_name": record.get("full_name"),
+                "first_name": record.get("first_name"),
+                "last_name": record.get("last_name"),
+                "position": normalize_position(record.get("position")),
+                "team": normalize_team(record.get("team")) if record.get("team") else None,
+                "bye_week": record.get("bye_week"),
+                "status": record.get("status"),
+                "updated_at": now,
+            }
+            for column in ("yahoo_id", "yahoo_key", "sleeper_id", "gsis_id", "espn_id"):
+                values[column] = record.get(column) or None
+            rows.append(tuple(values.values()))
+
+            for source, column in self._ID_SOURCES:
+                if values.get(column):
+                    mappings.append(
+                        (source, str(values[column]), key, "exact", 1.0, now)
+                    )
+
+        if not rows:
+            return []
+
+        columns = [
+            "player_key", "full_name", "first_name", "last_name", "position",
+            "team", "bye_week", "status", "updated_at",
+            "yahoo_id", "yahoo_key", "sleeper_id", "gsis_id", "espn_id",
+        ]
+        assignments = ", ".join(
+            f"{c}=COALESCE(excluded.{c}, players.{c})" for c in self._MERGED_COLUMNS
+        )
+        self.conn.executemany(
+            f"INSERT INTO players ({', '.join(columns)}) "
+            f"VALUES ({', '.join('?' for _ in columns)}) "
+            f"ON CONFLICT(player_key) DO UPDATE SET {assignments}, "
+            "updated_at=excluded.updated_at",
+            rows,
+        )
+        self.record_mappings(mappings)
+        # The name index is rebuilt lazily; without this every later resolve()
+        # misses the players just added.
+        self._index_dirty = True
+        return keys
+
+    def _mappings_for(self, source: str) -> dict[str, tuple[str, str, float]]:
+        """Every stored mapping for one source: source_id -> (key, method, conf).
+
+        Loaded once per source per run. `resolve` is called per row in every
+        sync loop and its first step was a SELECT, which at the 20ms round trip
+        measured on 19 Sep is thousands of seconds of waiting across a sync.
+        Writes go through `record_mapping`, so what this run learns is visible
+        to the rest of it without a re-read.
+        """
+        cached = self._mapping_cache.get(source)
+        if cached is None:
+            cached = {
+                str(row["source_id"]): (
+                    row["player_key"], row["method"], float(row["confidence"] or 1.0)
+                )
+                for row in self.conn.fetchall(
+                    "SELECT source_id, player_key, method, confidence "
+                    "FROM player_id_map WHERE source=?",
+                    (source,),
+                )
+            }
+            self._mapping_cache[source] = cached
+        return cached
+
+    def record_mappings(self, rows: Iterable[tuple]) -> None:
+        """Store many (source, source_id, player_key, method, confidence, at)."""
+        self.conn.executemany(
+            "INSERT INTO player_id_map(source, source_id, player_key, method, "
+            "confidence, updated_at) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(source, source_id) DO UPDATE SET player_key=excluded.player_key, "
+            "method=excluded.method, confidence=excluded.confidence, "
+            "updated_at=excluded.updated_at",
+            rows,
+        )
+        for source, source_id, player_key, method, confidence, _at in rows:
+            self._mappings_for(str(source))[str(source_id)] = (
+                player_key, method, float(confidence)
+            )
+
     def record_mapping(
         self, source: str, source_id: str, player_key: str, method: str, confidence: float
     ) -> None:
@@ -241,6 +365,7 @@ class IdMapper:
             "updated_at=excluded.updated_at",
             (source, str(source_id), player_key, method, confidence, utcnow()),
         )
+        self._mappings_for(source)[str(source_id)] = (player_key, method, float(confidence))
 
     # -- resolution ----------------------------------------------------------
 
@@ -262,15 +387,11 @@ class IdMapper:
                 self.record_mapping(source, str(source_id), key, "manual", 1.0)
             return MatchResult(key, "manual", 1.0)
 
-        # 2. Already-resolved id.
+        # 2. Already-resolved id, from the mapping held in memory.
         if source_id:
-            row = self.conn.execute(
-                "SELECT player_key, method, confidence FROM player_id_map "
-                "WHERE source=? AND source_id=?",
-                (source, str(source_id)),
-            ).fetchone()
-            if row:
-                return MatchResult(row["player_key"], row["method"], row["confidence"] or 1.0)
+            cached = self._mappings_for(source).get(str(source_id))
+            if cached:
+                return MatchResult(cached[0], cached[1], cached[2])
 
         self._refresh_index()
 
