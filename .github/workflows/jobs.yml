@@ -40,7 +40,12 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 45, not 20. `fcc sync` alone takes 15+ minutes (thousands of single-row
+    # writes over a remote database) and the budget also covers doctor and the
+    # job itself, so the runs on 18 and 19 Sep were cancelled mid-sync and
+    # neither the injury monitor nor anything after it ran. The real fix is to
+    # make sync fast; this stops the mornings being lost while that happens.
+    timeout-minutes: 45
 
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}

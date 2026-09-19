@@ -42,3 +42,20 @@ def test_the_client_id_secret_is_only_visible_to_the_scope_check():
     step = text.rfind("- name:", 0, uses[0])
     step_text = text[step:text.find("- name:", uses[0])]
     assert "fcc.py yahoo-scope" in step_text
+
+
+def test_the_job_timeout_leaves_room_for_a_full_sync():
+    """Runs on 18 and 19 Sep were cancelled mid-sync at 20 minutes.
+
+    `fcc sync` measured 15m20s against the live database on 19 Sep, and the
+    budget also covers `doctor` and the job itself. A timeout under half an
+    hour cancels the morning run again.
+    """
+    import re
+
+    match = re.search(r"timeout-minutes:\s*(\d+)", _text())
+    assert match, "no job timeout found"
+    assert int(match.group(1)) >= 30, (
+        f"timeout is {match.group(1)}min; sync alone measured 15m20s and the "
+        "20-minute budget cancelled two consecutive morning runs"
+    )
