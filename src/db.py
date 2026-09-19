@@ -615,6 +615,23 @@ def record_projection_history(
     )
 
 
+def record_actuals_many(conn: Database, rows: Iterable[Sequence]) -> None:
+    """Store many actuals at once.
+
+    Rows are (player_key, season, week, points, stats_json, source, recorded_at).
+    The usage sync calls the single-row version once per player-week - about
+    5,900 of them - which is a round trip each.
+    """
+    conn.executemany(
+        "INSERT INTO player_week_actuals(player_key, season, week, points, stats_json, "
+        "source, recorded_at) VALUES (?,?,?,?,?,?,?) "
+        "ON CONFLICT(player_key, season, week, source) DO UPDATE SET "
+        "points=excluded.points, stats_json=excluded.stats_json, "
+        "recorded_at=excluded.recorded_at",
+        rows,
+    )
+
+
 def record_projection_history_many(conn: Database, rows: Iterable[Sequence]) -> None:
     """Append many observations at once.
 

@@ -121,6 +121,8 @@ class UsageSource(Source):
         snaps = self._snap_share(season)
         recorded_at = db.utcnow()
 
+        usage_rows: list[tuple] = []
+        actual_rows: list[tuple] = []
         for row in opportunity:
             stats["rows"] += 1
             gsis = row.get("player_id")
@@ -201,26 +203,14 @@ class UsageSource(Source):
             team = normalize_team(row.get("posteam"))
             snap_pct = snaps.get((key, int(week)))
 
-            self.conn.execute(
-                "INSERT INTO player_week_usage(player_key, season, week, team, "
-                "pass_attempts, rush_attempts, targets, receptions, target_share, "
-                "rush_share, snap_pct, air_yards, points_actual, points_expected, "
-                "recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-                "ON CONFLICT(player_key, season, week) DO UPDATE SET "
-                "points_actual=excluded.points_actual, "
-                "points_expected=excluded.points_expected, "
-                "targets=excluded.targets, receptions=excluded.receptions, "
-                "rush_attempts=excluded.rush_attempts, snap_pct=excluded.snap_pct, "
-                "air_yards=excluded.air_yards, recorded_at=excluded.recorded_at",
-                (
-                    key, season, int(week), team,
-                    _f(row.get("pass_attempt")), _f(row.get("rush_attempt")),
-                    _f(row.get("rec_attempt")), _f(row.get("receptions")),
-                    None, None, snap_pct, _f(row.get("rec_air_yards")),
-                    scoring.score(actual_line), scoring.score(expected_line),
-                    recorded_at,
-                ),
-            )
+            usage_rows.append((
+                key, season, int(week), team,
+                _f(row.get("pass_attempt")), _f(row.get("rush_attempt")),
+                _f(row.get("rec_attempt")), _f(row.get("receptions")),
+                None, None, snap_pct, _f(row.get("rec_air_yards")),
+                scoring.score(actual_line), scoring.score(expected_line),
+                recorded_at,
+            ))
             if stats["stored"] == 0:
                 # Once per sync, on the first real row, so the declaration is
                 # checked against the line actually built rather than a list
@@ -228,12 +218,28 @@ class UsageSource(Source):
                 _warn_scoring_gaps(scoring, actual_line)
             # The same number is the ground truth every projection is graded
             # against, so record it where the accuracy model looks for it.
-            db.record_actual(
-                self.conn, key, season, int(week),
-                scoring.score(actual_line), None, source="nflverse",
-            )
+            actual_rows.append((
+                key, season, int(week), scoring.score(actual_line), None,
+                "nflverse", recorded_at,
+            ))
             stats["stored"] += 1
 
+        # Both in one statement each: a row at a time is a round trip at a
+        # time, and this loop runs over every player-week of the season.
+        self.conn.executemany(
+            "INSERT INTO player_week_usage(player_key, season, week, team, "
+            "pass_attempts, rush_attempts, targets, receptions, target_share, "
+            "rush_share, snap_pct, air_yards, points_actual, points_expected, "
+            "recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(player_key, season, week) DO UPDATE SET "
+            "points_actual=excluded.points_actual, "
+            "points_expected=excluded.points_expected, "
+            "targets=excluded.targets, receptions=excluded.receptions, "
+            "rush_attempts=excluded.rush_attempts, snap_pct=excluded.snap_pct, "
+            "air_yards=excluded.air_yards, recorded_at=excluded.recorded_at",
+            usage_rows,
+        )
+        db.record_actuals_many(self.conn, actual_rows)
         self.conn.commit()
         self._fill_shares(season)
         return stats
