@@ -255,24 +255,29 @@ def blend_all(
 
     computed_at = db.utcnow()
     written = 0
+    blended_rows: list[tuple] = []
     for player_key, per_source in grouped.items():
         blend = blend_player(
             player_key, per_source, weights, positions.get(player_key), band_sd,
             week=week,
         )
-        conn.execute(
-            "INSERT INTO projections_blended(player_key, season, week, points, floor, "
-            "ceiling, stdev, n_sources, detail_json, computed_at) VALUES (?,?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(player_key, season, week) DO UPDATE SET points=excluded.points, "
-            "floor=excluded.floor, ceiling=excluded.ceiling, stdev=excluded.stdev, "
-            "n_sources=excluded.n_sources, detail_json=excluded.detail_json, "
-            "computed_at=excluded.computed_at",
-            (
-                player_key, season, week, blend.points, blend.floor, blend.ceiling,
-                blend.stdev, blend.n_sources, json.dumps(blend.detail), computed_at,
-            ),
-        )
+        blended_rows.append((
+            player_key, season, week, blend.points, blend.floor, blend.ceiling,
+            blend.stdev, blend.n_sources, json.dumps(blend.detail), computed_at,
+        ))
         written += 1
+
+    # One statement for every player: this writes a row per player per period,
+    # and a round trip each is the shape that cost sync its job timeout.
+    conn.executemany(
+        "INSERT INTO projections_blended(player_key, season, week, points, floor, "
+        "ceiling, stdev, n_sources, detail_json, computed_at) VALUES (?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(player_key, season, week) DO UPDATE SET points=excluded.points, "
+        "floor=excluded.floor, ceiling=excluded.ceiling, stdev=excluded.stdev, "
+        "n_sources=excluded.n_sources, detail_json=excluded.detail_json, "
+        "computed_at=excluded.computed_at",
+        blended_rows,
+    )
     conn.commit()
     return written
 
