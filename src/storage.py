@@ -24,7 +24,7 @@ import re
 import sqlite3
 from pathlib import Path
 from typing import Any, TypeGuard
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 
 log = logging.getLogger(__name__)
 
@@ -394,6 +394,39 @@ class Database:
             cursor = self._conn.cursor()
             cursor.execute(translated, params or ())
             return Cursor(cursor, self.dialect)
+
+    def executemany(self, sql: str, rows: Iterable[Sequence]) -> None:
+        """Run one statement over many rows, paying the network once.
+
+        The hot loops in `fcc sync` wrote a row per statement, and a round trip
+        to the hosted database measured 20ms - so 2,530 ADP rows were 50
+        seconds of waiting, several times over. That is how sync came to
+        overrun a 20-minute job timeout and cancel two morning runs.
+
+        psycopg 3 pipelines executemany, so the rows cost one round trip rather
+        than one each; sqlite3 has always had it. An empty sequence is a no-op,
+        because an empty source is a normal day and not a failure.
+        """
+        materialised = list(rows)
+        if not materialised:
+            return
+
+        if self.dialect == "sqlite":
+            self._conn.executemany(sql, materialised)
+            return
+
+        translated = to_postgres_sql(sql)
+        try:
+            with self._conn.cursor() as cursor:
+                cursor.executemany(translated, materialised)
+        except Exception as exc:
+            if not self._is_disconnect(exc) or not self._revive():
+                # Same reasoning as execute(): a failed statement aborts the
+                # transaction, and every later query then fails about THAT.
+                self._safe_rollback()
+                raise
+            with self._conn.cursor() as cursor:
+                cursor.executemany(translated, materialised)
 
     def _safe_rollback(self) -> None:
         try:
