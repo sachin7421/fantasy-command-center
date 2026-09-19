@@ -1,6 +1,6 @@
 # Progress
 
-Resume point for any future session. **Updated 2026-09-17.** The draft happened on
+Resume point for any future session. **Updated 2026-09-19.** The draft happened on
 8 Sep; the project is in **season mode**.
 
 Run `python tools/gate.py` first. The figures below were true when this was written
@@ -9,7 +9,7 @@ and are not maintained by anything - the gate's output is.
 ```
 lint         ok      0.1s
 types        ok      0.7s
-tests        ok     37.8s      594 passed, 1 skipped
+tests        ok     37.7s      623 passed, 1 skipped
 degradation  ok      0.3s
 yahoo        ok      0.1s
 dead code    ok      0.5s
@@ -98,6 +98,17 @@ request. Rotate once Fantasy access works.
 - **Waivers from a pasted wire** (`7969f34`, dashboard in the next commit) - plus
   three report fixes: free agents no longer get FAAB bids, no invented "0%
   rostered", handcuffs only count if on the wire.
+- **The morning run was dead for two days** (18-19 Sep) - `fcc sync` overran the
+  20-minute job timeout, so the injury monitor and everything after it never ran,
+  and the orphan's locks took the scope check down with it. Timeout raised to 45
+  (`e5e3d49`), the scope check now answers without a database (`5e0c1eb`), and
+  sync says where its time goes (`775084b`).
+- **sync: 925s -> 37s**, measured against the live database on 19 Sep. It wrote a
+  row per statement over a 20ms link; the hot loops now batch through
+  `Database.executemany`, which psycopg 3 pipelines. players 392.7s -> 2.5s,
+  season proj 207.4s -> 1.1s, adp 88.9s -> 0.5s, blending 78.8s -> 0.9s. Same
+  counts, same rows, ids still merged (`e8e5d81`, `23dcffc`, `2ae2e8f`, `a737ca3`).
+  `sync-usage` is 1m26s.
 - Recap no longer blames you for swaps you could not have made (`d88e9ae`).
 
 ## Open - needs the user
@@ -141,3 +152,8 @@ Written down so no future session repeats them as fact:
   in-sample. The backtest covers one season of one source.
 - League settings in `config.yaml` were transcribed by hand from the Yahoo settings
   page, not read from the API.
+- **Two different players can share a canonical key.** `make_player_key` is
+  name+position, so the two Rodney Smiths (both RB, both free agents) are one row
+  and the second overwrites the first's Yahoo and Sleeper ids - which is why sync
+  reports 1,604 players carrying a Yahoo id and the table holds 1,603. Predates
+  the batching work and survives it unchanged; neither is currently rostered.
