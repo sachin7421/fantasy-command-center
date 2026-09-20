@@ -121,3 +121,42 @@ def test_one_table_failing_does_not_abandon_the_rest():
 
     conn = _PartlyBroken(["locked_down", "my_roster"])
     assert schema.enforce_rls(conn) == ["my_roster"]
+
+
+# --- the wiring, not just the function ---------------------------------------
+#
+# METHOD.md 3.2: a green check is a claim. Deleting `enforce_rls(conn)` from
+# BOTH call sites in schema.apply left every test above passing, because they
+# all call enforce_rls directly. The function was covered; the thing that makes
+# it run on every schema apply - which is the entire mechanism - was not.
+
+
+def _apply_and_record(monkeypatch, tmp_path, existing: bool) -> list[str]:
+    """Run schema.apply against a sqlite database, recording enforce_rls calls."""
+    from src import db
+
+    called: list[str] = []
+    monkeypatch.setattr(
+        schema, "enforce_rls", lambda conn: called.append("enforced") or []
+    )
+    path = tmp_path / ("existing.db" if existing else "fresh.db")
+    if existing:
+        # A database that already has the schema takes the other branch.
+        db.init_db(path, force_sqlite=True).close()
+        called.clear()
+    conn = db.init_db(path, force_sqlite=True)
+    conn.close()
+    return called
+
+
+def test_a_brand_new_database_has_rls_enforced(monkeypatch, tmp_path):
+    """The case that most needs it: the baseline creates the tables and
+    nothing else would ever secure them."""
+    assert _apply_and_record(monkeypatch, tmp_path, existing=False) == ["enforced"]
+
+
+def test_an_existing_database_has_rls_enforced_on_every_apply(monkeypatch, tmp_path):
+    """New tables arrive through the baseline on an existing database, so the
+    second path has to secure them too - a migration only fixes the tables it
+    names."""
+    assert _apply_and_record(monkeypatch, tmp_path, existing=True) == ["enforced"]
