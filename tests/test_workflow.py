@@ -19,17 +19,30 @@ def _text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_every_scheduled_cron_selects_a_job_explicitly():
+def test_the_workflow_asks_the_app_which_job_to_run():
+    """The bash `case` that repeated every cron is gone.
+
+    It drifted exactly once and that was enough: the Sunday cron moved to
+    10:30 ET and the case kept matching 09:00, so Sunday would have run the
+    default job. src/schedule.py is the one list now, and
+    tests/test_schedule.py checks the workflow's crons against it.
+    """
     text = _text()
-    scheduled = set(re.findall(r'-\s*cron:\s*"([^"]+)"', text))
-    handled = set(re.findall(r'^\s*"([^"]+)"\)\s*echo "job=', text, re.M))
-    assert scheduled, "no crons found - the pattern no longer matches the file"
-    assert scheduled <= handled, (
-        f"crons with no case arm fall through to the default job: "
-        f"{sorted(scheduled - handled)}"
-    )
-    assert handled <= scheduled, (
-        f"case arms for crons that never fire: {sorted(handled - scheduled)}"
+    assert "fcc.py which-job" in text
+    # Not "no echo job=" - the step legitimately writes the chosen job out.
+    # What must never return is a cron literal deciding a job here.
+    arms = re.findall(r'"\d+ \d+ \* \* [\d*]+"\s*\)', text)
+    assert not arms, f"a hand-maintained cron->job list is back: {arms}"
+
+
+def test_every_run_ends_by_catching_up():
+    """A dropped scheduled slot is invisible unless something looks for it."""
+    text = _text()
+    assert "fcc.py catchup" in text
+    catchup = text[text.rfind("- name:", 0, text.index("fcc.py catchup")):]
+    assert "always()" in catchup.split("run:")[0], (
+        "catch-up must run even when the job above failed - that is when a "
+        "missed slot most needs reporting"
     )
 
 

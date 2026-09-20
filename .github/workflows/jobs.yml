@@ -70,17 +70,16 @@ jobs:
 
       - name: Decide which job to run
         id: pick
+        # Asked of the app rather than repeated here. This step used to hold a
+        # copy of every cron, and it drifted: the Sunday run moved to 10:30 ET
+        # and the copy kept matching 09:00, so Sunday would have run the wrong
+        # job. src/schedule.py is the one list.
         run: |
-          case "${{ github.event.schedule }}" in
-            "0 11 * * 2") echo "job=waivers"  >> "$GITHUB_OUTPUT" ;;
-            "0 12 * * *") echo "job=injuries" >> "$GITHUB_OUTPUT" ;;
-            "0 14 * * 4") echo "job=lineup"   >> "$GITHUB_OUTPUT" ;;
-            "30 14 * * 0") echo "job=lineup"  >> "$GITHUB_OUTPUT" ;;
-            "0 11 * * 3") echo "job=byes"     >> "$GITHUB_OUTPUT" ;;
-            "0 12 * * 1") echo "job=recap"    >> "$GITHUB_OUTPUT" ;;
-            "0 11 * * 4") echo "job=reminders" >> "$GITHUB_OUTPUT" ;;
-            *)            echo "job=${{ github.event.inputs.job || 'daily' }}" >> "$GITHUB_OUTPUT" ;;
-          esac
+          CHOSEN="${{ github.event.inputs.job }}"
+          if [ -z "$CHOSEN" ]; then
+            CHOSEN="$(python fcc.py which-job --cron "${{ github.event.schedule }}")"
+          fi
+          echo "job=$CHOSEN" >> "$GITHUB_OUTPUT"
 
       - name: Verify database is reachable
         run: python fcc.py doctor
@@ -129,6 +128,15 @@ jobs:
         env:
           YAHOO_CONSUMER_KEY: ${{ secrets.YAHOO_CLIENT_ID }}
         run: python fcc.py yahoo-scope
+
+      - name: Anything due today that did not run
+        # GitHub dropped a scheduled run entirely on 2026-09-20 and delivered
+        # another three hours late, so the Sunday lineup mail never went out
+        # and nothing noticed. Every run now ends by asking what was due and
+        # has not happened, runs it, and reports what it cannot recover.
+        # always(), because a failed job above is exactly when this matters.
+        if: always() && steps.pick.outputs.job != 'test-notify'
+        run: python fcc.py catchup
 
       - name: Upload logs on failure
         if: failure()

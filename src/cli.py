@@ -535,6 +535,87 @@ def _attach_pasted_wire(
     return None
 
 
+def run_scheduled_job(ctx: Context, job: str) -> int:
+    """Run one scheduled job as the runner would. Returns its exit code."""
+
+    from types import SimpleNamespace
+
+    return cmd_job(ctx, SimpleNamespace(
+        job=job, week=None, dry_run=False, budget=None, wire_file=[],
+    ))
+
+
+def catch_up(ctx: Context, now=None) -> int:
+    """Run whatever was due today and has not run; report what it cannot fix.
+
+    On Sunday 2026-09-20 GitHub delivered one scheduled run all day - the injury
+    monitor, three hours late - and the 14:30Z lineup cron never arrived. The
+    last recommendation before kickoff did not happen and nothing said so,
+    because an absence leaves nothing behind to check.
+
+    So every scheduled run ends here. A slot the scheduler dropped is picked up
+    by the next run that day instead of waiting a week, and a job that still
+    cannot run becomes a notification - which is the whole point, because
+    silence had been indistinguishable from a quiet week.
+    """
+    from src import schedule
+
+    missing = schedule.overdue(ctx.conn, now)
+    if not missing:
+        print("catch-up    : nothing overdue.")
+        return EXIT_OK
+
+    failures: list[tuple[str, str]] = []
+    attempted: set[str] = set()
+    for entry in missing:
+        if entry.job in attempted:
+            continue
+        attempted.add(entry.job)
+        due = entry.due_at.strftime("%H:%M") if entry.due_at else "today"
+        print(f"catch-up    : {entry.job} was due at {due}Z and has not run - running it")
+        code = run_scheduled_job(ctx, entry.job)
+        if code != EXIT_OK:
+            failures.append((entry.job, due))
+
+    if not failures:
+        return EXIT_OK
+
+    lines = [
+        f"{job} was due at {due}Z today and could not be run."
+        for job, due in failures
+    ]
+    lines.append("")
+    lines.append(
+        "The scheduled run did not happen and the catch-up could not "
+        "recover it, so nothing was sent for it."
+    )
+    ctx.notifier().send(Notification(
+        title=f"{len(failures)} scheduled job(s) did not run",
+        lines=lines,
+        job="catchup",
+        urgency="high",
+    ))
+    return EXIT_FAIL
+
+
+def cmd_catchup(ctx: Context, args) -> int:
+    """`fcc catchup`: see catch_up."""
+    return catch_up(ctx)
+
+
+def cmd_which_job(_ctx, args) -> int:
+    """`fcc which-job --cron "<cron>"`: what that schedule should run.
+
+    The workflow used to repeat every cron in a bash `case`, which drifted -
+    the Sunday cron moved and the case kept matching the old time, so Sunday
+    would have run the wrong job. One list now, in src/schedule.py.
+    """
+    from src import schedule
+
+    print(schedule.job_for_cron(args.cron or "") or "daily")
+    return EXIT_OK
+
+
 def cmd_doctor(ctx: Context, args) -> int:
     """Report on every data source and on configuration completeness."""
     from src.sources.sleeper import SleeperSource
@@ -2303,6 +2384,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("doctor", help="check sources, config and stored data")
     sub.add_parser("yahoo-scope", help="ask Yahoo whether Fantasy Sports is attached; notify when it is")
+    sub.add_parser("catchup", help="run whatever was due today and has not run")
+    p_which = sub.add_parser("which-job", help="the job a cron schedule should run")
+    p_which.add_argument("--cron", default="", help="the cron string that fired")
 
     p_setup = sub.add_parser("setup", help="one-time Yahoo credential setup")
     p_setup.add_argument("--env-dir", default=".")
@@ -2441,6 +2525,8 @@ def build_parser() -> argparse.ArgumentParser:
 HANDLERS = {
     "doctor": cmd_doctor,
     "yahoo-scope": cmd_yahoo_scope,
+    "catchup": cmd_catchup,
+    "which-job": cmd_which_job,
     "sync": cmd_sync,
     "sync-league": cmd_sync_league,
     "sync-settings": cmd_sync_settings,
@@ -2506,6 +2592,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "setup":
         return cmd_setup(None, args)
+
+    # Asked before the database is opened: the workflow calls this to decide
+    # which job a cron should run, and a database hiccup must not leave the
+    # runner with no job name at all.
+    if args.command == "which-job":
+        return cmd_which_job(None, args)
 
     try:
         ctx = Context(args.config, args.db)
