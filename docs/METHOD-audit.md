@@ -44,11 +44,16 @@ by reading it.
 
 ## Open, in priority order
 
-1. **Nothing notices a job that did not run.** On 2026-09-20 the Sunday lineup
-   run never fired — one scheduled run happened all day, three hours late, and
-   it was the injury monitor. No lineup mail went out before kickoff and the
-   absence was invisible. This is METHOD's "static passes cannot see an
-   absence", and it is the most valuable thing left on this list.
+1. ~~**Nothing notices a job that did not run.**~~ **Closed 2026-09-20**
+   (`30a8f99`). Every run now ends with `fcc catchup`, and a job it cannot
+   recover becomes a notification. The original diagnosis was wrong in one
+   detail and worth recording: the Sunday lineup run was not dropped, it
+   arrived 3h05m late — 35 minutes after kickoff. Measured over twenty runs,
+   GitHub's scheduler is late every time, 2–4 hours typically and 5h30m at
+   worst. **Still open, and now separable: the cron times assume punctuality
+   they never get.** Moving the lineup slots about three hours earlier would
+   put them before kickoff even when late, and must keep the Thursday-to-Sunday
+   gap above the 72-hour dedup window. That is a decision, not a fix.
 2. **No backup, and nothing that would read its failures.** Supabase holds
    every projection, actual and recommendation this project has produced. There
    is no export, scheduled or otherwise.
