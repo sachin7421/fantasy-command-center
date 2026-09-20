@@ -48,6 +48,29 @@ from the spec, and continue.
 **F. Track progress in `PROGRESS.md`** so any future session can resume exactly where
 we left off.
 
+**G. Pause triggers — stop and ask, do not finish the thought first.** Autonomous
+does not mean unsupervised on what is hard to undo. State what triggered it, what you
+were about to do, what you recommend and the alternatives, then wait.
+
+- **Money.** A new paid service, a tier upgrade, a spend cap raised, billing switched
+  on for something free. Supabase image transformations were enabled on a sister
+  project without asking; that is the shape of this.
+- **Anything that reaches a real person or a third party.** Sending email rather than
+  drafting it, anything posted publicly, any write to Yahoo.
+- **Anything the Yahoo agreement touches.** Persisting a Yahoo response, a new
+  identifier written down, changing what `tools/check_yahoo_persistence.py` allows.
+- **Credentials.** Rotating, deleting or regenerating one; adding a repository secret.
+- **A decision not already specified** — architectural or product. Surface it with a
+  recommendation and the trade-offs rather than guessing.
+- **A conflict between two documents**, or between a document and an instruction. Ask
+  which is authoritative.
+- **The same failure twice.** Do not loop; report.
+
+**H. A check is a claim until you have watched it fail.** Write the violation, run it,
+see red. `python tools/mutate.py` does this for ten known-dangerous edits and must stay
+at 10/10. Absent evidence is NOT PROVEN and fails — a check that examined an empty set
+has proved nothing.
+
 ---
 
 # How these are enforced here
@@ -55,7 +78,8 @@ we left off.
 Standards 2, 4, 5 and 6 are not left to memory — they are gates:
 
 ```
-python tools/gate.py          # all six checks, ~17s
+python tools/gate.py          # all seven checks, ~45s
+python tools/mutate.py        # do the checks actually catch anything? ~4min
 git config core.hooksPath .githooks   # once per clone; runs the gate on push
 ```
 
@@ -66,11 +90,18 @@ git config core.hooksPath .githooks   # once per clone; runs the gate on push
 | 5. Full type hints | mypy gates at zero errors; `continue-on-error` is off. |
 | 6. Regression test per bug | `tests/test_invariants.py` — after fixing a bug, assert the property that was false while it was broken. |
 | — behaviour drift | `tests/test_golden.py` — every number the model produces is frozen in `tests/golden/*.json`. |
+| — Yahoo persistence | `tools/check_yahoo_persistence.py` — no INSERT or UPDATE against a dropped Yahoo table, no Yahoo payload cached. |
+| — the checks themselves | `tools/mutate.py` — ten deliberate defects, each of which must turn something red. A check nobody checks quietly stops working. |
+| — a check that read nothing | Both checkers report **NOT PROVEN** and fail when a target matches no file. "0 files, no problems found" was previously a pass. |
 
 See `CONTRIBUTING.md` for why each gate exists and which real bug motivated it.
 
-**Standard 3 has a live exception worth knowing:** Yahoo API access is not yet
-approved, so `yfpy` response shapes are modelled from documentation rather than
-observed. `src/league_bootstrap.py` holds settings transcribed by hand from the league
-settings page. This is the CSV-fallback path of protocol E, and it is labelled as a
-bootstrap, not a source of truth.
+**Standard 3 has a live exception worth knowing:** the Yahoo agreement was signed and
+countersigned on 2026-09-13 and the app is registered, but Yahoo has never attached the
+Fantasy Sports scope to it — `scope=fspt-r` is refused with `invalid_scope`, checked
+daily by `fcc yahoo-scope`. So no Yahoo response has ever been observed: `yfpy` shapes
+are modelled from documentation, and `src/league_bootstrap.py` holds settings
+transcribed by hand from the league settings page. That file is the LIVE scoring
+configuration, not a stale bootstrap — `config.yaml` has no scoring section — and
+`tests/test_league_rules.py` pins what it is worth. This is the fallback path of
+protocol E.
