@@ -82,12 +82,37 @@ def check_file(path: Path) -> list[str]:
     return problems
 
 
-def main(argv: list[str]) -> int:
-    targets = argv[1:] or ["src", "dashboard.py", "fcc.py"]
+#: A target that matches no file is the failure mode this floor exists for:
+#: the checker walks nothing, finds nothing, and reports success. A renamed
+#: directory or a wrong working directory in CI disables it silently and
+#: permanently - and it stays green, so nobody looks. Absent evidence is
+#: NOT PROVEN, which fails.
+def _files_or_not_proven(targets: list[str]) -> list[Path] | None:
     files: list[Path] = []
+    missed: list[str] = []
     for target in targets:
         path = Path(target)
-        files.extend(sorted(path.rglob("*.py")) if path.is_dir() else [path])
+        found = sorted(path.rglob("*.py")) if path.is_dir() else (
+            [path] if path.is_file() else []
+        )
+        if not found:
+            missed.append(target)
+        files.extend(found)
+    if missed or not files:
+        print(
+            "NOT PROVEN: nothing to check. "
+            + (f"These matched no Python file: {', '.join(missed)}. " if missed else "")
+            + "A check that reads nothing must not report success."
+        )
+        return None
+    return files
+
+
+def main(argv: list[str]) -> int:
+    targets = argv[1:] or ["src", "dashboard.py", "fcc.py"]
+    files = _files_or_not_proven(targets)
+    if files is None:
+        return 1
 
     problems = []
     for path in files:

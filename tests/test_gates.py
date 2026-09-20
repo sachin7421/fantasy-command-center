@@ -252,3 +252,64 @@ def test_no_degradation_describes_as_nothing(tmp_path):
 
     base.clear_degradations()
     assert base.describe_degradations() == []
+
+
+# --- a check that examined nothing must not report success -------------------
+#
+# METHOD.md 3.3/3.4: the commonest false green is a check passing over an empty
+# set. Both gate checkers walked a list of paths and reported "No undeclared
+# silent failures in 0 files" - exit 0, fully green, having read nothing. A
+# renamed directory, a wrong working directory in CI, or a typo'd argument
+# disables the check silently and permanently.
+
+
+def test_the_degradation_checker_fails_when_it_finds_no_files(tmp_path, capsys):
+    import tools.check_degradation as checker
+
+    code = checker.main(["check_degradation.py", str(tmp_path / "nothing-here")])
+    assert code != 0, "a checker that read no files reported success"
+    assert "NOT PROVEN" in capsys.readouterr().out
+
+
+def test_the_degradation_checker_fails_on_an_empty_directory(tmp_path, capsys):
+    import tools.check_degradation as checker
+
+    (tmp_path / "empty").mkdir()
+    assert checker.main(["check_degradation.py", str(tmp_path / "empty")]) != 0
+    assert "NOT PROVEN" in capsys.readouterr().out
+
+
+def test_the_persistence_checker_fails_when_it_finds_no_files(tmp_path, capsys):
+    import tools.check_yahoo_persistence as checker
+
+    assert checker.main(["check_yahoo_persistence.py", str(tmp_path / "gone")]) != 0
+    assert "NOT PROVEN" in capsys.readouterr().out
+
+
+def test_the_degradation_checker_still_passes_on_a_real_clean_file(tmp_path):
+    """The floor must not turn a genuine pass into a failure."""
+    import tools.check_degradation as checker
+
+    good = tmp_path / "fine.py"
+    good.write_text(
+        "try:\n    x = 1\nexcept Exception:\n    raise\n", encoding="utf-8"
+    )
+    assert checker.main(["check_degradation.py", str(good)]) == 0
+
+
+def test_the_dropped_table_derivation_has_a_floor():
+    """The list is derived from the migrations - and a glob that matches
+    nothing would make the comparison vacuously true."""
+    from pathlib import Path
+
+    migrations = list(Path("src/migrations").glob("*.sql"))
+    assert len(migrations) >= 3, f"only {len(migrations)} migrations found"
+    dropped = {
+        line.split()[-1].rstrip(";")
+        for sql in migrations
+        for line in sql.read_text(encoding="utf-8").splitlines()
+        if line.upper().startswith("DROP TABLE IF EXISTS")
+    }
+    assert len(dropped) >= 4, (
+        f"expected the four Yahoo tables dropped for compliance, derived {dropped}"
+    )
