@@ -1,20 +1,24 @@
 # Progress
 
-Resume point for any future session. **Updated 2026-09-19.** The draft happened on
+Resume point for any future session. **Updated 2026-10-02.** The draft happened on
 8 Sep; the project is in **season mode**.
 
 Run `python tools/gate.py` first. The figures below were true when this was written
 and are not maintained by anything - the gate's output is.
 
 ```
-lint         ok      0.1s
-types        ok      0.7s
-tests        ok     37.7s      623 passed, 1 skipped
-degradation  ok      0.3s
+lint         ok      0.4s
+types        ok      1.3s
+tests        ok     45.5s      659 passed, 1 skipped
+degradation  ok      0.4s
 yahoo        ok      0.1s
-dead code    ok      0.5s
-security     ok      1.4s
+dead code    ok      0.6s
+security     ok      1.5s
 ```
+
+`python tools/mutate.py` (not in the gate, ~4 min): **10/10 mutations caught, tree
+restored**, run 21 Sep. On this machine `python` is not on PATH - use
+`.venv/Scripts/python.exe`.
 
 If this file disagrees with `git log`, the log is right. This file went three weeks
 and ~40 commits stale once (26 Aug - 16 Sep); update it in the same session as the work.
@@ -60,7 +64,7 @@ request. Rotate once Fantasy access works.
 |---|---|---|
 | Storage / schema | **Done** | SQLite + Postgres, numbered migrations; RLS enforced on every apply |
 | ID mapping | **Done** | Yahoo IDs memory-only, rebuilt by name each run |
-| Scoring engine | **Done, acceptance test blocked** | Hand-computed tests; rules in `config.yaml` |
+| Scoring engine | **Done, acceptance test blocked** | Hand-computed tests; rules in `src/league_bootstrap.py`, pinned by `tests/test_league_rules.py` |
 | Projections + blending | **Done** | Backtested: r 0.67, RMSE 5.63 over 2,205 2025 player-weeks |
 | Confidence bands | **Done** | `src/analytics/uncertainty.py`, measured sigma per position |
 | VORP / draft board / draft assistant | **Done, used** | Draft night 8 Sep |
@@ -111,17 +115,63 @@ request. Rotate once Fantasy access works.
   `sync-usage` is 1m26s.
 - Recap no longer blames you for swaps you could not have made (`d88e9ae`).
 
+## Done 20 Sep - the METHOD audit (`docs/METHOD-audit.md`)
+
+Found by breaking the code on purpose, not by reading it.
+
+- **A check that read nothing reported success** (`07efa65`) - both gate checkers
+  exited 0 over an empty file set. Absent evidence is now NOT PROVEN and fails.
+- **Deleting RLS enforcement left every RLS test green** (`af32ba4`) - the function
+  was tested, the wiring in `schema.apply` was not. Both call sites now asserted.
+- **The league's scoring rules were pinned by nothing** (`16bee1e`) - zeroing the
+  interception override left scoring and golden suites green.
+  `tests/test_league_rules.py` now asserts them through the real settings.
+- **`tools/mutate.py`** (`5bb98d6`) - ten deliberate defects, each must turn
+  something red. Refuses a non-unique target; restores byte for byte.
+- **`CLAUDE.md` gained pause triggers** (`ff14ced`) and now says the truth about
+  Yahoo: agreement countersigned 13 Sep, scope never attached.
+- **`fcc catchup`** (`30a8f99`) - the Sunday 20 Sep lineup run arrived 3h05m late,
+  35 minutes after kickoff. GitHub cron is late every time (2-4h typical, 5h30m
+  worst over twenty runs). Every run now ends by running what was due and has
+  not run; a job that still cannot run becomes a notification. `src/schedule.py`
+  is the only copy of the schedule; the workflow asks `fcc which-job`.
+
 ## Open - needs the user
 
 - [ ] **Yahoo support: attach the Fantasy Sports scope** to app `hnkXi0Gh`. Emailed
-      twice 15 Sep, no reply. A third email (the `invalid_scope` evidence, cc
-      fantasyapiapplications@yahoosports.com) is DRAFTED in Gmail, not sent. When the
-      scope arrives the daily check notifies; then consent in a terminal.
+      twice 15 Sep; a third (the `invalid_scope` evidence, to
+      fantasyapiapplications@ and fantasyapideveloper@yahoosports.com) was SENT 19 Sep;
+      a fourth, short chaser sent 2 Oct. No reply to any. Still `invalid_scope` on
+      2 Oct. When the scope arrives the daily check notifies; then consent in a terminal.
+      **2 Oct finding - email is the wrong lever.** The create-app form on this account
+      now offers "Fantasy Sports - Read" (seen 2 Oct), i.e. the ACCOUNT is enabled. Per
+      yfpy issue #84 (appdesigngeeks 26 Sep, Kemper60 1 Oct), an app created before
+      the account was enabled can never gain the scope: create a NEW app with the box
+      ticked, submit its Client ID at sports.yahoo.com/developer/application-confirmation/
+      (the step the DocuSign completion email of 12 Sep asks for), swap the key and
+      secret here and in the GitHub secrets, then a fresh consent.
+      **Done 2 Oct:** new app `eenJqhS1` created (Client ID begins `dj0yJmk9Q2NDa`),
+      key and secret in `.env`, `fcc yahoo-scope` -> `attached`, consent completed
+      (a token exists), confirmation form submitted ~15:40 ET.
+      **Still failing 2 Oct 15:42:** every data call returns 403 "This application
+      is not authorized to perform this action" - Yahoo has not yet enabled the new
+      Client ID. Others waited from zero to seven days with no email. PROBE WITH
+      `fcc doctor` (a real call); `yahoo-scope` saying `attached` proves nothing more.
+      Yahoo's auto-reply to the form ("received your application ... review typically
+      takes 1-2 weeks") arrived 2 Oct - the same text as 8 and 13 Sep, so it carries
+      no information. If still 403 on 9 Oct, email fantasyapiapplications@yahoosports.com
+      with the new Client ID and the 403 string.
+      Unknown: whether the GitHub secret `YAHOO_CLIENT_ID` was updated to the new app.
+      Once a call succeeds: Protocol D acceptance test, then delete old app `hnkXi0Gh`
+      (which retires the exposed Client Secret).
 - [ ] **Was the exposed Supabase data read?** Nine tables were open until 15 Sep.
       Answerable from the PostgREST logs; not yet checked.
 - [ ] **Email untested.** `test-notify` sends a real email; last recorded run failed.
 - [ ] **Repo is public** with a proprietary LICENSE.
 - [ ] Rotate the Yahoo Client Secret, **after** Fantasy access works (see above).
+- [ ] **Move the lineup crons ~3 hours earlier?** They assume a punctuality GitHub
+      never delivers. Must keep the Thursday-to-Sunday gap above the 72-hour dedup
+      window. A decision, not a fix (`docs/METHOD-audit.md` open item 1).
 
 ## Open - code
 
@@ -133,8 +183,13 @@ request. Rotate once Fantasy access works.
 - [ ] `trades` job: 2-for-1 proposals, and wiring to the buy-low / sell-high signal
       in `src/analytics/regression.py` (not referenced by `src/season/trades.py`).
 - [ ] Protocol D acceptance test, the moment Yahoo returns data.
-- [ ] `mypy tests` reports one error (`tests/test_gates.py:119`, `_write` redefined).
-      The gate type-checks `src`, `dashboard.py` and `fcc.py` only.
+- [ ] From the METHOD audit, in its priority order: **no backup** of Supabase;
+      **no post-deploy check** against the real dashboard URL; the **weekly flow has
+      never been walked end to end**; this file's numbers are hand-maintained (a
+      `--counts` flag would derive them).
+- [ ] `mypy tests` reports **five** errors in three files (21 Sep): `test_gates.py:119`
+      `_write` redefined, `test_rls.py:140` uses the value of `list.append`, and three
+      unused `type: ignore` in `test_yahoo_scope.py` (60, 225, 274). The gate type-checks `src`, `dashboard.py` and `fcc.py` only.
 
 ## Known-weak claims
 
@@ -150,8 +205,9 @@ Written down so no future session repeats them as fact:
   fumbles** (nflverse publishes only lost ones). Named in `KNOWN_MISSING_STATS`.
 - Model constants in `src/analytics/` are fitted on 22,175 player-weeks (2022-25),
   in-sample. The backtest covers one season of one source.
-- League settings in `config.yaml` were transcribed by hand from the Yahoo settings
-  page, not read from the API.
+- League settings in `src/league_bootstrap.py` were transcribed by hand from the Yahoo
+  settings page, not read from the API. That file is the LIVE scoring configuration
+  (`config.yaml` has no scoring section); `tests/test_league_rules.py` pins it.
 - **Two different players can share a canonical key.** `make_player_key` is
   name+position, so the two Rodney Smiths (both RB, both free agents) are one row
   and the second overwrites the first's Yahoo and Sleeper ids - which is why sync
