@@ -161,7 +161,7 @@ Found by breaking the code on purpose, not by reading it.
       takes 1-2 weeks") arrived 2 Oct - the same text as 8 and 13 Sep, so it carries
       no information. If still 403 on 9 Oct, email fantasyapiapplications@yahoosports.com
       with the new Client ID and the 403 string.
-      Unknown: whether the GitHub secret `YAHOO_CLIENT_ID` was updated to the new app.
+      GitHub secret `YAHOO_CLIENT_ID` updated to the new app 2 Oct 19:50 UTC.
       Once a call succeeds: Protocol D acceptance test, then delete old app `hnkXi0Gh`
       (which retires the exposed Client Secret).
 - [ ] **Was the exposed Supabase data read?** Nine tables were open until 15 Sep.
