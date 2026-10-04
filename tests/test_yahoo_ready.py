@@ -55,6 +55,65 @@ def test_a_job_falls_back_to_the_typed_roster_instead_of_signing_in(ctx, monkeyp
     assert ctx.league_snapshot(2026, 3) is sentinel
 
 
+class _Refusing:
+    """A Yahoo client whose every data call is refused at the app level.
+
+    The state of 2-4 Oct: a new app, consent completed, a token stored, and
+    every endpoint answering 403 "This application is not authorized to
+    perform this action" until Yahoo enables the Client ID.
+    """
+
+    def _refuse(self, *a, **k):
+        from yfpy.exceptions import YahooFantasySportsDataNotFound
+
+        raise YahooFantasySportsDataNotFound(
+            'Attempt to retrieve data at URL https://fantasysports.yahooapis.com/'
+            'fantasy/v2/games;game_codes=nfl;seasons=2026?format=json failed with '
+            'error: "This application is not authorized to perform this action."'
+        )
+
+    collect_snapshot = _refuse
+    new_snapshot = _refuse
+
+
+def test_a_refused_yahoo_call_falls_back_to_the_typed_roster(ctx, monkeypatch, capsys):
+    """Found 4 Oct: `fcc lineup` died on the traceback above instead of using
+    data/roster.txt, which it had used happily while there was no token."""
+    monkeypatch.setenv("YAHOO_ACCESS_TOKEN_JSON", '{"access_token": "x"}')
+    monkeypatch.setattr(cli.Context, "yahoo", property(lambda self: _Refusing()))
+    sentinel = object()
+    monkeypatch.setattr(cli.Context, "manual_snapshot", lambda self, s, w: sentinel)
+
+    assert ctx.league_snapshot(2026, 5) is sentinel
+    out = capsys.readouterr().out
+    assert "not authorized" in out
+    assert "roster" in out.lower()
+
+
+def test_a_refused_yahoo_call_with_no_typed_roster_is_still_an_error(ctx, monkeypatch):
+    """No roster from anywhere is a failure, not a quiet week."""
+    from yfpy.exceptions import YahooFantasySportsDataNotFound
+
+    monkeypatch.setenv("YAHOO_ACCESS_TOKEN_JSON", '{"access_token": "x"}')
+    monkeypatch.setattr(cli.Context, "yahoo", property(lambda self: _Refusing()))
+    monkeypatch.setattr(cli.Context, "manual_snapshot", lambda self, s, w: None)
+
+    with pytest.raises(YahooFantasySportsDataNotFound):
+        ctx.league_snapshot(2026, 5)
+
+
+def test_sync_reports_a_refused_league_pull_and_finishes(ctx, monkeypatch, capsys):
+    """Same 4 Oct state: `fcc sync` did every data phase, then died on the
+    Yahoo traceback before printing its timings or exiting 0."""
+    monkeypatch.setenv("YAHOO_ACCESS_TOKEN_JSON", '{"access_token": "x"}')
+    monkeypatch.setattr(cli.Context, "yahoo", property(lambda self: _Refusing()))
+
+    cli._sync_yahoo_if_ready(ctx, 2026, 5, force=False)
+    out = capsys.readouterr().out
+    assert "yahoo" in out
+    assert "not authorized" in out
+
+
 def test_playoff_odds_do_not_sign_in_either(ctx):
     assert ctx.playoff_snapshot(2026, 3, 14) is None
 

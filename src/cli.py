@@ -135,6 +135,13 @@ class Context:
         anyway - a stale roster produces confident advice about players who are
         no longer on it, which is worse than an error.
 
+        The typed-in roster (`manual_snapshot`) is a different matter: it is
+        the user's own typing, not Yahoo's data, so when Yahoo refuses the
+        call the job falls back to it - loudly - exactly as it does when
+        there is no token. Found 4 Oct: a new app with a token but no data
+        access made every job die on a 403 traceback that the token-less
+        state had handled for weeks.
+
         Memoised per Context, so `doctor`, the job itself and any follow-on
         step share one fetch instead of paying for three.
         """
@@ -143,7 +150,17 @@ class Context:
         cached = getattr(self, "_snapshot", None)
         if cached is not None and cached.week == int(week):
             return cached
-        snapshot = self.yahoo.collect_snapshot(season, week)
+        try:
+            snapshot = self.yahoo.collect_snapshot(season, week)
+        except Exception as exc:
+            log.warning("Yahoo league fetch failed: %s", exc)
+            manual = self.manual_snapshot(season, week)
+            if manual is None:
+                raise
+            print(f"  yahoo: call refused - {exc}")
+            print("  Using the typed-in roster (data/roster.txt) instead; waivers,")
+            print("  rivals and standings are unavailable this run.")
+            return manual
         failed: list[str] = []
         teams = list(snapshot.budgets)
         for team_id in teams:
@@ -884,10 +901,17 @@ def _sync_yahoo_if_ready(ctx: Context, season: int, week: int, force: bool) -> N
     """The league half of `fcc sync`, only when it cannot start a sign-in.
 
     Skipped rather than failed, so `fcc sync` keeps working before access is
-    granted - which is exactly the state this project has been in.
+    granted - which is exactly the state this project has been in. A call
+    Yahoo refuses outright (a token, but the app not yet enabled - 4 Oct) is
+    reported the same way: the data half of sync has already succeeded and
+    must not be thrown away by a traceback at the end.
     """
     if ctx.yahoo_ready():
-        sync_yahoo_league(ctx, season, week, force=force)
+        try:
+            sync_yahoo_league(ctx, season, week, force=force)
+        except Exception as exc:
+            log.warning("Yahoo league sync failed: %s", exc)
+            print(f"  yahoo       : refused ({exc})")
     elif ctx.yahoo_configured():
         print("  yahoo       : skipped (credentials, but no consent token yet;")
         print("                run `fcc verify-settings` in a terminal once Yahoo")
