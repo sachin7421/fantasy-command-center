@@ -211,13 +211,35 @@ def test_doctor_falls_back_to_the_old_answer_when_the_check_cannot_tell(tmp_path
 # --- the morning announcement ----------------------------------------------------
 
 
+#: Real, 2-5 Oct 2026: new app, scope attached, consent done, every call refused.
+REFUSED_403 = (
+    'Attempt to retrieve data at URL https://fantasysports.yahooapis.com/'
+    'fantasy/v2/games;game_codes=nfl;seasons=2026?format=json failed with '
+    'error: "This application is not authorized to perform this action."'
+)
+
+
 class _Notifier:
-    def __init__(self):
+    def __init__(self, already=False):
         self.sent = []
+        self.already = already
+
+    def ever_sent(self, notification):
+        return self.already
 
     def send(self, notification, force=False):
         self.sent.append(notification)
         return {"sent": True}
+
+
+class _Refusing:
+    def fetch_teams(self, force=False):
+        raise RuntimeError(REFUSED_403)
+
+
+class _Working:
+    def fetch_teams(self, force=False):
+        return []
 
 
 def _announce_ctx(tmp_path, notifier):
@@ -251,8 +273,41 @@ def test_announce_tells_you_the_day_it_arrives(tmp_path, monkeypatch):
     assert "Fantasy Sports" in notifier.sent[0].title
 
 
-def test_announce_stops_once_a_token_exists(tmp_path, monkeypatch):
-    """After consent, the reminder has done its job; `doctor` takes over."""
+def test_announce_does_not_promise_that_consent_is_the_last_step(tmp_path, monkeypatch):
+    """It said "One step left". Consent was done on 2 Oct and every data call
+    was still refused for days: Yahoo enables the Client ID separately."""
+    from src import cli, yahoo_client
+
+    monkeypatch.setattr(
+        yahoo_client, "probe_fantasy_scope",
+        lambda client_id, **kw: yahoo_client.ScopeCheck("attached", ""),
+    )
+    notifier = _Notifier()
+    cli.announce_yahoo_scope(_announce_ctx(tmp_path, notifier))
+    text = notifier.sent[0].text()
+    assert "One step left" not in text
+    assert "fcc verify-settings" in text
+    assert "fcc doctor" in text
+
+
+def test_announce_is_sent_once_ever_not_once_per_dedup_window(tmp_path, monkeypatch):
+    """Sent from the laptop on Fri 2 Oct and again from GitHub on Mon 5 Oct:
+    the runner never has a token, and the 72-hour window had passed."""
+    from src import cli, yahoo_client
+
+    monkeypatch.setattr(
+        yahoo_client, "probe_fantasy_scope",
+        lambda client_id, **kw: yahoo_client.ScopeCheck("attached", ""),
+    )
+    notifier = _Notifier(already=True)
+    assert cli.announce_yahoo_scope(_announce_ctx(tmp_path, notifier)) == cli.EXIT_OK
+    assert notifier.sent == []
+
+
+def test_announce_with_a_token_reports_a_refused_call_and_sends_nothing(
+    tmp_path, monkeypatch, capsys
+):
+    """With a token the scope is old news; a real data call is the test."""
     from src import cli, yahoo_client
 
     monkeypatch.setattr(
@@ -261,8 +316,46 @@ def test_announce_stops_once_a_token_exists(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("YAHOO_ACCESS_TOKEN_JSON", '{"access_token": "x"}')
     notifier = _Notifier()
-    cli.announce_yahoo_scope(_announce_ctx(tmp_path, notifier))
+    ctx = _announce_ctx(tmp_path, notifier)
+    ctx.yahoo = _Refusing()
+    assert cli.announce_yahoo_scope(ctx) == cli.EXIT_OK
     assert notifier.sent == []
+    assert "not authorized" in capsys.readouterr().out
+
+
+def test_announce_with_a_token_tells_you_the_day_data_actually_works(tmp_path, monkeypatch):
+    """The event worth an email - and the one Yahoo never announces."""
+    from src import cli, yahoo_client
+
+    monkeypatch.setattr(
+        yahoo_client, "probe_fantasy_scope",
+        lambda client_id, **kw: yahoo_client.ScopeCheck("attached", ""),
+    )
+    monkeypatch.setenv("YAHOO_ACCESS_TOKEN_JSON", '{"access_token": "x"}')
+    notifier = _Notifier()
+    ctx = _announce_ctx(tmp_path, notifier)
+    ctx.yahoo = _Working()
+    assert cli.announce_yahoo_scope(ctx) == cli.EXIT_OK
+    assert len(notifier.sent) == 1
+    assert "working" in notifier.sent[0].text().lower()
+
+
+def test_doctor_no_longer_forbids_a_new_app_when_the_call_is_refused(tmp_path, monkeypatch):
+    """It said "Do NOT create a new app". An app created before the account
+    was enabled can never gain the scope; a new one was the fix (2 Oct)."""
+    from src import cli, yahoo_client
+
+    monkeypatch.setattr(
+        yahoo_client, "probe_fantasy_scope",
+        lambda client_id, **kw: yahoo_client.ScopeCheck("attached", ""),
+    )
+    monkeypatch.setenv("YAHOO_ACCESS_TOKEN_JSON", '{"access_token": "x"}')
+    ctx = _ctx(tmp_path)
+    ctx.yahoo = _Refusing()
+    verdict = cli._describe_yahoo_access(ctx)
+    assert "Do NOT create a new app" not in verdict
+    assert "refusing" in verdict.lower()
+    assert "fcc doctor" in verdict
 
 
 def test_announce_without_a_client_id_says_so_rather_than_passing(tmp_path, capsys):
@@ -318,3 +411,43 @@ def test_another_command_still_fails_when_the_database_is_gone(tmp_path, monkeyp
     monkeypatch.setattr(cli, "Context", _no_context)
     (tmp_path / "config.yaml").write_text("league:\n  league_id: \"1\"\n", encoding="utf-8")
     assert cli.main(["--config", str(tmp_path / "config.yaml"), "rank"]) == cli.EXIT_FAIL
+
+
+# --- once ever means once, even after the wording changes ----------------------
+
+
+def test_a_reworded_one_time_announcement_does_not_go_out_again(tmp_path):
+    """The 2 Oct announcement went out with the old text. Fixing its wording
+    must not make GitHub send it a third time: "ever sent" is the title."""
+    from src import db
+    from src.config import Config
+    from src.notify import Notification, Notifier
+
+    (tmp_path / "c.yaml").write_text(
+        "notifications:\n  email:\n    enabled: false\n  desktop:\n    enabled: false\n"
+        "  discord:\n    enabled: false\n",
+        encoding="utf-8",
+    )
+    cfg = Config.load(str(tmp_path / "c.yaml"))
+    conn = db.init_db(tmp_path / "n.db", force_sqlite=True)
+    try:
+        notifier = Notifier(cfg, conn)
+        old = Notification(
+            title="Yahoo attached Fantasy Sports access",
+            lines=["Yahoo now accepts the Fantasy Sports scope for your app.",
+                   "One step left, and it needs you at a computer: ..."],
+            job="yahoo-scope",
+        )
+        notifier.record(old, notified=True)
+        new = Notification(
+            title="Yahoo attached Fantasy Sports access",
+            lines=["Yahoo now accepts the Fantasy Sports scope for your app.",
+                   "That is not the last step."],
+            job="yahoo-scope",
+        )
+        assert new.dedup_key() != old.dedup_key()
+        assert notifier.ever_sent(new) is True
+        other = Notification(title="Yahoo data access is working", lines=["x"], job="yahoo-scope")
+        assert notifier.ever_sent(other) is False
+    finally:
+        conn.close()

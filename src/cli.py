@@ -411,14 +411,20 @@ def _describe_yahoo_access(ctx: Context) -> str:
     except Exception as exc:
         kind = classify_access_error(exc)
         if kind == "not-provisioned":
-            return (
-                "credentials OK, but Yahoo is refusing the call.\n"
-                "                Fantasy Sports scope is not live on this app yet.\n"
-                "                Finish Yahoo's Developer Application Confirmation\n"
-                "                Form (name, email, Client ID) and wait for them to\n"
-                "                provision it. Do NOT create a new app - that changes\n"
-                "                the Client ID you gave them."
-            )
+            # Learned 2 Oct 2026: an app created before Yahoo enabled the
+            # account can never gain the scope - the fix WAS a new app, with
+            # Fantasy Sports - Read ticked, and its Client ID on the form.
+            # After that there is a second, silent gate: Yahoo enabling the
+            # Client ID for data. Only a real call can tell when it opens.
+            return "\n".join([
+                "credentials and token OK, but Yahoo is refusing data calls.",
+                "                The app has the scope; Yahoo has not enabled its",
+                "                Client ID for data yet. Submit this Client ID at",
+                "                sports.yahoo.com/developer/application-confirmation/",
+                "                (once), then wait: it took others 0-7 days and no",
+                "                email announces it. `fcc doctor` is the test.",
+                f"                Yahoo said: {exc}",
+            ])
         if kind == "stale-scope":
             return "\n".join([
                 "the token predates your Fantasy Sports permission.",
@@ -472,21 +478,57 @@ def announce_yahoo_scope(ctx: Context) -> int:
 
     scope = yahoo_client.probe_fantasy_scope(client_id)
     print(f"yahoo scope : {scope.verdict}" + (f" ({scope.detail})" if scope.detail else ""))
-    if scope.verdict != "attached" or yahoo_client.has_stored_token(ctx.cfg):
+    if scope.verdict != "attached":
         return EXIT_OK
 
-    ctx.notifier().send(Notification(
-        title="Yahoo attached Fantasy Sports access",
+    notifier = ctx.notifier()
+    if not yahoo_client.has_stored_token(ctx.cfg):
+        # The scope is a necessary step, not the last one: consent was done
+        # on 2 Oct and data calls were refused for days after. Said once,
+        # ever - the dedup window re-sent it from GitHub, which never has a
+        # token, three days after the laptop had.
+        _notify_once(notifier, Notification(
+            title="Yahoo attached Fantasy Sports access",
+            lines=[
+                "Yahoo now accepts the Fantasy Sports scope for your app.",
+                "If consent is not done yet: run `fcc verify-settings` in a "
+                "terminal, signed in as the Yahoo account that owns the league.",
+                "That is not the last step. Yahoo enables data access for the "
+                "Client ID separately and announces nothing; `fcc doctor` makes "
+                "a real call and is the test that counts.",
+            ],
+            job="yahoo-scope",
+            urgency="high",
+        ))
+        return EXIT_OK
+
+    # With a token the scope is old news. The event worth an email is the
+    # first data call Yahoo answers - which only a real call can detect.
+    try:
+        ctx.yahoo.fetch_teams()
+    except Exception as exc:
+        log.warning("Yahoo data call refused: %s", exc)
+        print(f"yahoo data  : refused - {exc}")
+        return EXIT_OK
+    print("yahoo data  : working")
+    _notify_once(notifier, Notification(
+        title="Yahoo data access is working",
         lines=[
-            "Yahoo now accepts the Fantasy Sports scope for your app.",
-            "One step left, and it needs you at a computer: run "
-            "`fcc verify-settings` in a terminal and approve access in the "
-            "browser, signed in as the Yahoo account that owns the league.",
+            "A real Fantasy Sports call succeeded for your app.",
+            "Next: `fcc verify-settings` to diff the league rules, then "
+            "`fcc sync-league`, then the Protocol D acceptance test.",
         ],
         job="yahoo-scope",
         urgency="high",
     ))
     return EXIT_OK
+
+
+def _notify_once(notifier, notification: Notification) -> None:
+    """Send a one-time announcement exactly once, however many runners exist."""
+    if notifier.ever_sent(notification):
+        return
+    notifier.send(notification)
 
 
 def cmd_yahoo_scope(ctx: Context, args) -> int:

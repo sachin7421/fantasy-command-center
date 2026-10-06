@@ -249,7 +249,11 @@ def classify_access_error(exc: BaseException) -> str:
         marker in text
         for marker in ("401", "403", "unauthorized", "forbidden",
                        "insufficient scope", "valid credentials",
-                       "oauth_problem")
+                       "oauth_problem",
+                       # yfpy's text for a 403 carries no status code. Seen
+                       # 2-5 Oct 2026 on an app with the scope and a fresh
+                       # token, before Yahoo enabled its Client ID.
+                       "not authorized to perform this action")
     ):
         return "not-provisioned"
     if "token" in text and ("expired" in text or "invalid" in text):

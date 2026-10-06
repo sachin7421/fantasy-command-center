@@ -88,6 +88,28 @@ class Notifier:
         ).fetchone()
         return row is not None
 
+    def ever_sent(self, notification: Notification) -> bool:
+        """Whether this exact fact has ever gone out, with no time window.
+
+        For one-time events - "Yahoo attached the scope" - the dedup window
+        is the wrong tool: the same announcement went out from the laptop on
+        Fri 2 Oct and again from GitHub on Mon 5 Oct, because the runner
+        never has a token and 72 hours had passed.
+
+        Matched on the TITLE, not the content key: the key changes whenever
+        the wording does, and a one-time event does not happen again because
+        its announcement was reworded. The title is matched inside the stored
+        JSON as text, which both SQLite and Postgres can do without JSON
+        operators.
+        """
+        marker = json.dumps({"title": notification.title})[1:-1]  # "title": "..."
+        row = self.conn.execute(
+            "SELECT 1 FROM recommendations WHERE job=? AND notified_at IS NOT NULL "
+            "AND payload_json LIKE ? LIMIT 1",
+            (notification.job, f"%{marker}%"),
+        ).fetchone()
+        return row is not None
+
     def record(self, notification: Notification, notified: bool) -> int:
         cursor = self.conn.execute(
             "INSERT INTO recommendations(job, season, week, payload_json, dedup_key, "

@@ -161,6 +161,9 @@ def test_the_scope_notification_names_the_consent_command(tmp_path, monkeypatch)
     sent = []
 
     class _Notifier:
+        def ever_sent(self, n):
+            return False
+
         def send(self, n, force=False):
             sent.append(n)
 
@@ -179,5 +182,8 @@ def test_the_scope_notification_names_the_consent_command(tmp_path, monkeypatch)
 
     cli.announce_yahoo_scope(_Ctx())
     text = sent[0].text()
-    assert "fcc verify-settings" in text
-    assert "fcc doctor" not in text
+    consent_lines = [line for line in text.splitlines() if "consent" in line.lower()]
+    assert consent_lines, text
+    for line in consent_lines:
+        assert "fcc verify-settings" in line
+        assert "fcc doctor" not in line

@@ -883,6 +883,11 @@ def test_access_is_reported_as_not_yet_provisioned(tmp_path):
         "401 Unauthorized",
         "403 Forbidden: insufficient scope",
         "Please provide valid credentials OAuth oauth_problem=\"...\"",
+        # Real, 2-5 Oct 2026: a new app with the scope and a fresh token,
+        # before Yahoo enabled its Client ID. No status code in the text.
+        'Attempt to retrieve data at URL https://fantasysports.yahooapis.com/'
+        'fantasy/v2/games;game_codes=nfl;seasons=2026?format=json failed with '
+        'error: "This application is not authorized to perform this action."',
     ):
         assert classify_access_error(Exception(message)) == "not-provisioned"
 
