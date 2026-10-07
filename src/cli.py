@@ -1861,25 +1861,17 @@ def cmd_accuracy(ctx: Context, args) -> int:
     return EXIT_OK
 
 
-def cmd_startsit(ctx: Context, args) -> int:
-    """The lineup with the best chance of beating a given opponent total."""
-    from src.analytics.distributions import (
-        PlayerForecast, optimise, simulate, swap_impact,
-    )
+def _forecasts_for(ctx: Context, season: int, week: int, keys: list[str]) -> list:
+    """PlayerForecasts for a set of player keys from the week's blend.
 
-    season = ctx.season
-    week = args.week if args.week is not None else ctx.current_week()
-    team_key = ctx.team_key()
-    if not team_key:
-        _require_team(ctx)
-        return EXIT_FAIL
+    A missing spread would imply certainty, so it falls back to a positional
+    rule of thumb rather than zero.
+    """
+    from src.analytics.distributions import PlayerForecast
 
-    snapshot = ctx.league_snapshot(season, week)
-    if snapshot is None:
-        print("Yahoo is not connected, so there is no roster to simulate.")
-        print("The API agreement forbids storing one. Run `fcc setup`.")
-        return EXIT_FAIL
-    clause, params = key_clause(snapshot.roster_keys(team_key))
+    if not keys:
+        return []
+    clause, params = key_clause(keys)
     rows = ctx.conn.fetchall(
         f"""
         SELECT p.player_key, p.full_name, p.position, p.team,
@@ -1895,48 +1887,115 @@ def cmd_startsit(ctx: Context, args) -> int:
         """,
         (season, week, season, week, *params),
     )
-    if not rows:
-        print(f"No projections for any player on your week {week} roster.")
-        return EXIT_OK
-
-    # A roster with no projections produces a lineup of zeroes and a confident
-    # "0% to win", which reads as a verdict rather than as missing data. The
-    # same trap the lineup job fell into.
-    projected = sum(1 for r in rows if float(r["mean"] or 0) > 0)
-    if not projected:
-        print(f"No week {week} projections for your roster "
-              f"({len(rows)} player(s) rostered). Run `fcc sync --week {week}`.")
-        return EXIT_OK
-
-    roster = [
+    return [
         PlayerForecast(
             r["player_key"], r["full_name"], r["position"], r["team"] or "",
             float(r["mean"] or 0.0),
-            # A missing spread would imply certainty; fall back to a positional
-            # rule of thumb rather than zero.
             float(r["sd"]) if r["sd"] else max(2.0, float(r["mean"] or 0) * 0.45),
         )
         for r in rows
     ]
-    slots = ctx.starting_slots()
-    outcome = optimise(roster, slots, args.opponent, args.opponent_sd)
 
-    print(f"Week {week} vs a projected {args.opponent:.0f} +/- {args.opponent_sd:.0f}")
+
+def _team_total(forecasts: list, slots: dict[str, int]) -> tuple[float, float]:
+    """Mean and sd of a team's best lineup by projection."""
+    from src.analytics.distributions import totals
+    from src.lineup_solver import best_lineup
+
+    lineup = best_lineup(forecasts, slots, points_of=lambda p: p.mean,
+                         position_of=lambda p: p.position)
+    chosen = [s.player for s in lineup.slots if s.player is not None]
+    return totals(chosen) if chosen else (0.0, 0.0)
+
+
+def _this_weeks_money(ctx: Context, week: int) -> tuple[float, float, str | None]:
+    """(value of a win, value of the high score, opponent team key) from the
+    season simulation. Zeroes when the simulation cannot run."""
+    from src import league_bootstrap
+    from src.analytics.payout import simulate_payouts
+
+    setup, _ = _season_setup(ctx, week)
+    if setup is None or not setup["remaining"]:
+        return 0.0, 0.0, None
+    mine = str(ctx.team_key() or "")
+    odds = simulate_payouts(
+        setup["teams"], setup["remaining"], league_bootstrap.PAYOUTS,
+        league_bootstrap.FINISH_PAYOUTS, playoff_spots=setup["spots"], trials=1500,
+        final_week=setup["final_week"], my_team=mine, reseed=setup["reseed"],
+    )
+    me = next((o for o in odds if o.team_key == mine), None)
+    if me is None or me.next_game is None:
+        return 0.0, 0.0, None
+    high = league_bootstrap.PAYOUTS["weekly_high_score"]
+    if week == league_bootstrap.PAYOUTS.get("unpaid_high_score_week"):
+        high = 0
+    return me.next_game.win_value, float(high), me.next_game.opponent
+
+
+def cmd_startsit(ctx: Context, args) -> int:
+    """The lineup worth the most this week: the win's dollar value times its
+    probability, plus the high-score prize times the chance of topping the
+    league. Opponent and field come from the live rosters."""
+    from src.analytics.distributions import optimise_for_dollars, simulate, swap_impact
+
+    season = ctx.season
+    week = args.week if args.week is not None else ctx.current_week()
+    team_key = str(ctx.team_key() or "")
+    if not team_key:
+        _require_team(ctx)
+        return EXIT_FAIL
+
+    snapshot = ctx.league_snapshot(season, week)
+    if snapshot is None:
+        print("Yahoo is not connected, so there is no roster to simulate.")
+        print("The API agreement forbids storing one. Run `fcc setup`.")
+        return EXIT_FAIL
+    roster = _forecasts_for(ctx, season, week, snapshot.roster_keys(team_key))
+    if not roster:
+        print(f"No projections for any player on your week {week} roster.")
+        return EXIT_OK
+    if not any(f.mean > 0 for f in roster):
+        print(f"No week {week} projections for your roster "
+              f"({len(roster)} player(s) rostered). Run `fcc sync --week {week}`.")
+        return EXIT_OK
+    slots = ctx.starting_slots()
+
+    # What the week is worth, and who it is against.
+    win_value, high_value, opponent_key = _this_weeks_money(ctx, week)
+    field: list[tuple[float, float]] = []
+    opponent_mean, opponent_sd = args.opponent, args.opponent_sd
+    opponent_name = f"a projected {args.opponent:.0f}" if args.opponent is not None else "unknown opponent"
+    for other in snapshot.budgets:
+        if other == team_key:
+            continue
+        mean, sd = _team_total(_forecasts_for(ctx, season, week, snapshot.roster_keys(other)), slots)
+        if mean > 0:
+            field.append((mean, sd))
+        if opponent_key and other == opponent_key and mean > 0 and args.opponent is None:
+            opponent_mean, opponent_sd = mean, sd
+            opponent_name = snapshot.team_name(other) or other
+    if opponent_mean is None:
+        opponent_mean, opponent_sd = 110.0, 20.0
+    outcome = optimise_for_dollars(
+        roster, slots, opponent_mean, opponent_sd or 20.0,
+        win_value=win_value, high_score_value=high_value, field=field,
+    )
+
+    print(f"Week {week} vs {opponent_name} ({opponent_mean:.0f} +/- {opponent_sd or 20.0:.0f})")
     print("")
     print(f"  {outcome.describe()}")
     print("")
     for slot in sorted(outcome.players, key=lambda p: -p.mean):
-        print(f"    {slot.name:<22} {slot.position:<4} "
-              f"{slot.mean:5.1f} +/- {slot.sd:4.1f}")
+        print(f"    {slot.name:<22} {slot.position:<4} {slot.mean:5.1f} +/- {slot.sd:4.1f}")
 
-    impact = swap_impact(roster, slots, args.opponent, args.opponent_sd)
+    impact = swap_impact(roster, slots, opponent_mean, opponent_sd or 20.0)
     print("")
     print(f"  highest-mean lineup wins {impact['highest_mean_win_probability']:.0%}")
     print(f"  best lineup wins         {impact['best_win_probability']:.0%}"
           f"  ({impact['gain']:+.1%})")
 
     if args.simulate:
-        result = simulate(outcome.players, args.opponent, args.opponent_sd)
+        result = simulate(outcome.players, opponent_mean, opponent_sd or 20.0)
         print("")
         print(f"  simulation: {result}")
     return EXIT_OK
@@ -2647,9 +2706,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_ss = sub.add_parser("startsit", help="lineup that maximises win probability")
     p_ss.add_argument("--week", type=int)
-    p_ss.add_argument("--opponent", type=float, default=110.0,
-                      help="opponent projected total")
-    p_ss.add_argument("--opponent-sd", type=float, default=20.0)
+    p_ss.add_argument("--opponent", type=float, default=None,
+                      help="override the opponent's projected total (default: his live lineup)")
+    p_ss.add_argument("--opponent-sd", type=float, default=None)
     p_ss.add_argument("--simulate", action="store_true", help="also run Monte Carlo")
 
     p_po = sub.add_parser("playoffs", help="playoff odds from a season simulation")

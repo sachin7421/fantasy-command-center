@@ -266,6 +266,103 @@ def optimise(
     return best or LineupOutcome(0.0, 0.0, 0.0, 0.0, [])
 
 
+# --- choosing a lineup for dollars --------------------------------------------
+
+def top_probability(mean: float, sd: float, field: Sequence[tuple[float, float]]) -> float:
+    """P(this total beats every team in `field`), all treated as normal.
+
+    The week's high score pays $50 whoever you play, so a lineup can be
+    worth more for its chance of topping the whole league than for its
+    chance of winning its own game. Integrated numerically: for each value
+    x of our total, the chance every rival lands below it.
+    """
+    if sd <= 0:
+        return float(all(normal_cdf((mean - m) / s) > 0.5 for m, s in field))
+    lo, hi, steps = mean - 5 * sd, mean + 5 * sd, 400
+    step = (hi - lo) / steps
+    total = 0.0
+    for i in range(steps + 1):
+        x = lo + i * step
+        density = math.exp(-0.5 * ((x - mean) / sd) ** 2) / (sd * math.sqrt(2 * math.pi))
+        below = 1.0
+        for m, s in field:
+            below *= normal_cdf((x - m) / s) if s > 0 else (1.0 if x > m else 0.0)
+        weight = 0.5 if i in (0, steps) else 1.0
+        total += weight * density * below
+    return max(0.0, min(1.0, total * step))
+
+
+@dataclass
+class DollarOutcome(LineupOutcome):
+    """A lineup priced in dollars: the win's value times its probability,
+    plus the high score's value times the chance of topping the league."""
+
+    top_probability: float = 0.0
+    win_value: float = 0.0
+    high_score_value: float = 0.0
+    dollars: float = 0.0
+
+    def describe(self) -> str:
+        posture = (
+            "chasing upside" if self.risk > 0.15
+            else "protecting the floor" if self.risk < -0.15
+            else "balanced"
+        )
+        return (
+            f"{self.total_mean:.1f} +/- {self.total_sd:.1f}  |  "
+            f"{self.win_probability:.0%} to win (${self.win_value:.0f} at stake), "
+            f"{self.top_probability:.0%} for the high score (${self.high_score_value:.0f})  "
+            f"=> ${self.dollars:.0f} expected ({posture})"
+        )
+
+
+def optimise_for_dollars(
+    roster: Sequence[PlayerForecast],
+    starting_slots: dict[str, int],
+    opponent_mean: float,
+    opponent_sd: float,
+    win_value: float,
+    high_score_value: float,
+    field: Sequence[tuple[float, float]],
+    risk_levels: Sequence[float] = RISK_LEVELS,
+) -> DollarOutcome:
+    """The legal lineup worth the most money this week.
+
+    Same frontier sweep as `optimise`, scored in dollars instead of win
+    probability: P(win) x what the season simulation says a win is worth,
+    plus P(top of league) x the high-score prize. A favourite with a lot
+    riding on the game protects the floor; a team with nothing to lose in
+    its matchup and a shot at the week's high score chases the ceiling.
+    Ties break toward the higher mean.
+    """
+    best: DollarOutcome | None = None
+    for risk in risk_levels:
+        def scorer(player: PlayerForecast, level: float = risk) -> float:
+            return player.risk_adjusted(level)
+
+        lineup = best_lineup(roster, starting_slots, points_of=scorer,
+                             position_of=lambda p: p.position)
+        chosen = [s.player for s in lineup.slots if s.player is not None]
+        if not chosen:
+            continue
+        mean, sd = totals(chosen)
+        p_win = win_probability(mean, sd, opponent_mean, opponent_sd)
+        p_top = top_probability(mean, sd, field) if high_score_value > 0 else 0.0
+        dollars = p_win * win_value + p_top * high_score_value
+        better = best is None or (
+            dollars > best.dollars + 1e-9
+            or (abs(dollars - best.dollars) <= 1e-9 and mean > best.total_mean)
+        )
+        if better:
+            best = DollarOutcome(
+                risk=risk, total_mean=round(mean, 2), total_sd=round(sd, 2),
+                win_probability=round(p_win, 4), players=chosen,
+                top_probability=round(p_top, 4), win_value=win_value,
+                high_score_value=high_score_value, dollars=round(dollars, 2),
+            )
+    return best or DollarOutcome(0.0, 0.0, 0.0, 0.0, [])
+
+
 # --- correlated sampling -----------------------------------------------------
 
 
