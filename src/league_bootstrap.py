@@ -73,7 +73,9 @@ _ALL = _OFFENSE + _DEFENSE
 #: high-score prize and the note does not say which - OPEN with the user.
 #: The commissioner pays $150; the last-place team pays the other $50 of
 #: his dues as a penalty.
-PAYOUTS = {
+FINISH_PAYOUTS: dict[int, int] = {1: 750, 2: 400, 3: 250}
+
+PAYOUTS: dict[str, int] = {
     "dues": 200,
     "teams": 12,
     "commissioner_dues": 150,           # the last-place penalty covers his other $50
@@ -82,7 +84,6 @@ PAYOUTS = {
     "weekly_high_score_weeks": 13,      # which 13 of the 14: unknown
     "most_points_regular_season": 300,
     "consolation_winner": 50,
-    "finish": {1: 750, 2: 400, 3: 250},
     "last_place_penalty": 50,
 }
 
@@ -92,8 +93,8 @@ def season_outcome_value(finish: int | None, *, teams: int = 12, consolation_win
     """Dollars a season outcome is worth relative to a manager who finished
     mid-table and won nothing. Everyone paid dues; last place pays $50 more."""
     value = 0
-    if finish in PAYOUTS["finish"]:
-        value += PAYOUTS["finish"][finish]
+    if finish in FINISH_PAYOUTS:
+        value += FINISH_PAYOUTS[finish]
     if finish == teams:
         value -= PAYOUTS["last_place_penalty"]
     if consolation_winner:

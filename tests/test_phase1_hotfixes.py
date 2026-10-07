@@ -115,7 +115,7 @@ def test_the_payouts_add_up_to_the_pot():
         p["weekly_high_score"] * p["weekly_high_score_weeks"]
         + p["most_points_regular_season"]
         + p["consolation_winner"]
-        + sum(p["finish"].values())
+        + sum(bootstrap.FINISH_PAYOUTS.values())
     )
     assert paid == pot, f"payouts {paid} do not equal the pot {pot}"
 
