@@ -190,11 +190,15 @@ Phase 5 (`8b4f7ba`) - dashboard rebuilt: My Team / Moves / League / Model on a
 light neutral theme with bright accents (all text colours >= 4.5:1), draft
 tabs kept under Draft tools. `src/dashboard_season.py`; rendered headless
 against the live league with no exceptions.
-Phase 6 - 360 review: `tools/mutate.py` found its own stale anchor (QB sigma
-7.07 -> 7.24; fixed, re-run pending); a high-effort code review of
-23385c8..HEAD was launched (results below when in).
-Phase 7 (this commit) - ops: `tools/backup.py` (weekly artifact, 22 tables,
-551k rows) and `tools/check_deploy.py` (/healthz daily).
+Phase 6 (`d1e777d`) - 360 review: `tools/mutate.py` 10/10 after fixing its own
+stale anchor; a high-effort code review of the day's commits returned ten
+findings, all fixed with tests. The big one: the current week's game was never
+in the simulation, so "this week vs X" was NEXT week's opponent (week 5 is
+Dirties, 46% to win, not Pipelayers at 59%). Also: the backup artifact was
+WITHDRAWN - the repo is public and run artifacts are downloadable, so a
+database dump cannot be kept as one.
+Phase 7 (`b8bedb2`) - ops: `tools/backup.py` (run at the PC; 22 tables, 551k
+rows; no artifact, see phase 6) and `tools/check_deploy.py` (/healthz daily).
 Open from the scrub: ESPN D/ST weekly; `game_context` empty until ODDS_API_KEY
 (user signing up; the workflow passes it through); the hosted dashboard still
 needs its three Yahoo secrets pasted at the PC (`tools/push_yahoo_secrets.py
@@ -212,6 +216,9 @@ score; Odds API free tier: yes; light theme: yes.
       share.streamlit.io -> app -> Settings -> Secrets, reboot the app, clear the
       terminal. Until then the hosted app says "Showing your pasted roster".
 - [ ] **Delete old app `hnkXi0Gh`** in the Yahoo console (retires the leaked secret).
+- [ ] **Where should the weekly backup go?** The repo is public, so not an
+      Actions artifact. Options: encrypt it with a passphrase secret before upload;
+      a private repo; or run `tools/backup.py` at the PC. A credentials decision.
 - [ ] **Unresolved Yahoo name:** "Bam Knight" (Zonovan Knight, RB) - nickname vs legal
       name; 1 of 199 free agents. Add an alias or leave.
 - [ ] **Was the exposed Supabase data read?** Nine tables were open until 15 Sep.
