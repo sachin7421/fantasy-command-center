@@ -175,11 +175,32 @@ Phase 2 (`d166c0d`, `b2feaf5`, `6edb982`, this commit) - data audit:
 - `verify-scoring --notify` runs after Monday's recap; mails only on a miss.
 - FantasyPros' own projection pages render 10 rows without JS/login: not a
   source. CBS pages are server-rendered (102 rows) - a possible fourth.
-Open from the audit: ESPN D/ST weekly; `game_context` empty until ODDS_API_KEY
+Phase 3 (`94a23ea`) - prediction engine: blend weights are EARNED per position
+from measured accuracy (they were computed, printed and never used), source
+biases subtracted (both sources run ~0.7 low on TEs), ESPN back-filled for
+weeks 1-4 so it is scored from week 1. Vegas lines wait on ODDS_API_KEY.
+Phase 4 (`ffe1dcf`, `6e4f7ba`, `4a9935c`) - the season in dollars:
+`src/analytics/payout.py` plays the regular season out week by week, seeds both
+brackets with placings, prices every outcome with PAYOUTS and conditions on
+this week's result (`fcc payouts`: Butt Fumblers expected $201, a week-5 win
+worth $57-65). `optimise_for_dollars` picks the lineup by P(win) x win value +
+P(top of league) x $50; `fcc startsit` takes the opponent from his live roster;
+the lineup job's posture and its mail's opening line come from it.
+Phase 5 (`8b4f7ba`) - dashboard rebuilt: My Team / Moves / League / Model on a
+light neutral theme with bright accents (all text colours >= 4.5:1), draft
+tabs kept under Draft tools. `src/dashboard_season.py`; rendered headless
+against the live league with no exceptions.
+Phase 6 - 360 review: `tools/mutate.py` found its own stale anchor (QB sigma
+7.07 -> 7.24; fixed, re-run pending); a high-effort code review of
+23385c8..HEAD was launched (results below when in).
+Phase 7 (this commit) - ops: `tools/backup.py` (weekly artifact, 22 tables,
+551k rows) and `tools/check_deploy.py` (/healthz daily).
+Open from the scrub: ESPN D/ST weekly; `game_context` empty until ODDS_API_KEY
 (user signing up; the workflow passes it through); the hosted dashboard still
-needs its three Yahoo secrets pasted at the PC.
+needs its three Yahoo secrets pasted at the PC (`tools/push_yahoo_secrets.py
+--streamlit`); which of the 14 weeks has no $50 high-score prize.
 Decisions recorded: 14 regular-season weeks, 13 of them paying the $50 high
-score (which week is unpaid: ask the commissioner); Odds API free tier: yes.
+score; Odds API free tier: yes; light theme: yes.
 
 ## Open - needs the user
 
@@ -210,9 +231,8 @@ score (which week is unpaid: ask the commissioner); Odds API free tier: yes.
       finding (`points_actual`). The rest of the codebase has not had that pass.
 - [ ] `trades` job: 2-for-1 proposals, and wiring to the buy-low / sell-high signal
       in `src/analytics/regression.py` (not referenced by `src/season/trades.py`).
-- [ ] From the METHOD audit, in its priority order: **no backup** of Supabase;
-      **no post-deploy check** against the real dashboard URL; the **weekly flow has
-      never been walked end to end**; this file's numbers are hand-maintained (a
+- [ ] From the METHOD audit: backup and post-deploy check DONE 7 Oct; the **weekly flow
+      has never been walked end to end**; this file's numbers are hand-maintained (a
       `--counts` flag would derive them).
 - [ ] `mypy tests` reports **five** errors in three files (21 Sep): `test_gates.py:119`
       `_write` redefined, `test_rls.py:140` uses the value of `list.append`, and three
