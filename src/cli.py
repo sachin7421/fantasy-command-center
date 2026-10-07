@@ -1942,61 +1942,95 @@ def cmd_startsit(ctx: Context, args) -> int:
     return EXIT_OK
 
 
-def cmd_playoffs(ctx: Context, args) -> int:
-    """Playoff odds for every team, by simulating the rest of the season."""
-    from src.analytics.season_sim import Matchup, TeamSeason, simulate
+def _season_setup(ctx: Context, week: int):
+    """Teams, remaining regular-season games and bracket settings for the
+    simulators - or (None, reason) when Yahoo cannot supply them.
 
-    season = ctx.season
-    week = args.week if args.week is not None else ctx.current_week()
+    Standings and the remaining schedule are Yahoo league state, fetched for
+    this run and never kept. Shared by `playoffs` and `payouts`.
+    """
+    from src.analytics.season_sim import Matchup, TeamSeason
+
     settings = ctx.settings()
     spots = int(settings.get("num_playoff_teams") or 6)
     final_week = int(settings.get("playoff_start_week") or 15) - 1
-
-    # Standings and the remaining schedule are Yahoo league state, so they are
-    # fetched for this run and never kept. Playoff odds were unreachable for
-    # the whole of last season because nothing ever wrote either one.
-    snapshot = ctx.playoff_snapshot(season, week, final_week)
+    snapshot = ctx.playoff_snapshot(ctx.season, week, final_week)
     if snapshot is None:
-        print("Yahoo is not connected, so there are no standings and no")
-        print("remaining schedule to simulate. Run `fcc setup`.")
-        return EXIT_FAIL
-
+        return None, ("Yahoo is not connected, so there are no standings and no "
+                      "remaining schedule to simulate. Run `fcc setup`.")
     standings = list(snapshot.standings.values())
     if not standings:
-        print("Yahoo returned no standings for this league yet.")
-        print("Before week 1 there is nothing to simulate.")
-        return EXIT_OK
-
-    # Each team scores at the rate it has been scoring, with the spread implied
-    # by the league. Better than a league-average assumption, and it is what is
-    # actually knowable before any games in the remaining schedule are played.
+        return None, "Yahoo returned no standings for this league yet."
     teams = []
-    # Attribute access, not subscripts. These are TeamStanding dataclasses off
-    # the snapshot now; the row-style lookups were left over from the dropped
-    # standings_history table and raised TypeError on every run past the guard
-    # above - which is to say every run where Yahoo returned anything.
     for standing in standings:
         played = max(1, standing.wins + standing.losses + standing.ties)
         mean = standing.points_for / played
-        teams.append(
-            TeamSeason(
-                team_key=standing.team_key,
-                name=standing.team_name or standing.team_key,
-                wins=standing.wins, losses=standing.losses, ties=standing.ties,
-                points_for=standing.points_for,
-                mean=mean if mean > 0 else 100.0, sd=max(12.0, mean * 0.22),
-            )
-        )
+        teams.append(TeamSeason(
+            team_key=standing.team_key, name=standing.team_name or standing.team_key,
+            wins=standing.wins, losses=standing.losses, ties=standing.ties,
+            points_for=standing.points_for,
+            mean=mean if mean > 0 else 100.0, sd=max(12.0, mean * 0.22),
+        ))
+    remaining = [Matchup(w, a, b) for (w, a, b) in snapshot.remaining_matchups(week, final_week)]
+    # Yahoo's key is uses_playoff_reseeding; `playoff_reseeding` (read here
+    # until 7 Oct 2026) never existed, so the setting was silently always off.
+    reseed = str(settings.get("uses_playoff_reseeding", settings.get("playoff_reseeding", 0))
+                 ) in ("1", "true", "True")
+    return {"teams": teams, "remaining": remaining, "spots": spots,
+            "final_week": final_week, "reseed": reseed}, None
 
-    # Only the regular season decides seeding. `final_week` was computed here
-    # and then never used, so playoff-week matchups were simulated as though
-    # they still counted toward making the playoffs.
-    # One row per game already - the snapshot pairs each matchup once, so the
-    # de-duplication that used to be needed here is gone with the table.
-    remaining = [
-        Matchup(w, a, b)
-        for (w, a, b) in snapshot.remaining_matchups(week, final_week)
-    ]
+
+def cmd_payouts(ctx: Context, args) -> int:
+    """Every outcome in dollars, and what this week's game is worth."""
+    from src import league_bootstrap
+    from src.analytics.payout import simulate_payouts
+
+    week = args.week if args.week is not None else ctx.current_week()
+    setup, reason = _season_setup(ctx, week)
+    if setup is None:
+        print(reason)
+        return EXIT_FAIL
+    if not setup["remaining"]:
+        print(f"No regular-season games remain after week {week}; the money is decided "
+              "by the brackets now.")
+        return EXIT_OK
+    mine = str(ctx.team_key() or "")
+    odds = simulate_payouts(
+        setup["teams"], setup["remaining"], league_bootstrap.PAYOUTS,
+        league_bootstrap.FINISH_PAYOUTS, playoff_spots=setup["spots"],
+        trials=args.trials, final_week=setup["final_week"], my_team=mine or None,
+        reseed=setup["reseed"],
+    )
+    print(f"Expected payout, rest of season from week {week} "
+          f"({len(setup['remaining'])} games left, {args.trials:,} simulations)")
+    print("")
+    for o in odds:
+        marker = " <- you" if mine and o.team_key == mine else ""
+        print(f"  {o.describe()}{marker}")
+    me = next((o for o in odds if o.team_key == mine), None)
+    if me and me.next_game:
+        g = me.next_game
+        opp = next((t.name for t in setup["teams"] if t.team_key == g.opponent), g.opponent)
+        print("")
+        print(f"This week vs {opp}: win {g.p_win:.0%}. A win is worth ${g.win_value:.0f} "
+              f"(${g.ev_if_win:.0f} if you win, ${g.ev_if_loss:.0f} if you lose). "
+              f"High score this week: {g.p_high_score:.0%} for $"
+              f"{league_bootstrap.PAYOUTS['weekly_high_score']}.")
+    return EXIT_OK
+
+
+def cmd_playoffs(ctx: Context, args) -> int:
+    """Playoff odds for every team, by simulating the rest of the season."""
+    from src.analytics.season_sim import simulate
+
+    week = args.week if args.week is not None else ctx.current_week()
+    setup, reason = _season_setup(ctx, week)
+    if setup is None:
+        print(reason)
+        return EXIT_FAIL
+    teams, remaining, spots, final_week = (
+        setup["teams"], setup["remaining"], setup["spots"], setup["final_week"]
+    )
 
     if not remaining:
         if week >= final_week:
@@ -2007,12 +2041,8 @@ def cmd_playoffs(ctx: Context, args) -> int:
                   "nothing to simulate.")
         return EXIT_OK
 
-    # Whether the bracket reseeds is a league setting, not a convention: with
-    # reseeding the top seed always draws the weakest survivor, and this league
-    # has it turned off.
-    reseed = str(settings.get("playoff_reseeding", 0)) in ("1", "true", "True")
     results = simulate(
-        teams, remaining, playoff_spots=spots, trials=args.trials, reseed=reseed
+        teams, remaining, playoff_spots=spots, trials=args.trials, reseed=setup["reseed"]
     )
     print(f"Playoff odds after week {week} "
           f"({len(remaining)} games left, {spots} spots, {args.trials:,} simulations)")
@@ -2625,6 +2655,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_po = sub.add_parser("playoffs", help="playoff odds from a season simulation")
     p_po.add_argument("--week", type=int)
     p_po.add_argument("--trials", type=int, default=5000)
+    p_pay = sub.add_parser("payouts", help="every outcome in dollars, and what this week's game is worth")
+    p_pay.add_argument("--week", type=int)
+    p_pay.add_argument("--trials", type=int, default=3000)
 
     p_faab = sub.add_parser("faab", help="what to bid, and what it will take")
     p_faab.add_argument("player", nargs="?", help="player to bid on")
@@ -2700,6 +2733,7 @@ HANDLERS = {
     "accuracy": cmd_accuracy,
     "startsit": cmd_startsit,
     "playoffs": cmd_playoffs,
+    "payouts": cmd_payouts,
     "faab": cmd_faab,
     "check": cmd_check,
     "offer": cmd_offer,
