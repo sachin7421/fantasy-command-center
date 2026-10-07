@@ -53,6 +53,7 @@ jobs:
       YAHOO_CONSUMER_KEY: ${{ secrets.YAHOO_CONSUMER_KEY }}
       YAHOO_CONSUMER_SECRET: ${{ secrets.YAHOO_CONSUMER_SECRET }}
       YAHOO_ACCESS_TOKEN_JSON: ${{ secrets.YAHOO_ACCESS_TOKEN_JSON }}
+      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
       PYTHONIOENCODING: utf-8

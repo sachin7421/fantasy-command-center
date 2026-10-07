@@ -892,7 +892,18 @@ def cmd_sync(ctx: Context, args) -> int:
             weekly = sleeper_proj.sync(
                 ctx.idmap, rules, season, week=week, force=args.force
             )
-        print(f"  week {week} proj: {weekly['stored']:,} stored")
+        print(f"  week {week} proj: {weekly['stored']:,} stored (sleeper)")
+        # ESPN's one payload (already fetched above and memoised for 12h)
+        # carries a projection for every week; until 7 Oct 2026 nobody asked
+        # for the current one, so the weekly blend was Sleeper alone.
+        if ctx.cfg.get("sources.espn.enabled", True):
+            try:
+                with timer.phase("weekly proj"):
+                    espn_week = espn.sync(ctx.idmap, rules, season, week=week, force=False)
+                print(f"  week {week} proj: {espn_week['stored']:,} stored (espn)")
+            except Exception as exc:
+                log.warning("ESPN weekly sync skipped: %s", exc)
+                print(f"  week {week} proj: espn unavailable ({exc})")
 
     with timer.phase("blending"):
         blended = proj.blend_all(
