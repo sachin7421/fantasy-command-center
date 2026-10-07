@@ -496,16 +496,47 @@ def run(
     gains = [gain_for(c, None) for c in healthy]
     max_gain = max(gains) if gains else 0.0
 
+    def best_drop(candidate: Candidate, used: set[str]) -> tuple[Candidate | None, float]:
+        """The drop that leaves the best lineup once `candidate` is added.
+
+        Protection is judged on the roster AFTER the add: your only defence
+        is untouchable when the add is a receiver, and exactly the right drop
+        when the add is a better defence - a second DEF on the bench starts
+        never. First live run (7 Oct 2026) said "ADD Patriots / DROP Jauan
+        Jennings" for that reason, and the old pick-the-lowest-value rule
+        could also cut a flex starter whose value-above-replacement read 0.
+        """
+        # A roster with fewer players than starting slots cannot be full, so
+        # an add there needs no drop at all (the fixtures in the test suite
+        # are built that way; a real in-season roster never is).
+        open_spots = (
+            starting_slots is not None
+            and len(droppables) < sum(starting_slots.values())
+        )
+        if not droppables or open_spots:
+            return None, gain_for(candidate, None)
+        shielded = _protected_keys([*droppables, candidate], starting_slots)
+        options = [d for d in droppables if d.player_key not in shielded and d.player_key not in used]
+        if not options:
+            return None, gain_for(candidate, None)
+        # Ties are common: dropping the displaced starter or dropping a bench
+        # body leaves the same lineup. Prefer the incumbent at the added
+        # player's position - a positional upgrade replaces him - then the
+        # lowest value.
+        scored = [
+            (gain_for(candidate, d), d.position == candidate.position, -d.value, d)
+            for d in options
+        ]
+        scored.sort(key=lambda row: (row[0], row[1], row[2]), reverse=True)
+        gain, _, _, drop = scored[0]
+        return drop, gain
+
     used_drops: set[str] = set()
     for candidate in healthy:
-        drop_preview = next(
-            (d for d in droppable_now if d.player_key not in used_drops), None
-        )
-        gain = gain_for(candidate, drop_preview)
+        drop, gain = best_drop(candidate, used_drops)
         if gain < value_margin:
             continue
 
-        drop = drop_preview
         if drop:
             used_drops.add(drop.player_key)
 

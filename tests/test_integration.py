@@ -1438,3 +1438,58 @@ def test_the_recap_never_pairs_players_who_could_not_swap(tmp_path):
     )
     # The real mistake IS available: QB for QB.
     assert ("Benched QB", "Started QB") in pairs
+
+
+# --- a positional upgrade drops the player it displaces -----------------------
+
+@pytest.fixture
+def defence_upgrade_league(tmp_path):
+    """The lineup league plus a defence on the wire that beats the one owned.
+
+    7 Oct 2026, first live waiver run: the user had just swapped to the Jets
+    DEF, the wire held the Patriots DEF (+26.6 ROS), and the claim said
+    "ADD Patriots / DROP Jauan Jennings" - a bench WR - because the only DEF
+    is protected from being dropped, even when the add IS a DEF. A second
+    defence on the bench starts never and is worth nothing; the right drop is
+    the defence being displaced.
+    """
+    path = tmp_path / "defup.db"
+    conn = db.init_db(path)
+    roster = [
+        ("qb1|QB", "Starting QB", "QB", 320.0),
+        ("rb1|RB", "Starting RB1", "RB", 240.0),
+        ("rb2|RB", "Starting RB2", "RB", 230.0),
+        ("wr1|WR", "Starting WR1", "WR", 200.0),
+        ("wr2|WR", "Starting WR2", "WR", 190.0),
+        ("wr3|WR", "Flex WR3", "WR", 180.0),
+        ("rb3|RB", "Flex RB3", "RB", 175.0),
+        ("te1|TE", "Starting TE", "TE", 150.0),
+        ("def1|DEF", "The Only Defence", "DEF", 130.0),
+        ("wr4|WR", "Bench WR4", "WR", 120.0),
+    ]
+    build = LeagueBuilder(LEAGUE, SEASON, WEEK)
+    for key, name, pos, pts in roster:
+        _player(conn, key, name, pos, pts)
+        build.roster(MY_TEAM, key, pos, "Butt Fumblers")
+    _player(conn, "fadef|DEF", "Better Defence", "DEF", 160.0)
+    build.free_agent("fadef|DEF")
+    conn.commit()
+    conn.close()
+    _SNAPSHOTS[str(path)] = build.build()
+    return path
+
+
+def test_a_defence_upgrade_drops_the_defence_it_replaces(defence_upgrade_league):
+    from src.season import waivers
+
+    conn = db.init_db(defence_upgrade_league)
+    report = waivers.run(
+        conn, LEAGUE, MY_TEAM, SEASON, WEEK,
+        uses_faab=True, budget_left=100, value_margin=1.0, starting_slots=SLOTS,
+        snapshot=_snap(defence_upgrade_league),
+    )
+    [claim] = report.claims
+    assert claim.add.name == "Better Defence"
+    assert claim.drop is not None and claim.drop.name == "The Only Defence", claim.drop
+    # 160 in for 130 out; the bench WR stays and nothing else moves.
+    assert claim.value_gain == pytest.approx(30.0, abs=0.5)

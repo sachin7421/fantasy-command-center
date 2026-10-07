@@ -45,6 +45,9 @@ def conn(tmp_path):
         ("rb2|RB", "My Other Back", "RB", 120.0, "DAL"),
         ("wr1|WR", "My Receiver", "WR", 200.0, "MIA"),
         ("wr2|WR", "My Weak Receiver", "WR", 60.0, "SEA"),
+        # A bench body, so the roster is FULL (6 players, 5 starting slots):
+        # a claim then needs a drop, as every real in-season claim does.
+        ("bn|WR", "Bench Body", "WR", 20.0, "ARI"),
         ("cuff|RB", "Jets Backup", "RB", 90.0, "NYJ"),
         ("free|WR", "Free Agent Receiver", "WR", 190.0, "KC"),
         ("claim|WR", "Waiver Receiver", "WR", 180.0, "LAC"),
@@ -58,7 +61,7 @@ def conn(tmp_path):
 def _manual_snapshot() -> LeagueSnapshot:
     snap = LeagueSnapshot(league_key=LEAGUE, season=SEASON, week=WEEK, is_manual=True)
     for key, pos in [("qb1|QB", "QB"), ("rb1|RB", "RB"), ("rb2|RB", "RB"),
-                     ("wr1|WR", "WR"), ("wr2|WR", "WR")]:
+                     ("wr1|WR", "WR"), ("wr2|WR", "WR"), ("bn|WR", "BN")]:
         snap.rosters.append(RosterSpot(MINE, "Butt Fumblers", key, pos))
     return snap
 
