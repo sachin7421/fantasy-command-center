@@ -216,9 +216,14 @@ class YahooIdIndex:
         parts = [p for p in cleaned.split() if p not in ("jr", "sr", "ii", "iii", "iv", "v")]
         return " ".join(parts)
 
+    @staticmethod
+    def _def_name(team: str) -> str:
+        """The index name for a team defense: its team code, not a nickname."""
+        return f"def {team.lower()}"
+
     def _load(self) -> None:
         for row in self.conn.fetchall(
-            "SELECT player_key, full_name, position, yahoo_id FROM players"
+            "SELECT player_key, full_name, position, team, yahoo_id FROM players"
         ):
             if row["yahoo_id"]:
                 self._by_yahoo_id.setdefault(str(row["yahoo_id"]), row["player_key"])
@@ -228,6 +233,10 @@ class YahooIdIndex:
             position = str(row["position"] or "").upper()
             self._by_name_pos.setdefault((name, position), row["player_key"])
             self._by_name.setdefault(name, []).append(row["player_key"])
+            if position == "DEF" and row["team"]:
+                self._by_name_pos.setdefault(
+                    (self._def_name(str(row["team"]).upper()), "DEF"), row["player_key"]
+                )
 
     def resolve(self, payload: dict[str, Any]) -> str | None:
         """Our player key for a Yahoo player payload, or None.
@@ -254,6 +263,18 @@ class YahooIdIndex:
             or _dig(payload, ["selected_position", "position"])
             or ""
         ).upper()
+
+        # A defense is named by nickname at Yahoo ("Eagles", team "Phi") and
+        # by team everywhere here (DEF|PHI). The team is the identity; the
+        # name is not even stable between Yahoo's own endpoints. Found on the
+        # first live roster sync, 7 Oct 2026: all 16 unmatched were defenses.
+        if position == "DEF":
+            from src.idmap import normalize_team
+
+            team = normalize_team(payload.get("editorial_team_abbr"))
+            found = self._by_name_pos.get((self._def_name(team), "DEF")) if team else None
+            if found:
+                return found
 
         found = self._by_name_pos.get((normalised, position))
         if found:

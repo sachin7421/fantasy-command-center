@@ -547,19 +547,12 @@ class YahooClient:
             collected: list[Any] = []
             page = 25  # Yahoo caps a players collection at 25 per request
             for start in range(0, count, page):
-                filters = ["status=FA", "sort=AR", f"count={page}", f"start={start}"]
-                if position:
-                    filters.append(f"position={position}")
-                url = (
-                    f"{YAHOO_API_BASE}/league/{self.league_key}/players;"
-                    + ";".join(filters)
-                    + "?format=json"
-                )
-                from yfpy.models import Player
-
-                batch = self.query.query(
-                    url, ["league", "players"], data_type_class=Player
-                )
+                url = free_agent_page_url(self.league_key, start, page, position)
+                # Exactly how yfpy's own get_league_players calls it: no
+                # data_type_class. Passing Player made yfpy treat the players
+                # list as a single object ("'list' object has no attribute
+                # 'get'"), the second defect the first live call showed.
+                batch = self.query.query(url, ["league", "players"])
                 if not batch:
                     break
                 collected.extend(batch)
@@ -809,6 +802,21 @@ class YahooClient:
     def _player_key_from_yahoo_key(self, yahoo_player_key: str) -> str | None:
         """Map "449.p.12345" onto our canonical key, without storing anything."""
         return self.index.resolve({"player_key": yahoo_player_key})
+
+
+def free_agent_page_url(league_key: str, start: int, page: int,
+                        position: str | None = None) -> str:
+    """One page of the league's available players.
+
+    No `?format=json`: yfpy's `get_response` adds `params={"format": "json"}`
+    to every request itself, and with ours as well Yahoo received the
+    parameter twice and answered 400. Seen on the first live `sync-league`,
+    7 Oct 2026 - the URL had been written from documentation.
+    """
+    filters = ["status=FA", "sort=AR", f"count={page}", f"start={start}"]
+    if position:
+        filters.append(f"position={position}")
+    return f"{YAHOO_API_BASE}/league/{league_key}/players;" + ";".join(filters)
 
 
 def _dig(data: Any, path: list[str]) -> Any:
