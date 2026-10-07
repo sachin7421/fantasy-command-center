@@ -15,9 +15,9 @@ from collections.abc import Sequence
 from src.ui import INK_MUTED, POSITION_HUES, position_hue
 
 # Recessive chart furniture: the data should be the only assertive thing.
-GRID_COLOR = "rgba(148,163,184,0.12)"
-AXIS_COLOR = "rgba(148,163,184,0.28)"
-SURFACE = "#0E1117"
+GRID_COLOR = "rgba(27,31,36,0.08)"
+AXIS_COLOR = "rgba(27,31,36,0.22)"
+SURFACE = "#FFFFFF"
 
 
 def _theme(chart, height: int):

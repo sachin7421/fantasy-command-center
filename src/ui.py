@@ -32,26 +32,25 @@ from string import Template
 # contrast.
 #
 # Order is the colour-blindness safety mechanism, so do not reshuffle it.
+# Re-tuned 7 Oct 2026 for the light surface (#F6F7F9 / #FFFFFF): the same
+# five hue families, deepened until each clears 4.5:1 for text on both
+# surfaces (RB 4.8, WR 4.8, QB 6.6, TE 4.6, DEF 5.6). Order unchanged.
 POSITION_HUES: dict[str, str] = {
-    "RB":  "#3987e5",   # blue
-    "WR":  "#d95926",   # orange
-    # QB moved off the theme's aqua slot when the interface went green: an
-    # aqua-green position chip beside a green action button is exactly the
-    # ambiguity the single-accent rule exists to prevent. Violet is a different
-    # slot of the same validated theme, and the swap IMPROVED colour-blind
-    # separation (worst adjacent dE 13.2, up from 8.4).
-    "QB":  "#9085e9",   # violet
-    "TE":  "#c98500",   # yellow
-    "DEF": "#d55181",   # magenta
-    "K":   "#008300",   # green (unused in this league)
+    "RB":  "#2563EB",   # blue
+    "WR":  "#C2410C",   # orange
+    "QB":  "#6D28D9",   # violet
+    "TE":  "#A16207",   # yellow
+    "DEF": "#BE185D",   # magenta
+    "K":   "#15803D",   # green (unused in this league)
 }
-POSITION_FALLBACK_HUE = "#94A3B8"
+POSITION_FALLBACK_HUE = "#5B6472"
 
 #: Ink colours. Text always wears these, never a series hue - the coloured field
-#: beside the text carries identity instead.
-INK = "#E8EAED"
-INK_MUTED = "#94A3B8"
-INK_FAINT = "#64748B"
+#: beside the text carries identity instead. On the light surface: 15.4:1,
+#: 5.6:1, and a faint step for decoration only (2.9:1, never for text).
+INK = "#1B1F24"
+INK_MUTED = "#5B6472"
+INK_FAINT = "#8A94A6"
 
 # Tier ramp. Tier is ORDINAL, not categorical, so this is a single hue stepped
 # light -> dark rather than a rainbow: a multi-hue tier scale implies the tiers
@@ -61,28 +60,31 @@ INK_FAINT = "#64748B"
 # lightness, visible gaps between adjacent steps (>= 0.06 L), and a dark end that
 # still clears 2:1 against the background. A seventh step fails the gap check, so
 # tier 7 and beyond - all deep bench - share the darkest step.
+# Reversed for the light surface: tier 1 is the deepest blue, tier 6+ the
+# palest, so "more important" still reads as "more ink".
 TIER_COLORS = [
-    "#cde2fb",  # tier 1 - elite
-    "#9ec5f4",  # tier 2
-    "#6da7ec",  # tier 3
-    "#3987e5",  # tier 4
-    "#256abf",  # tier 5
-    "#184f95",  # tier 6+
+    "#1E3A8A",  # tier 1 - elite
+    "#1D4ED8",  # tier 2
+    "#2563EB",  # tier 3
+    "#60A5FA",  # tier 4
+    "#93C5FD",  # tier 5
+    "#BFDBFE",  # tier 6+
 ]
 
-# Semantic colours.
-POSITIVE = "#4ADE80"
-WARNING = "#FBBF24"
-DANGER = "#F87171"
-MUTED = "#94A3B8"
+# Semantic colours, all >= 4.7:1 on the light surface.
+POSITIVE = "#15803D"
+WARNING = "#B45309"
+DANGER = "#B91C1C"
+MUTED = "#5B6472"
 
-# Club colours. GOTHAM_GREEN is the official one and is used only behind text -
-# at 2.2:1 on this background it cannot carry an interface element on its own.
-# ACCENT is the brightened step that does (5.6:1), and it means "action", used
-# for nothing else.
+# Accents. ACCENT (bright blue, 4.8:1) means "action" and the selected state
+# and is used for nothing else. ACCENT_FILL (orange) is a highlight fill for
+# bars and rules; at 2.6:1 it never carries text. GOTHAM_GREEN is kept only
+# as the brand mark in the sidebar.
 GOTHAM_GREEN = "#125740"
-ACCENT = "#2E9E6B"
-ACCENT_BRIGHT = "#3FBF85"
+ACCENT = "#2563EB"
+ACCENT_BRIGHT = "#1D4ED8"
+ACCENT_FILL = "#F97316"
 
 
 def _rgb(hex_color: str) -> str:
@@ -152,7 +154,7 @@ def tier_pill(tier: int) -> str:
     )
 
 
-def stat(label: str, value: str, color: str = "#E8EAED") -> str:
+def stat(label: str, value: str, color: str = INK) -> str:
     """A small label-over-value pair used inside cards."""
     return (
         f"<div style='display:inline-block;margin-right:16px;'>"
@@ -178,7 +180,7 @@ def survival_bar(probability: float) -> str:
         color = POSITIVE
     return (
         f"<div style='display:flex;align-items:center;gap:8px;'>"
-        f"<div style='flex:1;height:5px;background:rgba(148,163,184,0.2);"
+        f"<div style='flex:1;height:5px;background:rgba(91,100,114,0.18);"
         f"border-radius:3px;overflow:hidden;'>"
         f"<div style='width:{pct * 100:.0f}%;height:100%;background:{color};'></div></div>"
         f"<span style='color:{color};font-size:0.75rem;font-weight:650;"
@@ -208,42 +210,42 @@ _CSS = Template("""
   [data-testid="stMetricValue"] { font-size: 1.85rem; font-weight: 700; }
   [data-testid="stMetricLabel"] {
     text-transform: uppercase; letter-spacing: 0.07em;
-    font-size: 0.68rem; color: #94A3B8;
+    font-size: 0.68rem; color: #5B6472;
   }
 
-  /* A thin club-green rule under the sidebar brand. */
-  [data-testid="stSidebar"] { border-right: 1px solid rgba($ACCENT_RGB,0.22); }
+  [data-testid="stSidebar"] { border-right: 1px solid rgba(27,31,36,0.08); }
 
   .fcc-card {
-    border: 1px solid rgba(148,163,184,0.16);
+    border: 1px solid rgba(27,31,36,0.10);
     border-left-width: 3px;
     border-radius: 10px;
     padding: 12px 14px;
     margin-bottom: 10px;
-    background: rgba(21,32,27,0.6);
-    transition: border-color 120ms ease, background 120ms ease;
+    background: #FFFFFF;
+    box-shadow: 0 1px 2px rgba(27,31,36,0.04);
+    transition: border-color 120ms ease, box-shadow 120ms ease;
   }
   .fcc-card:hover {
-    background: rgba(21,32,27,0.95);
-    border-color: rgba($ACCENT_RGB,0.4);
+    box-shadow: 0 2px 8px rgba(27,31,36,0.08);
+    border-color: rgba($ACCENT_RGB,0.45);
   }
   .fcc-name { font-size: 1.02rem; font-weight: 700; letter-spacing: -0.01em; }
   .fcc-rank {
-    color: #64748B; font-size: 0.8rem; font-weight: 700;
+    color: #8A94A6; font-size: 0.8rem; font-weight: 700;
     font-variant-numeric: tabular-nums; margin-right: 6px;
   }
-  .fcc-reason { color: #4ADE80; font-size: 0.78rem; margin-top: 3px; }
-  .fcc-warn   { color: #FBBF24; font-size: 0.78rem; margin-top: 3px; }
+  .fcc-reason { color: #15803D; font-size: 0.78rem; margin-top: 3px; }
+  .fcc-warn   { color: #B45309; font-size: 0.78rem; margin-top: 3px; }
 
   .fcc-section {
     text-transform: uppercase; letter-spacing: 0.08em;
-    font-size: 0.7rem; color: #94A3B8; font-weight: 700;
-    margin: 4px 0 10px 0;
+    font-size: 0.7rem; color: #5B6472; font-weight: 700;
+    margin: 14px 0 8px 0;
   }
 
-  /* On the clock: the one moment the page should shout, in club green. */
+  /* On the clock: the one moment the page should shout. */
   .fcc-clock {
-    background: linear-gradient(90deg, rgba($ACCENT_RGB,0.22), rgba($GREEN_RGB,0.04));
+    background: linear-gradient(90deg, rgba($ACCENT_RGB,0.14), rgba($ACCENT_RGB,0.02));
     border-left: 3px solid $ACCENT;
     padding: 10px 14px; border-radius: 8px; margin-bottom: 14px;
     font-weight: 650;
@@ -253,24 +255,41 @@ _CSS = Template("""
     display:inline-block; padding:3px 9px; border-radius:6px; margin:2px 4px 2px 0;
     font-size:0.76rem; font-weight:650; font-variant-numeric: tabular-nums;
   }
-  .fcc-slot-filled { background: rgba($ACCENT_RGB,0.18); color:#6EE7B7; }
-  .fcc-slot-open   { background: rgba(251,191,36,0.14); color:#FBBF24; }
+  .fcc-slot-filled { background: rgba($ACCENT_RGB,0.12); color:#1D4ED8; }
+  .fcc-slot-open   { background: rgba(180,83,9,0.12); color:#B45309; }
 
-  /* Green means action, and nothing else uses it. */
+  /* Blue means action, and nothing else uses it. */
   .stButton button[kind="primary"] {
-    background: $ACCENT; color: #06120C; border: none; font-weight: 700;
+    background: $ACCENT; color: #FFFFFF; border: none; font-weight: 700;
   }
-  .stButton button[kind="primary"]:hover { background: $ACCENT_BRIGHT; color: #06120C; }
+  .stButton button[kind="primary"]:hover { background: $ACCENT_BRIGHT; color: #FFFFFF; }
 
   .fcc-brand {
     font-weight: 800; letter-spacing: -0.02em; font-size: 1.05rem;
-    color: #E9EDEA; border-left: 4px solid $ACCENT; padding-left: 9px;
+    color: #1B1F24; border-left: 4px solid $ACCENT; padding-left: 9px;
     margin-bottom: 2px;
   }
   .fcc-brand-sub {
-    color: #6B8578; font-size: 0.68rem; letter-spacing: 0.12em;
+    color: #5B6472; font-size: 0.68rem; letter-spacing: 0.12em;
     text-transform: uppercase; padding-left: 13px;
   }
+
+  /* Stat tiles for the season pages: a label, a big number, a note. */
+  .fcc-tile {
+    background: #FFFFFF; border: 1px solid rgba(27,31,36,0.10); border-radius: 12px;
+    padding: 12px 14px 10px 14px; min-height: 86px;
+    box-shadow: 0 1px 2px rgba(27,31,36,0.04);
+  }
+  .fcc-tile-label {
+    text-transform: uppercase; letter-spacing: 0.07em; font-size: 0.66rem;
+    color: #5B6472; font-weight: 700;
+  }
+  .fcc-tile-value {
+    font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums; color: #1B1F24; line-height: 1.15; margin-top: 2px;
+  }
+  .fcc-tile-note { font-size: 0.74rem; color: #5B6472; margin-top: 2px; }
+  .fcc-good { color: #15803D; } .fcc-bad { color: #B91C1C; } .fcc-warnc { color: #B45309; }
 </style>
 """)
 

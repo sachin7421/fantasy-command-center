@@ -1,21 +1,21 @@
-# Theme for the Fantasy Command Center dashboard - New York Jets.
+# Theme for the Fantasy Command Center dashboard.
 #
-# Gotham Green (#125740) is the club colour but only reaches 2.2:1 against a
-# dark background, well under the 3:1 an interface accent needs. So the official
-# green is used for brand surfaces (sidebar, rules, headers) where it sits
-# behind text, and a brightened step of the same hue (#2E9E6B, 5.6:1) carries
-# actions, where contrast actually matters.
+# Light, neutral surfaces with bright accents (the user's ask, 7 Oct 2026).
+# Every colour that carries text was checked against both surfaces: ink
+# 15.4:1, muted 5.6:1, the five position hues 4.6-6.6:1, the semantic
+# colours 4.7-6.0:1 (tools: WCAG relative luminance). Orange is a fill
+# accent only - at 2.6:1 it never carries text.
 
 [theme]
-base = "dark"
+base = "light"
 
-# Brightened Gotham Green. Reserved for actions and nothing else.
-primaryColor = "#2E9E6B"
+# Bright blue. Reserved for actions and the selected state.
+primaryColor = "#2563EB"
 
-# Near-black with a faint green cast rather than a neutral grey.
-backgroundColor = "#0B0F0D"
-secondaryBackgroundColor = "#15201B"
-textColor = "#E9EDEA"
+# Neutral page, white cards.
+backgroundColor = "#F6F7F9"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1B1F24"
 
 font = "sans serif"
 

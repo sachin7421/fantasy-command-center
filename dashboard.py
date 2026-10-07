@@ -1195,28 +1195,96 @@ def _waivers_live(cfg, conn, league_key, season, week, slots, team_key, snapshot
         st.caption("Stash candidate: " + stash.describe(uses_faab=True).splitlines()[0])
 
 
+@st.cache_resource
+def _cli_context():
+    """A CLI Context for the season pages: the simulators and the stakes live
+    there and need the Yahoo client plus its standings/scoreboard reads.
+    Shares the hosted database through DATABASE_URL like everything else."""
+    from src import cli
+
+    return cli.Context("config.yaml", None)
+
+
 def season_view(cfg, conn, league_key):
+    """Four pages built from the live league; the pasted roster as fallback.
+
+    Rebuilt 7 Oct 2026 from seven tabs that mixed draft-season tools with
+    in-season decisions and defaulted to week 1.
+    """
+    from types import SimpleNamespace
+
+    from src import cli, dashboard_season
+
     settings = settings_of(conn, league_key)
     slots = starting_slots_of(settings)
     season = int(cfg.get("league.season") or 2026)
     teams = int(settings.get("num_teams") or 12)
 
     st.sidebar.divider()
+    page = st.sidebar.radio(
+        "Season", ["My Team", "Moves", "League", "Model", "Draft tools"],
+        label_visibility="collapsed", key="season_page",
+    )
+    week = int(st.sidebar.number_input("Week", min_value=1, max_value=18,
+                                       value=_live_week(conn), step=1, key="season_week"))
     st.sidebar.caption(f"Data: {db.describe_backend()}")
 
-    tabs = st.tabs(
-        ["This week", "Edge", "Activity", "Injuries", "Waiver heat", "Board",
-         "Positional shape"]
-    )
+    team_key = str(cfg.get("league.my_team_id") or "")
+    if not team_key:
+        st.warning("Set `league.my_team_id` in config.yaml to see your team.")
+        return
 
-    with tabs[0]:
+    if page == "Draft tools":
+        _draft_tools(cfg, conn, season, slots, teams)
+        return
+
+    snapshot, live_note = _live_league(cfg, conn, season, week, team_key)
+    if snapshot is None:
+        from src import manual_roster
+
+        snapshot = manual_roster.load_from_db(
+            conn, league_key=league_key, season=season, week=week,
+            team_key=team_key, team_name="Butt Fumblers",
+        )
+    if live_note:
+        (st.caption if snapshot is not None and not snapshot.is_manual else st.warning)(live_note)
+    if snapshot is None or not snapshot.rosters:
+        st.info("No roster yet. Add the Yahoo secrets to this app, or paste your roster "
+                "under Draft tools.")
         _this_week(cfg, conn, league_key, season, slots)
+        return
 
-    with tabs[1]:
+    try:
+        ctx = _cli_context()
+    except Exception as exc:
+        st.error(f"The season pages need the CLI context and it failed to build: {exc}")
+        return
+
+    if page == "My Team":
+        dashboard_season.page_my_team(
+            st, ctx, snapshot, season, week, slots,
+            stakes_fn=SimpleNamespace(season_setup=cli._season_setup, week_stakes=cli._week_stakes),
+            forecasts_fn=cli._forecasts_for,
+        )
+    elif page == "Moves":
+        if snapshot.is_manual:
+            st.info("Waivers and bench strength need the live wire; the pasted roster has none.")
+        dashboard_season.page_moves(
+            st, ctx, snapshot, season, week, slots,
+            waivers_fn=lambda *a: _waivers_live(*a) if not snapshot.is_manual else _waivers_from_paste(*a),
+        )
+    elif page == "League":
+        dashboard_season.page_league(st, ctx, week, cli._season_setup)
+    elif page == "Model":
+        dashboard_season.page_model(st, conn, season, week)
+
+
+def _draft_tools(cfg, conn, season, slots, teams):
+    """The draft-season views, kept for reference: edge, activity, board, shape."""
+    tabs = st.tabs(["Edge", "Activity", "Injuries", "Waiver heat", "Board", "Positional shape"])
+    with tabs[0]:
         _tab_edge(conn, season)
-
-
-    with tabs[2]:
+    with tabs[1]:
         st.markdown("<div class='fcc-section'>Recent job output</div>",
                     unsafe_allow_html=True)
         rows = conn.fetchall(
@@ -1236,7 +1304,7 @@ def season_view(cfg, conn, league_key):
             ):
                 st.text("\n".join(payload.get("lines", [])))
 
-    with tabs[3]:
+    with tabs[2]:
         rows = conn.fetchall(
             """
             SELECT p.full_name AS player, p.position, p.team, i.status,
@@ -1252,7 +1320,7 @@ def season_view(cfg, conn, league_key):
         )
         st.dataframe([dict(r) for r in rows], width="stretch", hide_index=True, height=520)
 
-    with tabs[4]:
+    with tabs[3]:
         st.caption(
             "Trending adds across all Sleeper leagues — a leading indicator of who "
             "your league-mates are about to claim."
@@ -1269,7 +1337,7 @@ def season_view(cfg, conn, league_key):
         )
         st.dataframe([dict(r) for r in rows], width="stretch", hide_index=True, height=520)
 
-    with tabs[5]:
+    with tabs[4]:
         board = board_for(cfg, conn, season, slots, teams)
         st.dataframe(
             [
@@ -1284,7 +1352,7 @@ def season_view(cfg, conn, league_key):
             width="stretch", hide_index=True, height=560,
         )
 
-    with tabs[6]:
+    with tabs[5]:
         board = board_for(cfg, conn, season, slots, teams)
         chart = charts.value_curve(board.players, height=380)
         if chart is not None:
