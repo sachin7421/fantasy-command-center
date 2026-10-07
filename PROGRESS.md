@@ -1,6 +1,6 @@
 # Progress
 
-Resume point for any future session. **Updated 2026-10-02.** The draft happened on
+Resume point for any future session. **Updated 2026-10-07.** The draft happened on
 8 Sep; the project is in **season mode**.
 
 Run `python tools/gate.py` first. The figures below were true when this was written
@@ -9,7 +9,7 @@ and are not maintained by anything - the gate's output is.
 ```
 lint         ok      0.4s
 types        ok      1.3s
-tests        ok     45.5s      659 passed, 1 skipped
+tests        ok     44.2s      691 passed, 1 skipped (the live Yahoo test; FCC_LIVE=1 runs it)
 degradation  ok      0.4s
 yahoo        ok      0.1s
 dead code    ok      0.6s
@@ -27,34 +27,27 @@ and ~40 commits stale once (26 Aug - 16 Sep); update it in the same session as t
 
 ## The one thing to read before anything else
 
-**Yahoo API access is half-live, and the missing half is on Yahoo's side.**
+**Yahoo data access is LIVE as of 7 Oct 2026, on a NEW app.** `fcc doctor` says
+`working`; `fcc verify-scoring` passes.
 
-The app is registered and consent completes, but every data call fails with
-`oauth_problem="additional_authorization_required"`. Confirmed 15 Sep by reading the
-developer console directly: app `hnkXi0Gh` (Client ID begins `dj0yJmk9bzB0`) shows
-only OpenID Connect permissions (Email, Profile). **No Fantasy Sports group exists on
-the app at all**, so there is no box to tick. yfpy never sends a `scope` parameter
-(`yahoo_oauth/oauth.py:99`). **Asking for it explicitly does not help either -
-proven 17 Sep:** `scope=fspt-r` at the authorization endpoint returns
-`error=invalid_scope`, while `openid` on the same app is accepted. The remedy is Yahoo
-support attaching the scope, then a **fresh consent** signed in as the Yahoo account
-that owns league 796511 - the old token cannot gain a scope by refreshing.
+What it took, so nobody repeats the detour: the original app `hnkXi0Gh` could never
+gain the Fantasy Sports scope - it was created before Yahoo enabled the account, and
+Yahoo's own answer to that (via yfpy issue #84) is "create a new app". App `eenJqhS1`
+(Client ID begins `dj0yJmk9Q2NDa`) was created 2 Oct with "Fantasy Sports - Read"
+ticked, its Client ID submitted at `sports.yahoo.com/developer/application-confirmation/`,
+consent completed the same day, and data calls were refused with 403 until Yahoo
+enabled the Client ID five days later (the "access is live" email arrived 7 Oct and,
+this time, was true). Four emails to Yahoo over three weeks achieved nothing; the
+form did.
 
-Until then:
+Where the scheduled runs stand: **GitHub has the new Client ID only** (secret
+`YAHOO_CLIENT_ID`, for the daily scope check). It has no Client Secret and no token,
+so every scheduled job still runs on the pasted roster (`data/roster.txt`, loaded into
+`my_roster`). Giving GitHub the secret and token is a decision (credentials), not a
+chore - see Open.
 
-- **Protocol D is still unsatisfied.** `tests/test_acceptance.py` (reproduce Yahoo's
-  displayed weekly points for 10 players) is the single skipped test. The scoring
-  engine is verified against hand-computed tests only.
-- Waivers/FAAB, playoff odds, and opponent rosters need a live `LeagueSnapshot`
-  and degrade with a message rather than using stale data (compliance obligation 1
-  deliberately overrides standard 4 for Yahoo).
-- Season mode works on **your pasted roster** (`my_roster`, via the dashboard's
-  "This week" paste box or the CLI).
-
-Also from that session: loading the app page put the **Client Secret** into a
-transcript. Deliberately not rotated yet - Yahoo has no regenerate button, so rotating
-means recreating the app, which mints a new Client ID and discards the pending scope
-request. Rotate once Fantasy access works.
+**Delete the old app `hnkXi0Gh`** in the Yahoo developer console. Its Client Secret
+was in a transcript on 15 Sep; deleting the app retires it. Nothing here references it.
 
 ---
 
@@ -64,15 +57,15 @@ request. Rotate once Fantasy access works.
 |---|---|---|
 | Storage / schema | **Done** | SQLite + Postgres, numbered migrations; RLS enforced on every apply |
 | ID mapping | **Done** | Yahoo IDs memory-only, rebuilt by name each run |
-| Scoring engine | **Done, acceptance test blocked** | Hand-computed tests; rules in `src/league_bootstrap.py`, pinned by `tests/test_league_rules.py` |
-| Projections + blending | **Done** | Backtested: r 0.67, RMSE 5.63 over 2,205 2025 player-weeks |
-| Confidence bands | **Done** | `src/analytics/uncertainty.py`, measured sigma per position |
+| Scoring engine | **Done, Protocol D PASSED 7 Oct** | `fcc verify-scoring`: 61 roster player-weeks (wk 1-4) vs Yahoo's listed points, 53 exact, 0 differ, 8 inactive, defenses included. Rules in `src/league_bootstrap.py`; `verify-settings` finds no value difference |
+| Projections + blending | **Done** | Backtested 7 Oct on the box-score ground truth: r 0.65, RMSE 5.62 over 2,473 2025 player-weeks (defenses now included) |
+| Confidence bands | **Done** | `src/analytics/uncertainty.py`, sigma per position incl. DEF (5.44), refit 7 Oct |
 | VORP / draft board / draft assistant | **Done, used** | Draft night 8 Sep |
 | Dashboard | **Done** | Streamlit + Supabase |
-| Injuries / byes / lineup / recap | **Done** | Run off the pasted roster |
+| Injuries / byes / lineup / recap | **Done** | Live Yahoo roster locally; pasted roster on GitHub. A refused Yahoo call falls back to the pasted roster, loudly |
 | Yahoo compliance | **Done** | Yahoo tables dropped; `tools/check_yahoo_persistence.py` in the gate |
-| Waivers / FAAB | **Works from a pasted wire** | `fcc waivers --wire-file`, or the paste box on the dashboard's This week tab. Never stored. Rival FAAB profiles still need Yahoo |
-| Playoff odds | **Built, blocked on Yahoo scope** | Matchups on the snapshot, not a table |
+| Waivers / FAAB | **Live** | `fcc sync-league`: 12 teams, 190 slots, 199 free agents, 81 transactions (7 Oct). Pasted wire still works without Yahoo. Never stored |
+| Playoff odds | **Live** | First run 7 Oct: 91.7% playoffs, 8.5% title, seed 3.5, from live standings and schedule |
 | Trades | **Partial** | `fcc offer` evaluates any N-for-M offer against your starting lineup; `trades` job still proposes 1-for-1 only |
 
 ## Done since the last update (26 Aug - 17 Sep)
@@ -136,39 +129,42 @@ Found by breaking the code on purpose, not by reading it.
   not run; a job that still cannot run becomes a notification. `src/schedule.py`
   is the only copy of the schedule; the workflow asks `fcc which-job`.
 
+## Done 2-7 Oct - Yahoo goes live
+
+- **New Yahoo app** (above). Scope check, consent, confirmation form, five-day wait.
+- **A refused Yahoo call no longer kills a job** (`38ec72c`) - with a token but no
+  data access every job died on a 403 traceback; now it falls back to the pasted
+  roster and says so. `sync` reports the refusal and finishes.
+- **Announcements go out once, ever** (`0ae6044`) - the "scope attached" email was
+  sent from the laptop and again from GitHub; `Notifier.ever_sent` matches on title.
+  With a token the daily check makes a real call and announces the first success.
+- **Protocol D run for real** (`ce7073d`, `b29e490`, `03d90e8`) - 32/45 exact on
+  the first pass; all four misses were fumbles. `ff_opportunity` has no sack fumbles
+  and no self-recovered ones. The ground truth now comes from nflverse's weekly
+  `player_stats` (box score), which also carries the return TDs:
+  `KNOWN_MISSING_STATS` is empty. Defenses got actuals from team stats + the game
+  score (JAX 13, LAC 4, DET 7, DET 2 - all exact). `fcc verify-scoring` is the
+  re-runnable check; `tests/test_verify_scoring.py` runs it under `FCC_LIVE=1`.
+- **First live `sync-league`** (`71b4d28`) - two guessed shapes: `?format=json`
+  sent twice (400), `data_type_class=Player` mis-parsing the list; and all 16
+  unmatched roster slots were defenses (Yahoo says "Eagles"/"Phi", we key DEF|PHI).
+- **Sigma refit on the corrected truth** (`5beeea9`) - QB 7.24, RB 5.86, WR 5.48,
+  TE 4.50, DEF 5.44 (first measurement), pooled 5.61.
+- **Pasted roster for week 4** loaded from the Yahoo app screenshot; all 16 matched.
+
 ## Open - needs the user
 
-- [ ] **Yahoo support: attach the Fantasy Sports scope** to app `hnkXi0Gh`. Emailed
-      twice 15 Sep; a third (the `invalid_scope` evidence, to
-      fantasyapiapplications@ and fantasyapideveloper@yahoosports.com) was SENT 19 Sep;
-      a fourth, short chaser sent 2 Oct. No reply to any. Still `invalid_scope` on
-      2 Oct. When the scope arrives the daily check notifies; then consent in a terminal.
-      **2 Oct finding - email is the wrong lever.** The create-app form on this account
-      now offers "Fantasy Sports - Read" (seen 2 Oct), i.e. the ACCOUNT is enabled. Per
-      yfpy issue #84 (appdesigngeeks 26 Sep, Kemper60 1 Oct), an app created before
-      the account was enabled can never gain the scope: create a NEW app with the box
-      ticked, submit its Client ID at sports.yahoo.com/developer/application-confirmation/
-      (the step the DocuSign completion email of 12 Sep asks for), swap the key and
-      secret here and in the GitHub secrets, then a fresh consent.
-      **Done 2 Oct:** new app `eenJqhS1` created (Client ID begins `dj0yJmk9Q2NDa`),
-      key and secret in `.env`, `fcc yahoo-scope` -> `attached`, consent completed
-      (a token exists), confirmation form submitted ~15:40 ET.
-      **Still failing 2 Oct 15:42:** every data call returns 403 "This application
-      is not authorized to perform this action" - Yahoo has not yet enabled the new
-      Client ID. Others waited from zero to seven days with no email. PROBE WITH
-      `fcc doctor` (a real call); `yahoo-scope` saying `attached` proves nothing more.
-      Yahoo's auto-reply to the form ("received your application ... review typically
-      takes 1-2 weeks") arrived 2 Oct - the same text as 8 and 13 Sep, so it carries
-      no information. If still 403 on 9 Oct, email fantasyapiapplications@yahoosports.com
-      with the new Client ID and the 403 string.
-      GitHub secret `YAHOO_CLIENT_ID` updated to the new app 2 Oct 19:50 UTC.
-      Once a call succeeds: Protocol D acceptance test, then delete old app `hnkXi0Gh`
-      (which retires the exposed Client Secret).
+- [ ] **Give the scheduled runs Yahoo?** GitHub has `YAHOO_CLIENT_ID` only. Adding
+      `YAHOO_CONSUMER_SECRET` and the token as secrets would let the Tuesday waiver
+      run and Sunday lineup run use the live roster and wire instead of the paste.
+      Credentials decision; also means a token that refreshes on a runner.
+- [ ] **Delete old app `hnkXi0Gh`** in the Yahoo console (retires the leaked secret).
+- [ ] **Unresolved Yahoo name:** "Bam Knight" (Zonovan Knight, RB) - nickname vs legal
+      name; 1 of 199 free agents. Add an alias or leave.
 - [ ] **Was the exposed Supabase data read?** Nine tables were open until 15 Sep.
       Answerable from the PostgREST logs; not yet checked.
 - [ ] **Email untested.** `test-notify` sends a real email; last recorded run failed.
 - [ ] **Repo is public** with a proprietary LICENSE.
-- [ ] Rotate the Yahoo Client Secret, **after** Fantasy access works (see above).
 - [ ] **Move the lineup crons ~3 hours earlier?** They assume a punctuality GitHub
       never delivers. Must keep the Thursday-to-Sunday gap above the 72-hour dedup
       window. A decision, not a fix (`docs/METHOD-audit.md` open item 1).
@@ -182,7 +178,6 @@ Found by breaking the code on purpose, not by reading it.
       finding (`points_actual`). The rest of the codebase has not had that pass.
 - [ ] `trades` job: 2-for-1 proposals, and wiring to the buy-low / sell-high signal
       in `src/analytics/regression.py` (not referenced by `src/season/trades.py`).
-- [ ] Protocol D acceptance test, the moment Yahoo returns data.
 - [ ] From the METHOD audit, in its priority order: **no backup** of Supabase;
       **no post-deploy check** against the real dashboard URL; the **weekly flow has
       never been walked end to end**; this file's numbers are hand-maintained (a
@@ -197,12 +192,13 @@ Written down so no future session repeats them as fact:
 
 - "Beats naive ADP by 118 points" and "best roster in 36/36 drafts" are **circular**
   (both scored opponents with our own projections). The backtest is the real number.
-- **QB projections barely predict week to week** (r = 0.32), so the optimiser's QB
-  calls are close to noise.
-- **TE spread is modelled 21% too narrow and projected 0.87 low**, both pointing the
+- **QB and DEF projections barely predict week to week** (r = 0.31 each), so the
+  optimiser's calls at those slots are close to noise.
+- **TE spread is modelled 21% too narrow and projected 0.80 low**, both pointing the
   same way: a TE's floor is overstated and upside understated.
-- `points_actual` still omits **return TDs** (not in nflverse) and **self-recovered
-  fumbles** (nflverse publishes only lost ones). Named in `KNOWN_MISSING_STATS`.
+- `points_actual` is now the nflverse box score and matched Yahoo on every one of
+  61 roster player-weeks checked (7 Oct). It has been checked for ONE roster over
+  four weeks; `fcc verify-scoring` each week is what keeps that claim honest.
 - Model constants in `src/analytics/` are fitted on 22,175 player-weeks (2022-25),
   in-sample. The backtest covers one season of one source.
 - League settings in `src/league_bootstrap.py` were transcribed by hand from the Yahoo
