@@ -178,7 +178,7 @@ Phase 2 (`d166c0d`, `b2feaf5`, `6edb982`, this commit) - data audit:
 Open from the audit: ESPN D/ST weekly; `game_context` empty until ODDS_API_KEY
 (user signing up; the workflow passes it through); the hosted dashboard still
 needs its three Yahoo secrets pasted at the PC.
-Decisions recorded: 14 regular-season weeks, 13 of them paying the \$50 high
+Decisions recorded: 14 regular-season weeks, 13 of them paying the $50 high
 score (which week is unpaid: ask the commissioner); Odds API free tier: yes.
 
 ## Open - needs the user
