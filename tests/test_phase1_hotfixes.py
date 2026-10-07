@@ -127,3 +127,45 @@ def test_the_regular_season_is_fourteen_weeks_as_yahoo_says():
     assert bootstrap.PAYOUTS["weekly_high_score_weeks"] == 13
     assert bootstrap.PLAYOFF_WEEKS == (15, 16, 17)
     assert bootstrap.TRADE_DEADLINE == "2026-11-28"
+
+
+# --- 2b. Yahoo's tag for every player it exposes, not just your roster ---------
+
+def test_the_snapshot_carries_yahoo_tags_for_rostered_and_free_players(tmp_path):
+    """125 of 390 players disagreed between the Sleeper feed and Yahoo on
+    7 Oct 2026 - nearly all stale 'Questionable' tags Sleeper carried
+    forward. Yahoo's tag arrives with every roster and wire payload."""
+    from tests.test_collect_league import _Cfg, _player
+    from src.yahoo_client import YahooClient
+
+    conn = db.init_db(tmp_path / "s.db", force_sqlite=True)
+    idmap = IdMapper(conn)
+    idmap.upsert_player(full_name="Jahmyr Gibbs", position="RB", team="DET")
+    idmap.upsert_player(full_name="Free Agent", position="WR", team="CHI")
+    conn.commit()
+    client = YahooClient(_Cfg(), conn)
+    snap = client.new_snapshot(2026, 5)
+    client.collect_roster(snap, "3", [dict(_player("Jahmyr Gibbs", "RB"), status="Q")])
+    client.collect_free_agents(snap, [dict(_player("Free Agent", "WR", "CHI", "9"), status="")])
+    assert snap.statuses == {"jahmyr gibbs|RB": "Q", "free agent|WR": ""}
+    conn.close()
+
+
+def test_waiver_candidates_take_yahoos_tag_over_the_feed(tmp_path):
+    from src.season import waivers
+    from src.yahoo_snapshot import LeagueSnapshot
+
+    conn = db.init_db(tmp_path / "w.db", force_sqlite=True)
+    idmap = IdMapper(conn)
+    key = idmap.upsert_player(full_name="Stale Receiver", position="WR", team="KC")
+    conn.execute(
+        "INSERT INTO injuries(player_key, status, source, observed_at) VALUES (?,?,?,?)",
+        (key, "Out", "sleeper", db.utcnow()),
+    )
+    conn.commit()
+    snap = LeagueSnapshot(league_key="nfl.l.1", season=2026, week=5)
+    snap.free_agents = [key]
+    snap.statuses = {key: ""}          # Yahoo: no tag today
+    [cand] = waivers.load_free_agents(conn, 2026, 5, snap.free_agents, statuses=snap.statuses)
+    assert cand.injury_status is None and not cand.is_stash
+    conn.close()

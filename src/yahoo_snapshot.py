@@ -118,6 +118,11 @@ class LeagueSnapshot:
     #: Teams whose roster fetch failed this run. Rival-facing advice is
     #: incomplete without them; the run says so rather than guessing.
     unavailable_teams: list[str] = field(default_factory=list)
+    #: Yahoo's injury code per player ("" = none), for everyone a roster or
+    #: wire payload named this run. The injury feed carried 125 stale
+    #: "Questionable" tags for 390 players on 7 Oct 2026; Yahoo's is current
+    #: and is what Yahoo enforces. Memory only, like everything here.
+    statuses: dict[str, str] = field(default_factory=dict)
 
     def roster_keys(self, team_key: str) -> list[str]:
         """Our player keys for one team, in the order Yahoo listed them."""

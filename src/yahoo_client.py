@@ -622,6 +622,7 @@ class YahooClient:
             key = self._resolve_yahoo_player(p)
             if not key:
                 continue
+            snapshot.statuses[key] = str(p.get("status") or "")
             snapshot.rosters.append(RosterSpot(
                 team_key=str(team_id),
                 team_name=team_name,
@@ -638,6 +639,7 @@ class YahooClient:
             key = self._resolve_yahoo_player(p)
             if key:
                 snapshot.free_agents.append(key)
+                snapshot.statuses[key] = str(p.get("status") or "")
         snapshot.unmatched = list(self.index.unmatched)
         return snapshot
 

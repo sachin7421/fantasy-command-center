@@ -124,7 +124,8 @@ def replacement_levels(
 
 
 def load_free_agents(
-    conn: Database, season: int, week: int, free_agent_keys, limit: int = 200
+    conn: Database, season: int, week: int, free_agent_keys, limit: int = 200,
+    statuses: dict[str, str] | None = None,
 ) -> list[Candidate]:
     """Available players, valued on rest-of-season points.
 
@@ -170,12 +171,19 @@ recommended $1 bids on players worth real money.
     ).fetchall()
     baseline = replacement_levels(conn, season)
     share = ros_fraction(week)
+    # Yahoo's tag, when the wire came from Yahoo, beats the feed's: the feed
+    # carried last week's "Questionable" on a third of the wire (7 Oct 2026).
+    from src.season.lineup import yahoo_status
+
+    live = statuses or {}
     return [
         Candidate(
             player_key=r["player_key"], name=r["full_name"], position=r["position"],
             team=r["team"] or "FA", ros_points=float(r["pts"] or 0),
             pct_owned=float(0.0 or 0), trending_add=int(r["trending"] or 0),
-            injury_status=r["injury_status"], bye_week=r["bye_week"],
+            injury_status=(yahoo_status(live[r["player_key"]])
+                           if r["player_key"] in live else r["injury_status"]),
+            bye_week=r["bye_week"],
             value=(float(r["pts"] or 0) - baseline.get(r["position"], 0.0)) * share,
         )
         for r in rows
@@ -430,7 +438,10 @@ def run(
             team_key,
         )
         return WaiverReport(week=week, uses_faab=uses_faab, budget_left=budget_left)
-    free_agents = load_free_agents(conn, season, week, snapshot.free_agents)
+    free_agents = load_free_agents(
+        conn, season, week, snapshot.free_agents,
+        statuses=getattr(snapshot, "statuses", None),
+    )
     droppables = load_my_droppables(conn, season, week, roster_keys)
     weeks_left = _ros_weeks(week)
 
