@@ -26,3 +26,6 @@ data/roster.txt
 
 # Personal Claude Code overrides (permission rules), never shared
 .claude/settings.local.json
+
+# Database backups are artifacts, never commits
+backup/

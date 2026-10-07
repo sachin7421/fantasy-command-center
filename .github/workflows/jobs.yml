@@ -84,6 +84,10 @@ jobs:
 
       - name: Verify database is reachable
         run: python fcc.py doctor
+      # The gate proves the code; this proves the URL (METHOD audit, item 2).
+      - name: Is the hosted dashboard up?
+        run: python tools/check_deploy.py
+        continue-on-error: true
 
       - name: Refresh data
         # Projections, injuries and trending must be current before any job
@@ -115,6 +119,18 @@ jobs:
         # Piggybacks on the Monday recap run rather than burning its own slot.
         if: steps.pick.outputs.job == 'recap'
         run: python fcc.py trades
+      # Weekly backup, with Monday's recap: every table as gzipped CSV, kept
+      # 30 days as an artifact (METHOD audit, item 1: there was no backup).
+      - name: Back up the database
+        if: steps.pick.outputs.job == 'recap'
+        run: python tools/backup.py --out backup/latest
+      - name: Keep the backup
+        if: steps.pick.outputs.job == 'recap'
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_id }}
+          path: backup/latest
+          retention-days: 30
 
       - name: Reminders
         # Deadlines matter most on the days a lineup or claim is due, so they

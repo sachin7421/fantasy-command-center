@@ -29,7 +29,7 @@ MUTATIONS = [
     ),
     (
         "uncertainty: measured QB sigma replaced with a guess",
-        "src/analytics/uncertainty.py", '"QB": 7.07,', '"QB": 9.99,',
+        "src/analytics/uncertainty.py", '"QB": 7.24,', '"QB": 9.99,',
         PY + ["-m", "pytest", "-q", "tests/test_uncertainty.py"],
     ),
     (
