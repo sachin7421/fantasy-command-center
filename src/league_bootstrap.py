@@ -65,6 +65,32 @@ _DEFENSE = [
 
 _ALL = _OFFENSE + _DEFENSE
 
+#: The money, from the commissioner's notes in the Yahoo app (read 7 Oct
+#: 2026). Dues $200 x 12 = $2,400, all of it paid back out. The regular
+#: season is 14 weeks (Yahoo: playoffs start week 15) but the note pays the
+#: weekly high score "$50x13 = $650", and only at 13 does the pot balance:
+#: 650 + 300 + 50 + 1,400 = 2,400. So ONE regular-season week carries no
+#: high-score prize and the note does not say which - OPEN with the user.
+#: The commissioner pays $150; the last-place team pays the other $50 of
+#: his dues as a penalty.
+PAYOUTS = {
+    "dues": 200,
+    "teams": 12,
+    "regular_season_weeks": 14,
+    "weekly_high_score": 50,
+    "weekly_high_score_weeks": 13,      # which 13 of the 14: unknown
+    "most_points_regular_season": 300,
+    "consolation_winner": 50,
+    "finish": {1: 750, 2: 400, 3: 250},
+    "last_place_penalty": 50,
+}
+
+#: From Yahoo's league settings, read live 7 Oct 2026 (verify-settings diffs
+#: the scoring; these are the calendar).
+PLAYOFF_WEEKS = (15, 16, 17)
+PLAYOFF_TEAMS = 6
+TRADE_DEADLINE = "2026-11-28"
+
 # QB, WR, WR, RB, RB, TE, W/R/T, W/R/T, DEF, BN x5, IR x2.
 # Note: this league has NO kicker slot, so kickers are not draftable at all.
 ROSTER_POSITIONS = [

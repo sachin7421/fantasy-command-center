@@ -24,6 +24,8 @@ in the workflow are for US Eastern during daylight saving.
 """
 from __future__ import annotations
 
+from typing import Any
+
 import datetime as dt
 from dataclasses import dataclass
 
@@ -125,3 +127,19 @@ def overdue(conn, now: dt.datetime | None = None) -> list[ScheduledJob]:
         if not count:
             missing.append(entry)
     return missing
+
+
+def current_week(conn: Any) -> int:
+    """The NFL week in progress, from Sleeper's state endpoint.
+
+    One answer for the CLI and the dashboard. The dashboard used to read
+    `league.current_week` from config.yaml, which nobody maintained and which
+    did not exist, so it defaulted to week 1 and showed week-1 projections
+    against the live roster (7 Oct 2026). Outside the regular season the
+    answer is week 1, as `Context.current_week` always said.
+    """
+    from src.sources.sleeper import SleeperSource
+
+    state = SleeperSource(conn).state()
+    week = int(state.get("week") or 1)
+    return week if str(state.get("season_type")) == "regular" else 1

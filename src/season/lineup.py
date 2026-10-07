@@ -21,6 +21,21 @@ from src.vorp import BENCH_SLOTS
 #: Statuses that make a player unstartable regardless of projection.
 UNSTARTABLE = {"Out", "IR", "PUP", "Suspended", "NA", "DNR"}
 
+#: Yahoo's roster status codes, as the API spells them, onto the vocabulary
+#: above. Variants like "IR-R" and "PUP-R" share their prefix's meaning.
+_YAHOO_STATUS = {
+    "Q": "Questionable", "D": "Doubtful", "O": "Out", "IR": "IR", "PUP": "PUP",
+    "SUSP": "Suspended", "NA": "NA", "DNR": "DNR", "COVID": "Out",
+}
+
+
+def yahoo_status(code: str | None) -> str | None:
+    """Yahoo's injury code as the lineup's status word; None for no tag."""
+    if not code:
+        return None
+    key = str(code).upper().split("-")[0]
+    return _YAHOO_STATUS.get(key, str(code))
+
 
 @dataclass
 class RosterPlayer:
@@ -146,6 +161,15 @@ def load_roster(
     # forbids storing it.
     clause, params = key_clause([s.player_key for s in roster_spots])
     slot_of = {s.player_key: s.selected_pos for s in roster_spots}
+    # Yahoo's own tag, when the roster came from Yahoo (status is "" for a
+    # healthy player there and None for a typed-in roster). It is what the
+    # manager sees and what decides lock and eligibility, so it beats the
+    # injury feed - which disagreed with it on four of sixteen players on
+    # the first live look, 7 Oct 2026.
+    live_status = {
+        s.player_key: yahoo_status(s.status)
+        for s in roster_spots if getattr(s, "status", None) is not None
+    }
 
     rows = conn.execute(
         f"""
@@ -182,7 +206,10 @@ def load_roster(
                 points=float(r["points"] or 0),
                 floor=float(r["floor"] or 0),
                 ceiling=float(r["ceiling"] or 0),
-                injury_status=r["injury_status"],
+                injury_status=(
+                    live_status[r["player_key"]]
+                    if r["player_key"] in live_status else r["injury_status"]
+                ),
                 bye_week=r["bye_week"],
                 on_bye=bool(r["bye_week"] and int(r["bye_week"]) == week),
             )

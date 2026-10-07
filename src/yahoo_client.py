@@ -628,6 +628,7 @@ class YahooClient:
                 player_key=key,
                 selected_pos=(p.get("selected_position_value")
                               or _dig(p, ["selected_position", "position"])),
+                status=str(p.get("status") or ""),
             ))
         snapshot.unmatched = list(self.index.unmatched)
         return snapshot

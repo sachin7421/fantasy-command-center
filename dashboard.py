@@ -907,6 +907,19 @@ def _tab_edge(conn, season: int):
             st.markdown("Earned blend weights: " + chips, unsafe_allow_html=True)
 
 
+@st.cache_data(ttl=3600)
+def _live_week(_conn) -> int:
+    """The NFL week in progress. It defaulted to a config key that did not
+    exist, i.e. week 1, and the page showed week-1 numbers (7 Oct 2026)."""
+    from src import schedule
+
+    try:
+        return schedule.current_week(_conn)
+    except Exception as exc:
+        log.warning("Dashboard: could not read the NFL week (%s); showing week 1", exc)
+        return 1
+
+
 @st.cache_resource(ttl=600, show_spinner="Fetching the league from Yahoo...")
 def _fetch_live_league(_conn, season: int, week: int, team_key: str):
     """The live snapshot, held in this process for ten minutes.
@@ -961,7 +974,7 @@ def _this_week(cfg, conn, league_key, season, slots):
 
     week = st.number_input(
         "Week", min_value=1, max_value=18,
-        value=int(cfg.get("league.current_week") or 1), step=1, key="tw_week",
+        value=_live_week(conn), step=1, key="tw_week",
     )
     team_key = str(cfg.get("league.my_team_id") or "")
     if not team_key:

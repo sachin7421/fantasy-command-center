@@ -42,6 +42,11 @@ class RosterSpot:
     team_name: str | None
     player_key: str
     selected_pos: str | None = None
+    #: Yahoo's injury code for this player at fetch time ("Q", "O", "IR"...),
+    #: "" when none, None when the roster was typed in and carries no tag.
+    #: Read with the roster, never stored; it overrides the feed for the
+    #: manager's own players because it is what Yahoo enforces.
+    status: str | None = None
 
 
 @dataclass(frozen=True)

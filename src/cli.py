@@ -116,11 +116,9 @@ class Context:
         return int(self.settings().get("num_teams") or 12)
 
     def current_week(self) -> int:
-        from src.sources.sleeper import SleeperSource
+        from src.schedule import current_week
 
-        state = SleeperSource(self.conn).state()
-        week = int(state.get("week") or 1)
-        return week if str(state.get("season_type")) == "regular" else 1
+        return current_week(self.conn)
 
     def league_snapshot(self, season: int, week: int):
         """Yahoo league state for this run, fetched once and held in memory.
