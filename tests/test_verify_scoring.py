@@ -79,11 +79,15 @@ def test_a_scoring_player_with_no_row_is_a_gap(conn):
     assert row.verdict == "no-row"
 
 
-def test_defenses_are_reported_as_not_scored_rather_than_compared(conn):
-    """The engine has no DEF actuals yet. Said so, not silently skipped."""
+def test_defenses_are_compared_by_team(conn):
+    """Yahoo names a defense "Detroit" with team "Det"; the engine keys it
+    DEF|DET. The two must meet, or every DEF reads as a gap."""
+    key = IdMapper(conn).upsert_player(full_name="Detroit Lions", position="DEF", team="DET")
+    db.record_actuals_many(conn, [(key, 2026, 3, 7.0, None, "nflverse", db.utcnow())])
+    conn.commit()
     yahoo = _Yahoo([_yahoo_player("Detroit", "DEF", 7.0, team="Det")])
     [row] = compare_roster_points(conn, yahoo, team_id=3, season=2026, weeks=[3])
-    assert row.verdict == "not-scored"
+    assert row.verdict == "exact"
 
 
 def test_summary_counts_and_passes_only_with_enough_exact_and_no_differences():

@@ -1725,7 +1725,12 @@ def cmd_sync_usage(ctx: Context, args) -> int:
     print(f"Syncing usage and context for {season}...")
     stats = usage.sync_usage(ctx.idmap, rules, season, force=args.force)
     print(f"  usage       : {stats['stored']:,} player-weeks "
-          f"({stats['unmatched']} unmatched)")
+          f"({stats['unmatched']} unmatched, {stats.get('actuals', 0):,} actuals)")
+
+    from src.sources import defense_actuals
+
+    defenses = defense_actuals.load_and_sync(ctx.conn, rules, season)
+    print(f"  defenses    : {defenses:,} team-weeks of actual points")
 
     practice = usage.sync_practice_reports(ctx.idmap, season)
     print(f"  practice    : {practice:,} official injury-report rows")

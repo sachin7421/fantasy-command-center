@@ -13,7 +13,6 @@ What each verdict means:
               category the ingest does not carry
   inactive    Yahoo lists 0.00 and nflverse has no row: he did not play
   no-row      Yahoo lists points and nflverse has no row: a sync or id gap
-  not-scored  a defense; the engine has no DEF actuals (named, not hidden)
 """
 from __future__ import annotations
 
@@ -52,13 +51,13 @@ def compare_roster_points(
             position = _position(player)
             name = str((player.get("name") or {}).get("full") or "")
             listed = float((player.get("player_points") or {}).get("total") or 0.0)
-            if position == "DEF":
-                out.append(Comparison(week, name, position, listed, None, "not-scored"))
-                continue
+            # A defense is keyed by its team, the same way the players table
+            # keys it; Yahoo gives the team as "Det", the key wants "DET".
+            key = make_player_key(name, position, team=player.get("editorial_team_abbr"))
             row = conn.fetchone(
                 "SELECT points FROM player_week_actuals WHERE player_key=? "
                 "AND season=? AND week=? AND source='nflverse'",
-                (make_player_key(name, position), season, week),
+                (key, season, week),
             )
             if row is None:
                 verdict = "inactive" if abs(listed) < TOLERANCE else "no-row"
@@ -81,7 +80,7 @@ def summarize(rows: list[Comparison], minimum_exact: int) -> tuple[bool, str]:
     differs = counts.get("differs", 0)
     ok = exact >= minimum_exact and differs == 0
     parts = [f"{exact} exact", f"{differs} differ"]
-    for verdict in ("inactive", "no-row", "not-scored"):
+    for verdict in ("inactive", "no-row"):
         if counts.get(verdict):
             parts.append(f"{counts[verdict]} {verdict}")
     text = f"{len(rows)} player-weeks: " + ", ".join(parts)
@@ -92,7 +91,7 @@ def summarize(rows: list[Comparison], minimum_exact: int) -> tuple[bool, str]:
 
 def format_rows(rows: list[Comparison]) -> str:
     """The table `fcc verify-scoring` prints: differences and gaps first."""
-    order = {"differs": 0, "no-row": 1, "not-scored": 2, "inactive": 3, "exact": 4}
+    order = {"differs": 0, "no-row": 1, "inactive": 2, "exact": 3}
     lines = []
     for row in sorted(rows, key=lambda r: (order.get(r.verdict, 9), r.week, r.name)):
         ours = "-" if row.ours is None else f"{row.ours:7.2f}"
