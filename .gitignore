@@ -23,3 +23,6 @@ __pycache__/
 # Yahoo's projections, start percentages and scores, and this repository is
 # public. It is also yours, and nobody else needs it to run the code.
 data/roster.txt
+
+# Personal Claude Code overrides (permission rules), never shared
+.claude/settings.local.json

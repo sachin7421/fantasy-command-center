@@ -40,11 +40,14 @@ enabled the Client ID five days later (the "access is live" email arrived 7 Oct 
 this time, was true). Four emails to Yahoo over three weeks achieved nothing; the
 form did.
 
-Where the scheduled runs stand: **GitHub has the new Client ID only** (secret
-`YAHOO_CLIENT_ID`, for the daily scope check). It has no Client Secret and no token,
-so every scheduled job still runs on the pasted roster (`data/roster.txt`, loaded into
-`my_roster`). Giving GitHub the secret and token is a decision (credentials), not a
-chore - see Open.
+Where the scheduled runs stand: **GitHub has the full Yahoo credential set since 7 Oct
+13:12 UTC** (`YAHOO_CONSUMER_KEY`, `YAHOO_CONSUMER_SECRET`, `YAHOO_ACCESS_TOKEN_JSON`,
+set by `tools/push_yahoo_secrets.py`; `YAHOO_CLIENT_ID` for the scope check). A
+dispatched `doctor` run reported `yahoo oauth : working` and a `sync` run pulled 12
+teams, 191 slots, 199 free agents, 92 transactions on the runner. The pasted roster
+(`data/roster.txt`) is now only the fallback for a refused call. If a run warns that
+Yahoo rotated the refresh token: `fcc verify-settings` in a terminal, then re-run
+`tools/push_yahoo_secrets.py`.
 
 **Delete the old app `hnkXi0Gh`** in the Yahoo developer console. Its Client Secret
 was in a transcript on 15 Sep; deleting the app retires it. Nothing here references it.
@@ -151,13 +154,14 @@ Found by breaking the code on purpose, not by reading it.
 - **Sigma refit on the corrected truth** (`5beeea9`) - QB 7.24, RB 5.86, WR 5.48,
   TE 4.50, DEF 5.44 (first measurement), pooled 5.61.
 - **Pasted roster for week 4** loaded from the Yahoo app screenshot; all 16 matched.
+- **GitHub runs on the live league** (`f9c4522` + secrets 7 Oct 13:12 UTC). Setting
+  the secrets needed a Claude Code permission rule for `gh secret set`, added to
+  `.claude/settings.local.json` (gitignored) at the user's explicit request.
 
 ## Open - needs the user
 
-- [ ] **Give the scheduled runs Yahoo?** GitHub has `YAHOO_CLIENT_ID` only. Adding
-      `YAHOO_CONSUMER_SECRET` and the token as secrets would let the Tuesday waiver
-      run and Sunday lineup run use the live roster and wire instead of the paste.
-      Credentials decision; also means a token that refreshes on a runner.
+- [x] **Scheduled runs use Yahoo** (7 Oct). The hosted Streamlit dashboard does NOT
+      yet - it has its own secrets and still shows the pasted roster.
 - [ ] **Delete old app `hnkXi0Gh`** in the Yahoo console (retires the leaked secret).
 - [ ] **Unresolved Yahoo name:** "Bam Knight" (Zonovan Knight, RB) - nickname vs legal
       name; 1 of 199 free agents. Add an alias or leave.
