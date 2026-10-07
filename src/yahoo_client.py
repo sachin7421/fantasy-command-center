@@ -519,6 +519,21 @@ class YahooClient:
         )
         return payload or []
 
+    def fetch_roster_points(self, team_id: int, week: int,
+                            force: bool = False) -> list[dict[str, Any]]:
+        """The roster for one week WITH Yahoo's computed points per player.
+
+        Read for comparison only (`fcc verify-scoring`, Protocol D): Yahoo's
+        totals are the thing the scoring engine must reproduce, and the
+        agreement means they are looked at and never kept.
+        """
+        key = f"yahoo:roster-points:{self.league_key}:{team_id}:{week}"
+        payload, _ = self._cached(
+            key, lambda: self.query.get_team_roster_player_stats_by_week(team_id, week),
+            force,
+        )
+        return payload or []
+
     def fetch_free_agents(self, count: int = 200, position: str | None = None,
                           force: bool = False) -> list[dict[str, Any]]:
         """Available players, most-relevant first.

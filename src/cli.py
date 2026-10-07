@@ -1653,6 +1653,32 @@ def cmd_verify_settings(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+def cmd_verify_scoring(ctx: Context, args) -> int:
+    """Protocol D: compare the engine's actuals with Yahoo's listed points.
+
+    Live, in memory, nothing stored. Fails on any difference, or on fewer
+    exact matches than the spec's ten players.
+    """
+    from src import verify_scoring
+
+    team_id = int(ctx.team_key() or 0)
+    if not team_id:
+        print("league.my_team_id is not set; nothing to compare.")
+        return EXIT_FAIL
+    weeks = [args.week] if args.week else list(range(1, ctx.current_week()))
+    if not weeks:
+        print("No completed week yet; nothing to compare.")
+        return EXIT_OK
+    rows = verify_scoring.compare_roster_points(
+        ctx.conn, ctx.yahoo, team_id=team_id, season=ctx.season, weeks=weeks,
+    )
+    print(verify_scoring.format_rows(rows))
+    ok, text = verify_scoring.summarize(rows, minimum_exact=10)
+    print("")
+    print(("PASS  " if ok else "FAIL  ") + text)
+    return EXIT_OK if ok else EXIT_FAIL
+
+
 def cmd_migrate(ctx: Context, args) -> int:
     """Copy the local SQLite database into the configured Postgres."""
     from src import migrate as migrate_mod
@@ -2469,6 +2495,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("sync-settings", help="pull league settings from Yahoo")
     sub.add_parser("verify-settings", help="diff bootstrap settings against Yahoo")
+    p_vs = sub.add_parser(
+        "verify-scoring",
+        help="Protocol D: compare the engine's weekly points with Yahoo's listed points",
+    )
+    p_vs.add_argument("--week", type=int, default=None, help="one week instead of all completed")
 
     p_rank = sub.add_parser("rank", help="print the VORP draft board")
     p_rank.add_argument("--limit", type=int, default=50)
@@ -2597,6 +2628,7 @@ HANDLERS = {
     "sync-league": cmd_sync_league,
     "sync-settings": cmd_sync_settings,
     "verify-settings": cmd_verify_settings,
+    "verify-scoring": cmd_verify_scoring,
     "rank": cmd_rank,
     "draft": cmd_draft,
     "mockdraft": cmd_mockdraft,
