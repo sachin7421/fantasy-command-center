@@ -95,7 +95,9 @@ def test_the_bust_tail_is_modelled_at_all():
 #: copy, which went stale the day `points_actual` gained fumbles and the
 #: source constants were refit - and stayed green, because the band is loose.
 MEASURED_ERROR_SD = MEASURED_WEEKLY_SD
-MEAN_PROJECTION = {"QB": 17.02, "RB": 8.13, "WR": 6.64, "TE": 4.56}
+#: From the same backtest run (7 Oct 2026). DEF is measured now too; its
+#: volatility is modelled from the same fit, so it joins the drift alarm.
+MEAN_PROJECTION = {"QB": 17.02, "RB": 8.06, "WR": 6.58, "TE": 4.51, "DEF": 5.91}
 
 
 def test_the_assumed_spread_is_close_to_the_measured_one():
@@ -108,10 +110,11 @@ def test_the_assumed_spread_is_close_to_the_measured_one():
 
     The predicted consequence was not. Measured against 2025:
 
-        QB  model 8.14  measured 7.07  -> 15% too WIDE
-        RB  model 6.11  measured 5.88  ->  4% too wide
-        WR  model 5.40  measured 5.49  ->  2% too narrow
-        TE  model 3.73  measured 4.51  -> 21% too narrow
+        QB  model 8.14  measured 7.24  -> 12% too WIDE
+        RB  model 6.11  measured 5.86  ->  4% too wide
+        WR  model 5.40  measured 5.48  ->  1% too narrow
+        TE  model 3.73  measured 4.50  -> 21% too narrow
+        (7 Oct 2026 refit; the first measurement said 7.07/5.88/5.49/4.51)
 
     Within a fifth either way, and the direction varies by position rather
     than running one way. The two quantities happen to be similar in size, so

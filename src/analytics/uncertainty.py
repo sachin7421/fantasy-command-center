@@ -19,30 +19,33 @@ from __future__ import annotations
 import math
 
 #: Standard deviation of (actual - projected) for one player-week, by position.
-#: From tools/backtest.py over the 2025 season.
+#: From tools/backtest.py over the 2025 season, 7 Oct 2026.
 #:
 #:   pos  n    mean proj  sd(error)  bias    r
-#:   QB   242  17.02      7.07       +0.49   0.32
-#:   RB   593   8.13      5.88       -0.19   0.66
-#:   WR   914   6.64      5.49       +0.24   0.52
-#:   TE   456   4.56      4.51       +0.87   0.51
+#:   QB   242  17.02      7.24       -0.02   0.31
+#:   RB   599   8.06      5.86       -0.23   0.66
+#:   WR   925   6.58      5.48       +0.25   0.53
+#:   TE   465   4.51      4.50       +0.80   0.51
+#:   DEF  242   5.91      5.44       -0.15   0.31
 #:
-#: Refit after `points_actual` was corrected. The ground truth these were
-#: originally measured against omitted fumbles and two-point conversions, so
-#: the "measured" spread was measured against a number that was itself wrong.
-#: QB moved most (6.94 -> 7.07), which is the expected direction: quarterbacks
-#: fumble more than anyone, mostly on strip sacks, and every one of those was
-#: previously scored as though it cost nothing.
+#: Refit twice. First (16 Sep) after `points_actual` gained fumbles and
+#: two-point conversions: QB 6.94 -> 7.07. Then (7 Oct) after it moved to the
+#: box score, which added sack fumbles, self-recovered fumbles and return
+#: touchdowns - the categories the first live comparison with Yahoo showed
+#: were still missing: QB 7.07 -> 7.24, again the position that fumbles most.
+#: Defences gained a ground truth the same day and are measured for the
+#: first time.
 MEASURED_WEEKLY_SD: dict[str, float] = {
-    "QB": 7.07,
-    "RB": 5.88,
-    "WR": 5.49,
-    "TE": 4.51,
+    "QB": 7.24,
+    "RB": 5.86,
+    "WR": 5.48,
+    "TE": 4.50,
+    "DEF": 5.44,
 }
 
 #: The pooled figure, used for positions the backtest could not measure.
-#: Defence and kicker had zero paired player-weeks in 2025.
-POOLED_WEEKLY_SD = 5.62
+#: Only kickers now, and this league has no kicker slot.
+POOLED_WEEKLY_SD = 5.61
 
 #: How many standard deviations a difference must clear to be worth acting on.
 #: One sigma is about 68% - roughly "more likely than not, by a margin". Two

@@ -15,29 +15,31 @@ import pytest
 
 
 def test_the_spread_comes_from_the_backtest_not_from_a_guess():
-    """Measured over 2,205 paired 2025 player-weeks; see tools/backtest.py.
+    """Measured over 2,473 paired 2025 player-weeks; see tools/backtest.py.
 
-    Refit after points_actual gained fumbles and two-point conversions.
+    Refit twice: after points_actual gained fumbles and two-point conversions
+    (16 Sep), and after it moved to the box score, which added sack fumbles,
+    self-recovered fumbles and the return touchdowns (7 Oct).
     """
     from src.analytics.uncertainty import weekly_sd
 
-    assert weekly_sd("QB") == pytest.approx(7.07)
-    assert weekly_sd("RB") == pytest.approx(5.88)
-    assert weekly_sd("WR") == pytest.approx(5.49)
-    assert weekly_sd("TE") == pytest.approx(4.51)
+    assert weekly_sd("QB") == pytest.approx(7.24)
+    assert weekly_sd("RB") == pytest.approx(5.86)
+    assert weekly_sd("WR") == pytest.approx(5.48)
+    assert weekly_sd("TE") == pytest.approx(4.50)
 
 
-def test_an_unmeasured_position_falls_back_to_the_overall_figure():
-    """There were ZERO paired DEFENCE player-weeks in the sample.
-
-    Inventing a defence-specific number would be worse than admitting we only
-    have the pooled one.
+def test_defences_are_measured_now_and_kickers_still_fall_back():
+    """Defences had ZERO paired player-weeks until 7 Oct 2026, when they
+    gained a ground truth (src/sources/defense_actuals.py): 242 paired weeks,
+    sd 5.44. This league has no kicker slot, so K stays on the pooled figure
+    rather than an invented one.
     """
     from src.analytics.uncertainty import weekly_sd
 
-    assert weekly_sd("DEF") == pytest.approx(5.62)
-    assert weekly_sd("K") == pytest.approx(5.62)
-    assert weekly_sd(None) == pytest.approx(5.62)
+    assert weekly_sd("DEF") == pytest.approx(5.44)
+    assert weekly_sd("K") == pytest.approx(5.61)
+    assert weekly_sd(None) == pytest.approx(5.61)
 
 
 def test_comparing_two_players_combines_both_errors():
@@ -48,9 +50,12 @@ def test_comparing_two_players_combines_both_errors():
     """
     from src.analytics.uncertainty import difference_sd
 
+    from src.analytics.uncertainty import weekly_sd
+
+    rb, wr = weekly_sd("RB"), weekly_sd("WR")
     combined = difference_sd("RB", "WR")
-    assert combined == pytest.approx((5.88**2 + 5.49**2) ** 0.5, abs=0.01)
-    assert combined > max(5.88, 5.49)
+    assert combined == pytest.approx((rb**2 + wr**2) ** 0.5, abs=0.01)
+    assert combined > max(rb, wr)
 
 
 def test_a_multi_week_total_grows_with_the_square_root_of_weeks():
