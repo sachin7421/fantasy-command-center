@@ -134,7 +134,8 @@ def simulate_payouts(
     my_first: Matchup | None = None
     if my_team and weeks:
         my_first = next((m for m in by_week[weeks[0]] if my_team in (m.home, m.away)), None)
-    cond = {"win": [], "loss": [], "high": 0}
+    cond: dict[str, list[float]] = {"win": [], "loss": []}
+    my_high_scores = 0
 
     for _ in range(trials):
         wins = {k: float(index[k].wins) for k in keys}
@@ -165,7 +166,7 @@ def simulate_payouts(
                 dollars[best] += high_pay
                 totals[best]["hs"] += 1
                 if w == weeks[0] and my_team and best == my_team:
-                    cond["high"] += 1
+                    my_high_scores += 1
 
         standings = sorted(keys, key=lambda k: (wins[k], points[k]), reverse=True)
         most = max(keys, key=lambda k: points[k])
@@ -212,7 +213,7 @@ def simulate_payouts(
                 p_win=n_win / decided if decided else 0.0,
                 ev_if_win=round(sum(cond["win"]) / n_win, 2) if n_win else 0.0,
                 ev_if_loss=round(sum(cond["loss"]) / n_loss, 2) if n_loss else 0.0,
-                p_high_score=cond["high"] / trials,
+                p_high_score=my_high_scores / trials,
             )
         out.append(odds)
     return sorted(out, key=lambda o: -o.expected_dollars)
