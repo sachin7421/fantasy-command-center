@@ -31,6 +31,8 @@ projections:
   weights:
     sleeper: 0.50      # Rotowire lines via Sleeper; full positional coverage
     espn: 0.50         # second opinion, top ~500 by ownership
+    fantasypros: 0.50  # weekly expert consensus via nflverse's mirror, calibrated
+                       # from full-PPR onto this league's scale (7 Oct 2026)
     yahoo: 0.0         # API agreement, obligation 3: optional, ships at zero.
                        # Raising this is a contract decision, not a tuning one.
   # Fall back to cached data up to this age before treating a source as down.

@@ -158,6 +158,29 @@ Found by breaking the code on purpose, not by reading it.
   the secrets needed a Claude Code permission rule for `gh secret set`, added to
   `.claude/settings.local.json` (gitignored) at the user's explicit request.
 
+## 7 Oct - the deep scrub (user: "make this world class"; plan of 7 phases)
+
+Phase 1 (`4f4c673`): dashboard week from the NFL state (it defaulted to 1);
+Yahoo's injury tag for the user's roster; PAYOUTS and the calendar recorded.
+Phase 2 (`d166c0d`, `b2feaf5`, `6edb982`, this commit) - data audit:
+- weekly projections were SLEEPER ONLY. Now Sleeper + ESPN (same payload,
+  asked for the week) + FantasyPros weekly expert consensus via nflverse's
+  mirror (`src/sources/weekly_consensus.py`, calibrated per position from
+  full-PPR onto this league's scale; WR factor 0.78). Week 5: 249 players
+  blended from three sources, 112 from two, 122 from one (mostly DEF: Sleeper
+  + consensus only, ESPN's D/ST not parsed).
+- injury tags: 125 of 390 disagreed with Yahoo (stale Sleeper 'Questionable').
+  Yahoo's tag now rides on the snapshot for every player it exposes and
+  overrides the feed in lineup and waivers. Byes and teams: clean.
+- `verify-scoring --notify` runs after Monday's recap; mails only on a miss.
+- FantasyPros' own projection pages render 10 rows without JS/login: not a
+  source. CBS pages are server-rendered (102 rows) - a possible fourth.
+Open from the audit: ESPN D/ST weekly; `game_context` empty until ODDS_API_KEY
+(user signing up; the workflow passes it through); the hosted dashboard still
+needs its three Yahoo secrets pasted at the PC.
+Decisions recorded: 14 regular-season weeks, 13 of them paying the \$50 high
+score (which week is unpaid: ask the commissioner); Odds API free tier: yes.
+
 ## Open - needs the user
 
 - [x] **Scheduled runs use Yahoo** (7 Oct).

@@ -917,6 +917,27 @@ def cmd_sync(ctx: Context, args) -> int:
             proj.blend_all(
                 ctx.conn, season, week, weights=ctx.cfg.get("projections.weights")
             )
+        # The expert consensus is calibrated against the Sleeper/ESPN blend
+        # just written (full-PPR points onto this league's scale), so it
+        # comes after that blend and the week is blended once more with it.
+        if ctx.cfg.get("sources.fantasypros.enabled", True):
+            from src.sources.weekly_consensus import WeeklyConsensusSource
+
+            try:
+                with timer.phase("weekly proj"):
+                    consensus = WeeklyConsensusSource(ctx.conn).sync(
+                        ctx.idmap, season, week, force=args.force
+                    )
+                print(f"  week {week} proj: {consensus['stored']:,} stored (fantasypros "
+                      f"consensus, {consensus['calibrated_positions']} positions calibrated, "
+                      f"{consensus['unmatched']} unmatched)")
+                with timer.phase("blending"):
+                    proj.blend_all(
+                        ctx.conn, season, week, weights=ctx.cfg.get("projections.weights")
+                    )
+            except Exception as exc:
+                log.warning("Weekly consensus sync skipped: %s", exc)
+                print(f"  week {week} proj: consensus unavailable ({exc})")
 
     # The league's own state, which only Yahoo has. Skipped rather than failed
     # when credentials are absent, so `fcc sync` keeps working before access is
