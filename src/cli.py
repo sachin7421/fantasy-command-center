@@ -1367,12 +1367,26 @@ def cmd_job(ctx: Context, args) -> int:
             print("The API agreement forbids storing one, so there is no cached")
             print("copy to fall back to. Run `fcc setup` to connect Yahoo.")
             return EXIT_FAIL
+        risk_mode = str(ctx.cfg.get("season.risk_mode", "auto"))
+        stakes: list[str] = []
+        if risk_mode == "auto" and not snapshot.is_manual:
+            # The posture the money calls for, not a guess from the margin:
+            # P(win) x the win's value plus P(high score) x $50, over the
+            # legal lineups. Failures fall back to the margin rule, loudly.
+            try:
+                verdict = _week_stakes(ctx, snapshot, team_key, season, week, slots)
+            except Exception as exc:
+                log.warning("week stakes unavailable (%s); risk mode from the margin", exc)
+                verdict = None
+            if verdict is not None:
+                risk_mode, stakes = verdict
         lineup_report = lineup.run(
             ctx.conn, ctx.league_key, team_key, season, week, slots,
             snapshot=snapshot,
-            risk_mode=str(ctx.cfg.get("season.risk_mode", "auto")),
+            risk_mode=risk_mode,
             min_gap=float(ctx.cfg.get("season.lineup_swap_min_gap", 1.5)),
         )
+        lineup_report.stakes = stakes
         if not lineup_report.has_data:
             print(f"No week {week} projections for your roster "
                   f"({lineup_report.roster_size} player(s) rostered, "
@@ -1930,6 +1944,49 @@ def _this_weeks_money(ctx: Context, week: int) -> tuple[float, float, str | None
     if week == league_bootstrap.PAYOUTS.get("unpaid_high_score_week"):
         high = 0
     return me.next_game.win_value, float(high), me.next_game.opponent
+
+
+def _week_stakes(ctx: Context, snapshot, team_key: str, season: int, week: int,
+                 slots: dict[str, int]) -> tuple[str, list[str]] | None:
+    """(risk mode, stakes lines) for the lineup job, from the dollar optimiser.
+
+    The opponent's total comes from his live roster; the field from all
+    twelve; the win's value and the high-score prize from the season
+    simulation. None when any of that is missing.
+    """
+    from src.analytics.distributions import optimise_for_dollars
+
+    roster = _forecasts_for(ctx, season, week, snapshot.roster_keys(team_key))
+    if not roster or not any(f.mean > 0 for f in roster):
+        return None
+    win_value, high_value, opponent_key = _this_weeks_money(ctx, week)
+    if opponent_key is None:
+        return None
+    field: list[tuple[float, float]] = []
+    opponent: tuple[float, float] | None = None
+    for other in snapshot.budgets:
+        if other == team_key:
+            continue
+        total = _team_total(_forecasts_for(ctx, season, week, snapshot.roster_keys(other)), slots)
+        if total[0] <= 0:
+            continue
+        field.append(total)
+        if other == opponent_key:
+            opponent = total
+    if opponent is None:
+        return None
+    outcome = optimise_for_dollars(
+        roster, slots, opponent[0], opponent[1] or 20.0,
+        win_value=win_value, high_score_value=high_value, field=field,
+    )
+    mode = "ceiling" if outcome.risk > 0.15 else "floor" if outcome.risk < -0.15 else "neutral"
+    name = snapshot.team_name(opponent_key) or opponent_key
+    stakes = [
+        f"vs {name} (projected {opponent[0]:.0f}): {outcome.win_probability:.0%} to win, "
+        f"${win_value:.0f} at stake; {outcome.top_probability:.0%} for the "
+        f"${high_value:.0f} high score.",
+    ]
+    return mode, stakes
 
 
 def cmd_startsit(ctx: Context, args) -> int:

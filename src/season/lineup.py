@@ -138,6 +138,10 @@ class LineupReport:
     #: and it was reporting the second as the first, by email, every week.
     roster_size: int = 0
     projected: int = 0
+    #: What the week is worth, from the season simulation: the opponent, the
+    #: chance of winning, the dollar value of the win and of the high score,
+    #: and the posture the dollars call for. Empty when it could not be run.
+    stakes: list[str] = field(default_factory=list)
 
     @property
     def gain(self) -> float:
@@ -428,10 +432,18 @@ def to_notification(report: LineupReport, season: int) -> Notification | None:
             season=season,
             week=report.week,
         )
-    if not report.swaps and not report.warnings:
+    # A posture the dollars call for (floor or ceiling) is worth saying even
+    # with no swap to make: the manager should know the model wants him
+    # chasing the high score, or sitting on a lead, this week.
+    posture_news = bool(report.stakes) and report.risk_mode in ("floor", "ceiling")
+    if not report.swaps and not report.warnings and not posture_news:
         return None
 
     lines = []
+    if report.stakes:
+        lines.extend(report.stakes)
+        lines.append(f"Posture: {report.risk_mode}.")
+        lines.append("")
     if report.swaps:
         lines.append(f"Projected gain: +{report.gain:.1f} pts (risk mode: {report.risk_mode})")
         lines.append("")

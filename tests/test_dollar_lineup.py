@@ -65,3 +65,22 @@ def test_the_report_says_what_it_is_playing_for():
     )
     text = outcome.describe()
     assert "$" in text and "win" in text and "high score" in text
+
+
+# --- the Thursday/Sunday email says what the week is worth ---------------------
+
+def test_the_lineup_notification_carries_the_money_lines():
+    from src.lineup_solver import Lineup
+    from src.season import lineup
+
+    report = lineup.LineupReport(
+        optimal=Lineup(slots=[], total=0.0, bench=[]), current_points=100.0, optimal_points=103.0,
+        swaps=[], risk_mode="ceiling", week=5, roster_size=16, projected=14,
+        stakes=["vs Pipelayers: 59% to win, $65 at stake; 7% for the $50 high score."],
+    )
+    # A posture change alone is worth a mail even with no swaps: the manager
+    # should know the model wants him chasing the ceiling this week.
+    note = lineup.to_notification(report, 2026)
+    assert note is not None
+    assert "Pipelayers" in note.text() and "$65" in note.text()
+    assert "ceiling" in note.text()
