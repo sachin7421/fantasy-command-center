@@ -1663,6 +1663,21 @@ def cmd_verify_scoring(ctx: Context, args) -> int:
     ok, text = verify_scoring.summarize(rows, minimum_exact=10)
     print("")
     print(("PASS  " if ok else "FAIL  ") + text)
+    # Monday's scheduled run asks for --notify: a quiet pass stays quiet and a
+    # difference reaches the user, naming the player-weeks, instead of living
+    # in a workflow log nobody opens.
+    if not ok and getattr(args, "notify", False):
+        problems = [r for r in rows if r.verdict in ("differs", "no-row")]
+        ctx.notifier().send(Notification(
+            title="Scoring check FAILED against Yahoo",
+            lines=[text, ""] + [
+                f"wk{r.week} {r.name} ({r.position}): yahoo {r.yahoo:.2f}, "
+                f"ours {'-' if r.ours is None else f'{r.ours:.2f}'} [{r.verdict}]"
+                for r in problems[:15]
+            ],
+            job="verify-scoring",
+            urgency="high",
+        ))
     return EXIT_OK if ok else EXIT_FAIL
 
 
@@ -2492,6 +2507,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Protocol D: compare the engine's weekly points with Yahoo's listed points",
     )
     p_vs.add_argument("--week", type=int, default=None, help="one week instead of all completed")
+    p_vs.add_argument("--notify", action="store_true",
+                      help="send a notification when the check fails (the Monday run)")
 
     p_rank = sub.add_parser("rank", help="print the VORP draft board")
     p_rank.add_argument("--limit", type=int, default=50)

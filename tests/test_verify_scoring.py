@@ -122,3 +122,68 @@ def test_live_roster_points_match_yahoo():
     )
     assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
     assert "PASS" in result.stdout, result.stdout[-2000:]
+
+
+# --- a weekly habit: Monday's run tells you only when something is wrong ------
+
+class _Notifier:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, n, force=False):
+        self.sent.append(n)
+        return {"sent": True}
+
+
+def _ctx_for_notify(conn, rows_yahoo):
+    class _Yahoo:
+        def fetch_roster_points(self, team_id, week):
+            return rows_yahoo
+
+    class _Cfg:
+        def get(self, key, default=None):
+            return {"league.my_team_id": 3, "league.season": 2026}.get(key, default)
+
+    notifier = _Notifier()
+
+    class _Ctx:
+        cfg = _Cfg()
+        season = 2026
+        yahoo = _Yahoo()
+
+        def __init__(self):
+            self.conn = conn
+
+        def team_key(self):
+            return "3"
+
+        def current_week(self):
+            return 4
+
+        def notifier(self):
+            return notifier
+
+    return _Ctx(), notifier
+
+
+def test_a_passing_check_sends_nothing(conn):
+    from types import SimpleNamespace
+
+    from src import cli
+
+    ctx, notifier = _ctx_for_notify(conn, [_yahoo_player("Dak Prescott", "QB", 18.94)] * 10)
+    code = cli.cmd_verify_scoring(ctx, SimpleNamespace(week=3, notify=True))
+    assert code == cli.EXIT_OK
+    assert notifier.sent == []
+
+
+def test_a_difference_is_mailed_when_asked(conn):
+    from types import SimpleNamespace
+
+    from src import cli
+
+    ctx, notifier = _ctx_for_notify(conn, [_yahoo_player("Jordan Love", "QB", 19.48)])
+    code = cli.cmd_verify_scoring(ctx, SimpleNamespace(week=3, notify=True))
+    assert code == cli.EXIT_FAIL
+    [note] = notifier.sent
+    assert "Jordan Love" in note.text() and "19.48" in note.text()

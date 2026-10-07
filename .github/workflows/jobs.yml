@@ -104,6 +104,12 @@ jobs:
 
       - name: Run ${{ steps.pick.outputs.job }}
         run: python fcc.py ${{ steps.pick.outputs.job }}
+      # Protocol D, every week: the engine's points against Yahoo's listed
+      # points for the completed weeks. Mails only on a difference.
+      - name: Scoring check against Yahoo
+        if: steps.pick.outputs.job == 'recap'
+        run: python fcc.py verify-scoring --notify
+        continue-on-error: true
 
       - name: Trade scout
         # Piggybacks on the Monday recap run rather than burning its own slot.
