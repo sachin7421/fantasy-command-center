@@ -160,8 +160,13 @@ Found by breaking the code on purpose, not by reading it.
 
 ## Open - needs the user
 
-- [x] **Scheduled runs use Yahoo** (7 Oct). The hosted Streamlit dashboard does NOT
-      yet - it has its own secrets and still shows the pasted roster.
+- [x] **Scheduled runs use Yahoo** (7 Oct).
+- [ ] **Hosted dashboard secrets.** The code is live-ready (`_live_league` in
+      dashboard.py: live snapshot, 10-min in-memory cache, paste as fallback, waivers
+      from the live wire). Streamlit Community Cloud has no CLI for secrets, so at the
+      PC: `tools/push_yahoo_secrets.py --streamlit`, paste the three lines at
+      share.streamlit.io -> app -> Settings -> Secrets, reboot the app, clear the
+      terminal. Until then the hosted app says "Showing your pasted roster".
 - [ ] **Delete old app `hnkXi0Gh`** in the Yahoo console (retires the leaked secret).
 - [ ] **Unresolved Yahoo name:** "Bam Knight" (Zonovan Knight, RB) - nickname vs legal
       name; 1 of 199 free agents. Add an alias or leave.

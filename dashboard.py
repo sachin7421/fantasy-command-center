@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -906,6 +907,47 @@ def _tab_edge(conn, season: int):
             st.markdown("Earned blend weights: " + chips, unsafe_allow_html=True)
 
 
+@st.cache_resource(ttl=600, show_spinner="Fetching the league from Yahoo...")
+def _fetch_live_league(_conn, season: int, week: int, team_key: str):
+    """The live snapshot, held in this process for ten minutes.
+
+    `cache_resource`, not `cache_data`: the snapshot is an object kept in
+    memory, never pickled to disk, which is what the API agreement requires
+    of Yahoo's data. Ten minutes keeps a page of reruns from becoming a call
+    per widget while still showing a roster move within the hour.
+    """
+    from src.config import Config
+    from src.yahoo_client import YahooClient
+
+    cfg = Config.load("config.yaml")
+    return YahooClient(cfg, _conn).collect_league(season, week, my_team_key=team_key)
+
+
+def _live_league(cfg, conn, season: int, week: int, team_key: str):
+    """(snapshot or None, note). None means use the pasted roster.
+
+    Three states, each said out loud: Yahoo not configured here, Yahoo
+    configured and working, Yahoo configured and refusing.
+    """
+    from src.yahoo_client import has_stored_token
+
+    client_id = os.environ.get("YAHOO_CONSUMER_KEY", "").strip()
+    if not client_id or not has_stored_token(cfg):
+        return None, ("Showing your pasted roster. Add the Yahoo secrets to this app "
+                      "to show the live league.")
+    try:
+        snapshot = _fetch_live_league(conn, season, week, team_key)
+    except Exception as exc:
+        log.warning("Dashboard: live league fetch refused: %s", exc)
+        return None, f"Yahoo refused the call ({exc}); showing your pasted roster."
+    note = "Live from Yahoo (refreshed at most every 10 minutes)."
+    if snapshot.unavailable_teams:
+        note += f" {len(snapshot.unavailable_teams)} rival roster(s) unavailable this fetch."
+    if snapshot.unmatched:
+        note += f" Unmatched: {', '.join(snapshot.unmatched[:5])}."
+    return snapshot, note
+
+
 def _this_week(cfg, conn, league_key, season, slots):
     """Your lineup, and what to change about it. First thing on the page.
 
@@ -926,15 +968,23 @@ def _this_week(cfg, conn, league_key, season, slots):
         st.warning("Set `league.my_team_id` in config.yaml to see your team.")
         return
 
-    snapshot = manual_roster.load_from_db(
-        conn, league_key=league_key, season=season, week=int(week),
-        team_key=team_key, team_name="Butt Fumblers",
-    )
+    # Live first. Yahoo data access arrived 7 Oct 2026; with the credentials in
+    # this app's secrets the league is fetched (and held in memory for ten
+    # minutes - never written) and the paste below is only the fallback.
+    snapshot, live_note = _live_league(cfg, conn, season, int(week), team_key)
+    if snapshot is None:
+        snapshot = manual_roster.load_from_db(
+            conn, league_key=league_key, season=season, week=int(week),
+            team_key=team_key, team_name="Butt Fumblers",
+        )
+    if live_note:
+        (st.caption if snapshot is not None and not snapshot.is_manual else st.warning)(live_note)
     unmatched: list[str] = []
 
     # The paste box. Reading the file worked on a laptop and not on the hosted
     # app, and the file cannot be committed because the paste it comes from
     # carries Yahoo's projections. So the roster is entered here and stored.
+    # Kept as the fallback for a refused Yahoo call.
     with st.expander("Paste your roster" if snapshot else "Paste your roster to begin",
                      expanded=snapshot is None):
         st.caption(
@@ -1045,6 +1095,9 @@ def _waivers_from_paste(cfg, conn, league_key, season, week, slots, team_key, sn
     from src.season import waivers
 
     st.markdown("<div class='fcc-section'>Waiver wire</div>", unsafe_allow_html=True)
+    if not snapshot.is_manual:
+        _waivers_live(cfg, conn, league_key, season, week, slots, team_key, snapshot)
+        return
     with st.expander("Paste the waiver wire", expanded=False):
         st.caption(
             "On Yahoo, open Players with the filter set to Available - one "
@@ -1095,6 +1148,38 @@ def _waivers_from_paste(cfg, conn, league_key, season, week, slots, team_key, sn
     for cuff in report.handcuffs:
         st.caption(f"Open handcuff: {cuff['handcuff']} backs up your "
                    f"{cuff['starter']} ({cuff['team']})")
+
+
+def _waivers_live(cfg, conn, league_key, season, week, slots, team_key, snapshot):
+    """Waiver claims from the live snapshot: the wire, every roster and each
+    rival's remaining FAAB are already on it, so there is nothing to paste."""
+    from src.season import waivers
+
+    mine = snapshot.budgets.get(str(team_key))
+    budget = mine.faab_balance if mine and mine.faab_balance is not None else 100
+    st.caption(
+        f"{len(snapshot.free_agents)} available players on the wire, "
+        f"{len(snapshot.free_adds)} free adds. Your FAAB: ${budget}."
+    )
+    margin = float(cfg.get("season.waiver_value_margin", 25.0))
+    report = waivers.run(
+        conn, league_key, team_key, season, week, snapshot=snapshot,
+        uses_faab=True, budget_left=int(budget), value_margin=margin,
+        starting_slots=slots,
+    )
+    if not report.claims:
+        st.success(
+            f"No claim improves your starting lineup by {margin:.0f}+ "
+            "rest-of-season points."
+        )
+    for claim in report.claims:
+        st.markdown(f"**{claim.priority}.** " + claim.describe(uses_faab=True)
+                    .replace("\n    ", "  \n&nbsp;&nbsp;&nbsp;&nbsp;"))
+    for cuff in report.handcuffs:
+        st.caption(f"Open handcuff: {cuff['handcuff']} backs up your "
+                   f"{cuff['starter']} ({cuff['team']})")
+    for stash in report.stashes[:5]:
+        st.caption("Stash candidate: " + stash.describe(uses_faab=True).splitlines()[0])
 
 
 def season_view(cfg, conn, league_key):

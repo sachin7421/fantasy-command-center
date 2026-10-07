@@ -73,6 +73,7 @@ class _Refusing:
         )
 
     collect_snapshot = _refuse
+    collect_league = _refuse
     new_snapshot = _refuse
 
 

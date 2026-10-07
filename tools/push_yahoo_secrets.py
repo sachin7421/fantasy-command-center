@@ -1,7 +1,8 @@
 """Give the scheduled runs Yahoo: copy the local consent into GitHub secrets.
 
-    python tools/push_yahoo_secrets.py            # sets three secrets via gh
-    python tools/push_yahoo_secrets.py --check    # says what it WOULD set
+    python tools/push_yahoo_secrets.py              # sets three secrets via gh
+    python tools/push_yahoo_secrets.py --check      # says what it WOULD set
+    python tools/push_yahoo_secrets.py --streamlit  # prints the TOML for the hosted app
 
 Sets YAHOO_CONSUMER_KEY, YAHOO_CONSUMER_SECRET and YAHOO_ACCESS_TOKEN_JSON from
 .env. The JSON is the shape yfpy reads on a runner (seven fields, see
@@ -70,6 +71,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--env", default=".env", help="path to the .env file")
     parser.add_argument("--check", action="store_true", help="describe, set nothing")
+    parser.add_argument(
+        "--streamlit", action="store_true",
+        help="print the three lines to paste into the hosted app's Secrets "
+             "(share.streamlit.io -> app -> Settings -> Secrets). Shows the values: "
+             "run it at the PC, paste, then clear the terminal.",
+    )
     args = parser.parse_args(argv)
 
     text = Path(args.env).read_text(encoding="utf-8")
@@ -86,6 +93,10 @@ def main(argv: list[str] | None = None) -> int:
         "YAHOO_CONSUMER_SECRET": env["YAHOO_CONSUMER_SECRET"],
         "YAHOO_ACCESS_TOKEN_JSON": token_json,
     }
+    if args.streamlit:
+        for name, value in plan.items():
+            print(f"{name} = {json.dumps(value)}")
+        return 0
     for name, value in plan.items():
         print(f"  {name:<24} {len(value):>5} chars"
               + (" (Client ID begins " + value[:13] + "...)" if name == "YAHOO_CONSUMER_KEY" else ""))

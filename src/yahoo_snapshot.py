@@ -110,6 +110,9 @@ class LeagueSnapshot:
     #: Yahoo players no name match could place. Surfaced, never silently
     #: dropped - see YahooIdIndex.
     unmatched: list[str] = field(default_factory=list)
+    #: Teams whose roster fetch failed this run. Rival-facing advice is
+    #: incomplete without them; the run says so rather than guessing.
+    unavailable_teams: list[str] = field(default_factory=list)
 
     def roster_keys(self, team_key: str) -> list[str]:
         """Our player keys for one team, in the order Yahoo listed them."""

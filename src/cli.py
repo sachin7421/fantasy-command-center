@@ -150,8 +150,9 @@ class Context:
         cached = getattr(self, "_snapshot", None)
         if cached is not None and cached.week == int(week):
             return cached
+        mine = str(self.team_key() or "")
         try:
-            snapshot = self.yahoo.collect_snapshot(season, week)
+            snapshot = self.yahoo.collect_league(season, week, my_team_key=mine)
         except Exception as exc:
             log.warning("Yahoo league fetch failed: %s", exc)
             manual = self.manual_snapshot(season, week)
@@ -161,31 +162,8 @@ class Context:
             print("  Using the typed-in roster (data/roster.txt) instead; waivers,")
             print("  rivals and standings are unavailable this run.")
             return manual
-        failed: list[str] = []
-        teams = list(snapshot.budgets)
-        for team_id in teams:
-            try:
-                players = self.yahoo.fetch_roster(int(team_id), week)
-                self.yahoo.collect_roster(
-                    snapshot, team_id, players, snapshot.team_name(team_id)
-                )
-            except Exception as exc:
-                log.warning("Roster fetch failed for team %s: %s", team_id, exc)
-                failed.append(str(team_id))
-
-        # Losing YOUR roster is not a degraded run, it is a wrong one: every
-        # status change reads as "not my problem", the waiver report values
-        # claims against nothing, and all of it exits 0. A rate limit lands
-        # mid-sequence far more often than at the first call, which is exactly
-        # where the silent branch was.
-        mine = str(self.team_key() or "")
-        if mine and mine in failed:
-            raise RuntimeError(
-                f"Yahoo roster fetch failed for your own team ({mine}). "
-                "Refusing to continue: every job downstream would report an "
-                "empty roster as though you had no players."
-            )
-        if failed:
+        if snapshot.unavailable_teams:
+            failed = snapshot.unavailable_teams
             print(f"  rosters: {len(failed)} team(s) unavailable ({', '.join(failed)})"
                   " - rival-facing advice is incomplete.")
         self._snapshot = snapshot

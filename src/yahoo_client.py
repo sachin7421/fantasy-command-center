@@ -748,6 +748,33 @@ class YahooClient:
             log.warning("Transaction fetch failed: %s", exc)
         return snapshot
 
+    def collect_league(self, season: int, week: int, my_team_key: str):
+        """The whole league for one run: budgets, wire, bids, every roster.
+
+        One copy of this, used by the CLI jobs and the hosted dashboard alike
+        (the dashboard went live on 7 Oct 2026 and would otherwise have grown
+        a second one). A rival's roster failing is reported on the snapshot
+        and the run continues; YOUR roster failing raises, because every job
+        downstream would otherwise read an empty roster as "no players" and
+        exit 0. A rate limit lands mid-sequence far more often than at the
+        first call, which is exactly where that silent branch used to be.
+        """
+        snapshot = self.collect_snapshot(season, week)
+        for team_id in list(snapshot.budgets):
+            try:
+                players = self.fetch_roster(int(team_id), week)
+                self.collect_roster(snapshot, team_id, players, snapshot.team_name(team_id))
+            except Exception as exc:
+                log.warning("Roster fetch failed for team %s: %s", team_id, exc)
+                snapshot.unavailable_teams.append(str(team_id))
+        if my_team_key and my_team_key in snapshot.unavailable_teams:
+            raise RuntimeError(
+                f"Yahoo roster fetch failed for your own team ({my_team_key}). "
+                "Refusing to continue: every job downstream would report an "
+                "empty roster as though you had no players."
+            )
+        return snapshot
+
     # -- transactions --------------------------------------------------------
 
     def fetch_transactions(self, force: bool = False) -> list[dict[str, Any]]:
