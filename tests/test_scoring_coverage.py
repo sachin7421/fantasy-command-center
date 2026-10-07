@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import src.league_bootstrap as bootstrap
 from src import scoring
-from src.sources.usage import KNOWN_MISSING_STATS, _warn_scoring_gaps
+from src.sources.usage import KNOWN_MISSING_STATS, _warn_scoring_gaps, box_score_line
 
 
 def _rules():
@@ -32,13 +32,9 @@ def _rules():
     return scoring.build_from_yahoo(bootstrap.build_settings())
 
 
-#: The keys `sync_usage` actually puts in `actual_line`. Kept here so the test
-#: fails when that line changes, rather than silently testing a stale copy -
-#: test_actual_line_matches_the_ingest below is what ties the two together.
-INGESTED = {
-    "pass_yds", "pass_td", "pass_int", "rush_yds", "rush_td",
-    "rec", "rec_yds", "rec_td", "fum", "fum_lost", "two_pt",
-}
+#: The keys the ingest actually puts in the actual line - built by the real
+#: function from an empty row, so this is never a stale copy of it.
+INGESTED = set(box_score_line({}).keys())
 
 
 def test_only_known_gaps_remain():
@@ -68,14 +64,16 @@ def test_dropping_a_category_is_caught():
     assert {"fum", "fum_lost"} <= gaps
 
 
-def test_known_missing_are_really_absent_from_the_dataset():
+def test_nothing_is_exempt_any_more():
     """The exemption list is for things that CANNOT be supplied, not for chores.
 
-    Both entries are return touchdowns, which nflverse's ff_opportunity does not
-    publish in any column. If that ever changes the exemption should shrink, so
-    this records why each one is there.
+    It held the two return touchdowns while the ingest read ff_opportunity,
+    which has no column for either. The box score (`load_player_stats`) has
+    both, so since 7 Oct 2026 the list is empty - and an entry reappearing
+    here needs the same written justification the old ones had.
     """
-    assert frozenset({"ret_td", "off_fum_ret_td"}) == KNOWN_MISSING_STATS
+    assert frozenset() == KNOWN_MISSING_STATS
+    assert {"ret_td", "off_fum_ret_td"} <= INGESTED
 
 
 def test_a_display_only_or_zero_category_is_not_a_gap():

@@ -47,12 +47,52 @@ def _rows(frame) -> list[dict[str, Any]]:
     return frame.to_dict("records")
 
 
-#: Categories this league scores that nflverse's ff_opportunity does not carry.
-#: Both are return touchdowns, worth +6 each and genuinely absent from the
-#: dataset - checked, not assumed. They are listed so the warning below reports
-#: only NEW gaps: an alert that fires every run for a known, unfixable reason is
-#: one people learn to scroll past, and then it cannot tell them anything.
-KNOWN_MISSING_STATS = frozenset({"ret_td", "off_fum_ret_td"})
+#: Categories this league scores that the ground-truth ingest cannot supply.
+#: Empty since 7 Oct 2026: the actual line now comes from the box score
+#: (`load_player_stats`), which carries every scored offensive category. It
+#: used to hold the two return touchdowns, genuinely absent from
+#: ff_opportunity. Kept as the declaration the warning below checks against,
+#: so a category the league adds, or a column nflverse drops, is a failure.
+KNOWN_MISSING_STATS: frozenset[str] = frozenset()
+
+
+def box_score_line(row: dict[str, Any]) -> dict[str, float]:
+    """One player-week of nflverse `player_stats` as a scoreable stat line.
+
+    This is the ground truth every projection is graded against, so it is
+    read from the box score and nothing else. The first live comparison with
+    Yahoo (7 Oct 2026, 45 player-weeks) matched to the cent everywhere except
+    fumbles: the opportunity dataset used before this has no sack fumbles and
+    no self-recovered ones. `fumbles_total` and `fumbles_lost_total` here
+    reproduced all four differences exactly.
+
+    A missing column reads as zero. That is the right default for a box
+    score, where absence means it did not happen - and `_warn_scoring_gaps`
+    is what catches a scored category going missing wholesale.
+    """
+    def num(column: str) -> float:
+        return _f(row.get(column)) or 0.0
+
+    return {
+        "pass_yds": num("passing_yards"),
+        "pass_td": num("passing_tds"),
+        "pass_int": num("passing_interceptions"),
+        "rush_yds": num("rushing_yards"),
+        "rush_td": num("rushing_tds"),
+        "rec": num("receptions"),
+        "rec_yds": num("receiving_yards"),
+        "rec_td": num("receiving_tds"),
+        # Yahoo charges -1 for any fumble and a further -1 when it is lost.
+        "fum": num("fumbles_total"),
+        "fum_lost": num("fumbles_lost_total"),
+        "two_pt": (
+            num("passing_2pt_conversions")
+            + num("rushing_2pt_conversions")
+            + num("receiving_2pt_conversions")
+        ),
+        "ret_td": num("special_teams_tds"),
+        "off_fum_ret_td": num("fumble_recovery_tds"),
+    }
 
 
 def _warn_scoring_gaps(scoring, stat_line: dict[str, float]) -> None:
@@ -76,6 +116,39 @@ def _f(value) -> float | None:
         return None if value is None else float(value)
     except (TypeError, ValueError):
         return None
+
+
+#: The positions this league rosters as players. Defenses are scored as a
+#: unit from team stats, not from these rows.
+BOX_SCORE_POSITIONS = frozenset({"QB", "RB", "FB", "WR", "TE"})
+
+
+def _opportunity_line(row: dict[str, Any]) -> dict[str, float]:
+    """The stat line ff_opportunity can supply, used only when the box score
+    cannot be reached. It has no sack fumbles and no self-recovered ones, so
+    `fum` is filled from the lost count: right for every lost fumble, low by
+    one for every other, and no return touchdowns at all."""
+    fumbles_lost = (
+        (_f(row.get("rec_fumble_lost")) or 0.0)
+        + (_f(row.get("rush_fumble_lost")) or 0.0)
+    )
+    return {
+        "pass_yds": _f(row.get("pass_yards_gained")) or 0.0,
+        "pass_td": _f(row.get("pass_touchdown")) or 0.0,
+        "pass_int": _f(row.get("pass_interception")) or 0.0,
+        "rush_yds": _f(row.get("rush_yards_gained")) or 0.0,
+        "rush_td": _f(row.get("rush_touchdown")) or 0.0,
+        "rec": _f(row.get("receptions")) or 0.0,
+        "rec_yds": _f(row.get("rec_yards_gained")) or 0.0,
+        "rec_td": _f(row.get("rec_touchdown")) or 0.0,
+        "fum": fumbles_lost,
+        "fum_lost": fumbles_lost,
+        "two_pt": (
+            (_f(row.get("pass_two_point_conv")) or 0.0)
+            + (_f(row.get("rec_two_point_conv")) or 0.0)
+            + (_f(row.get("rush_two_point_conv")) or 0.0)
+        ),
+    }
 
 
 class UsageSource(Source):
@@ -109,7 +182,7 @@ class UsageSource(Source):
             log.warning("nflreadpy not installed; skipping usage sync")
             return {"rows": 0, "stored": 0}
 
-        stats = {"rows": 0, "stored": 0, "unmatched": 0}
+        stats = {"rows": 0, "stored": 0, "unmatched": 0, "actuals": 0}
         by_gsis = self._key_by_gsis()
 
         try:
@@ -118,11 +191,18 @@ class UsageSource(Source):
             log.warning("ff_opportunity unavailable for %s: %s", season, exc)
             return stats
 
+        # The box score is the ground truth; the opportunity model is the
+        # usage. Keyed the same way (gsis id, week) so they join without a
+        # name match. When the box score is unreachable the opportunity line
+        # stands in, with the warning that it undercounts fumbles.
+        box_scores = self._box_score_lines(season)
+
         snaps = self._snap_share(season)
         recorded_at = db.utcnow()
 
         usage_rows: list[tuple] = []
         actual_rows: list[tuple] = []
+        actual_seen: set[tuple[str, int]] = set()
         for row in opportunity:
             stats["rows"] += 1
             gsis = row.get("player_id")
@@ -169,36 +249,8 @@ class UsageSource(Source):
                 # than invented, which biases EXPECTED slightly high - stated
                 # here because an unstated zero reads as "does not happen".
             }
-            # Yahoo charges -1 for any fumble and a FURTHER -1 when it is lost,
-            # so a lost fumble is -2 and a self-recovered one is -1. nflverse
-            # publishes only the lost ones, so `fum` is filled from the same
-            # figure: correct for every lost fumble, and still missing the
-            # self-recovered ones. Strictly closer than the zero it replaces,
-            # and the residual gap is one-directional and named.
-            fumbles_lost = (
-                (_f(row.get("rec_fumble_lost")) or 0.0)
-                + (_f(row.get("rush_fumble_lost")) or 0.0)
-            )
-            actual_line = {
-                "pass_yds": _f(row.get("pass_yards_gained")) or 0.0,
-                "pass_td": _f(row.get("pass_touchdown")) or 0.0,
-                "pass_int": _f(row.get("pass_interception")) or 0.0,
-                "rush_yds": _f(row.get("rush_yards_gained")) or 0.0,
-                "rush_td": _f(row.get("rush_touchdown")) or 0.0,
-                "rec": _f(row.get("receptions")) or 0.0,
-                "rec_yds": _f(row.get("rec_yards_gained")) or 0.0,
-                "rec_td": _f(row.get("rec_touchdown")) or 0.0,
-                "fum": fumbles_lost,
-                "fum_lost": fumbles_lost,
-                "two_pt": (
-                    (_f(row.get("pass_two_point_conv")) or 0.0)
-                    + (_f(row.get("rec_two_point_conv")) or 0.0)
-                    + (_f(row.get("rush_two_point_conv")) or 0.0)
-                ),
-                # Return touchdowns (ret_td, off_fum_ret_td: +6 each) are NOT in
-                # this dataset at all. Not faked - they stay missing, and
-                # `scoring_gaps()` below is what stops that being forgotten.
-            }
+            boxed = box_scores.get((str(gsis), int(week))) if box_scores else None
+            actual_line = boxed if boxed is not None else _opportunity_line(row)
 
             team = normalize_team(row.get("posteam"))
             snap_pct = snaps.get((key, int(week)))
@@ -222,7 +274,22 @@ class UsageSource(Source):
                 key, season, int(week), scoring.score(actual_line), None,
                 "nflverse", recorded_at,
             ))
+            actual_seen.add((key, int(week)))
             stats["stored"] += 1
+
+        # Player-weeks the opportunity model has no row for - a return
+        # touchdown and nothing else, or a week it has not published yet -
+        # still happened, and Yahoo scored them. The box score is complete on
+        # its own, so every offensive line it has is recorded.
+        for (gsis, week), line in box_scores.items():
+            key = by_gsis.get(gsis)
+            if not key or (key, week) in actual_seen:
+                continue
+            actual_rows.append((
+                key, season, week, scoring.score(line), None, "nflverse", recorded_at,
+            ))
+            actual_seen.add((key, week))
+        stats["actuals"] = len(actual_rows)
 
         # Both in one statement each: a row at a time is a round trip at a
         # time, and this loop runs over every player-week of the season.
@@ -243,6 +310,31 @@ class UsageSource(Source):
         self.conn.commit()
         self._fill_shares(season)
         return stats
+
+    def _box_score_lines(self, season: int) -> dict[tuple[str, int], dict[str, float]]:
+        """(gsis id, week) -> scoreable stat line, for every offensive skill
+        player-week in nflverse's weekly box score. Empty when unreachable,
+        with a warning: the caller then falls back to the opportunity line."""
+        try:
+            import nflreadpy as nfl
+
+            rows = _rows(nfl.load_player_stats(seasons=[season]))
+        except Exception as exc:
+            log.warning(
+                "player_stats unavailable for %s (%s): actuals fall back to "
+                "ff_opportunity, which undercounts fumbles", season, exc,
+            )
+            return {}
+
+        out: dict[tuple[str, int], dict[str, float]] = {}
+        for row in rows:
+            if row.get("position") not in BOX_SCORE_POSITIONS:
+                continue
+            gsis, week = row.get("player_id"), row.get("week")
+            if not gsis or week is None or row.get("season_type") not in (None, "REG"):
+                continue
+            out[(str(gsis), int(week))] = box_score_line(row)
+        return out
 
     def _snap_share(self, season: int) -> dict[tuple[str, int], float]:
         """(player_key, week) -> offensive snap share."""
