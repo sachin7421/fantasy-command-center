@@ -76,6 +76,7 @@ _ALL = _OFFENSE + _DEFENSE
 PAYOUTS = {
     "dues": 200,
     "teams": 12,
+    "commissioner_dues": 150,           # the last-place penalty covers his other $50
     "regular_season_weeks": 14,
     "weekly_high_score": 50,
     "weekly_high_score_weeks": 13,      # which 13 of the 14: unknown
@@ -84,6 +85,23 @@ PAYOUTS = {
     "finish": {1: 750, 2: 400, 3: 250},
     "last_place_penalty": 50,
 }
+
+
+def season_outcome_value(finish: int | None, *, teams: int = 12, consolation_winner: bool = False,
+                         most_points: bool = False, high_score_weeks: int = 0) -> int:
+    """Dollars a season outcome is worth relative to a manager who finished
+    mid-table and won nothing. Everyone paid dues; last place pays $50 more."""
+    value = 0
+    if finish in PAYOUTS["finish"]:
+        value += PAYOUTS["finish"][finish]
+    if finish == teams:
+        value -= PAYOUTS["last_place_penalty"]
+    if consolation_winner:
+        value += PAYOUTS["consolation_winner"]
+    if most_points:
+        value += PAYOUTS["most_points_regular_season"]
+    value += PAYOUTS["weekly_high_score"] * high_score_weeks
+    return value
 
 #: From Yahoo's league settings, read live 7 Oct 2026 (verify-settings diffs
 #: the scoring; these are the calendar).

@@ -106,9 +106,10 @@ def test_a_pasted_roster_without_tags_keeps_the_feed(tmp_path):
 # --- 3. the money ---------------------------------------------------------------
 
 def test_the_payouts_add_up_to_the_pot():
+    """11 x $200 + the commissioner's $150 + the last-place $50 penalty."""
     p = bootstrap.PAYOUTS
     assert p["dues"] == 200 and p["teams"] == 12
-    pot = p["dues"] * p["teams"]
+    pot = (p["teams"] - 1) * p["dues"] + p["commissioner_dues"] + p["last_place_penalty"]
     assert pot == 2400
     paid = (
         p["weekly_high_score"] * p["weekly_high_score_weeks"]
@@ -169,3 +170,12 @@ def test_waiver_candidates_take_yahoos_tag_over_the_feed(tmp_path):
     [cand] = waivers.load_free_agents(conn, 2026, 5, snap.free_agents, statuses=snap.statuses)
     assert cand.injury_status is None and not cand.is_stash
     conn.close()
+
+
+def test_last_place_costs_fifty_dollars_and_first_pays_750():
+    v = bootstrap.season_outcome_value
+    assert v(1) == 750 and v(2) == 400 and v(3) == 250
+    assert v(7) == 0
+    assert v(12) == -50, "the last-place penalty must count against the manager"
+    assert v(1, most_points=True, high_score_weeks=2) == 750 + 300 + 100
+    assert v(9, consolation_winner=True) == 50
