@@ -446,6 +446,7 @@ def run(
     # Learn how this league bids, so recommendations reflect the actual rivals
     # rather than a generic rule of thumb.
     profiles: dict[str, Any] = {}
+    bid_records: list[Any] = []
     if uses_faab:
         try:
             from src.analytics import faab as faab_model
@@ -456,6 +457,7 @@ def run(
             records = faab_model.parse_bids(
                 snapshot.transactions, fetched_week=week
             )
+            bid_records = records
             if records:
                 faab_model.attach_values(conn, records, season)
 
@@ -574,6 +576,9 @@ def run(
                 advice = faab_model.recommend(
                     value=gain, my_budget=budget_left,
                     rivals=rivals, weeks_left=weeks_left,
+                    position_bids=faab_model.position_market(
+                        bid_records, candidate.position
+                    ),
                 )
             if advice and advice.recommended:
                 # The three numbers are rendered as a range around the

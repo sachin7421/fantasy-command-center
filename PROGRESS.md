@@ -213,6 +213,12 @@ Written down so no future session repeats them as fact:
 - League settings in `src/league_bootstrap.py` were transcribed by hand from the Yahoo
   settings page, not read from the API. That file is the LIVE scoring configuration
   (`config.yaml` has no scoring section); `tests/test_league_rules.py` pins it.
+- **The FAAB dollars-per-point model has almost nothing to learn from.** 45 of 45
+  winning bids now resolve to players (7 Oct), but only 1 carries a value: a waiver
+  pickup is by definition near replacement level, so "ROS points above replacement"
+  is 0 for nearly all of them and beta stays on the $1.20/pt prior. What saves the
+  recommendation is `position_market`: the position's own observed bids (12 DEF
+  claims for $0-$10, median $0) cap the price. The prior said $65 for a defense.
 - **Two different players can share a canonical key.** `make_player_key` is
   name+position, so the two Rodney Smiths (both RB, both free agents) are one row
   and the second overwrites the first's Yahoo and Sleeper ids - which is why sync

@@ -111,6 +111,8 @@ class BidRecord:
     bid: int
     week: int = 0
     value: float | None = None       # ROS value at the time, if recoverable
+    position: str = ""               # Yahoo's display position, for resolution and the market
+    team: str = ""                   # Yahoo's team abbreviation (a defense IS its team)
 
     @property
     def beta(self) -> float | None:
@@ -251,7 +253,7 @@ def parse_bids(
         if status and status != "successful":
             continue
 
-        team_key, player_key, player_name, source_type = _extract_add(payload)
+        team_key, player_key, player_name, source_type, added = _extract_add(payload)
         if not team_key:
             continue
 
@@ -282,6 +284,9 @@ def parse_bids(
                 player_name=player_name or "",
                 bid=bid,
                 week=week_of(payload.get("timestamp"), now, fetched_week),
+                position=str(added.get("display_position")
+                             or added.get("primary_position") or "").upper(),
+                team=str(added.get("editorial_team_abbr") or "").upper(),
             )
         )
     return out
@@ -289,7 +294,7 @@ def parse_bids(
 
 def _extract_add(
     payload: dict[str, Any],
-) -> tuple[str | None, str | None, str | None, str | None]:
+) -> tuple[str | None, str | None, str | None, str | None, dict[str, Any]]:
     """Find the team that added, the player added, and where he came from.
 
     Yahoo nests this differently depending on whether the transaction was a
@@ -319,8 +324,9 @@ def _extract_add(
             str(player.get("player_id")) if player.get("player_id") else None,
             name,
             str(data.get("source_type") or "") or None,
+            player,
         )
-    return None, None, None, None
+    return None, None, None, None, {}
 
 
 def _bare_team_id(team_key: Any) -> str | None:
@@ -347,19 +353,22 @@ def resolve_player_keys(conn: Database, records: Sequence[BidRecord]) -> None:
     former up directly matches nothing, which silently leaves every bid without
     a value and collapses the whole per-manager model to a constant.
     """
+    from src.yahoo_snapshot import YahooIdIndex
+
+    # The same resolver the rosters use: Sleeper's cross-reference id first,
+    # then name and position, then team for a defense. The id alone matched
+    # 9 of 45 bids in the first live log (7 Oct 2026), which left every
+    # manager on the generic prior and priced a $0-market defense at $65.
+    index = YahooIdIndex(conn)
     for record in records:
-        if not record.player_key:
+        if not record.player_key and not record.player_name:
             continue
-        row = conn.fetchone(
-            "SELECT player_key FROM players WHERE yahoo_id=?", (record.player_key,)
-        )
-        if row is None:
-            row = conn.fetchone(
-                "SELECT player_key FROM player_id_map "
-                "WHERE source='yahoo' AND source_id=?",
-                (record.player_key,),
-            )
-        record.player_key = row["player_key"] if row else None
+        record.player_key = index.resolve({
+            "player_id": record.player_key,
+            "full_name": record.player_name,
+            "primary_position": record.position,
+            "editorial_team_abbr": record.team,
+        })
 
 
 def replacement_levels(
@@ -509,6 +518,39 @@ def learn_profiles(
     return profiles
 
 
+#: Winning bids at a position needed before its ceiling is trusted.
+POSITION_MARKET_MIN = 3
+
+
+def position_market(records: Sequence[BidRecord], position: str) -> list[int] | None:
+    """Every winning bid this league has made at `position`, or None.
+
+    Dollars-per-point is one number for the whole league, and it is wrong
+    for positions the league does not pay for: twelve defenses were claimed
+    in the first live log for 0,0,0,0,0,0,0,1,3,5,6,10 dollars while the
+    model asked $65 for one. With enough observed auctions the position's
+    own bids are the market; with too few, nothing is claimed either way.
+    """
+    bids = sorted(r.bid for r in records if r.position == str(position).upper())
+    if len(bids) < POSITION_MARKET_MIN:
+        return None
+    return bids
+
+
+def position_ceiling(records: Sequence[BidRecord], position: str) -> int | None:
+    """The most this league has paid at `position`, or None (see position_market)."""
+    bids = position_market(records, position)
+    return None if bids is None else max(bids)
+
+
+def _quantile(sorted_values: Sequence[int], q: float) -> int:
+    """Nearest-rank quantile of an already sorted list."""
+    if not sorted_values:
+        return 0
+    rank = min(len(sorted_values) - 1, max(0, math.ceil(q * len(sorted_values)) - 1))
+    return int(sorted_values[rank])
+
+
 # --- bidding -----------------------------------------------------------------
 
 @dataclass
@@ -609,6 +651,7 @@ def recommend(
     rivals: Sequence[ManagerProfile],
     weeks_left: int = 10,
     target_probability: float = 0.7,
+    position_bids: Sequence[int] | None = None,
 ) -> BidAdvice:
     """What to bid, and an honest read of whether it will be enough.
 
@@ -643,8 +686,28 @@ def recommend(
     price_to_win = bid_for(target_probability)
     min_competitive = bid_for(0.30)
 
+    # What the league has actually paid at this position beats what a
+    # dollars-per-point prior says it should: one dollar over the bid that
+    # beat `target_probability` of the position's own auctions.
+    capped_note = None
+    if position_bids:
+        market = sorted(position_bids)
+        empirical = _quantile(market, target_probability) + 1
+        if price_to_win > empirical:
+            capped_note = (
+                f"this league has claimed {len(market)} player(s) at this position "
+                f"for ${market[0]}-${market[-1]} (median ${_quantile(market, 0.5)}); "
+                f"the model's ${price_to_win} is not this league"
+            )
+            price_to_win = empirical
+            min_competitive = min(min_competitive, _quantile(market, 0.3) + 1)
+
     recommended = max(1, min(price_to_win, worth))
     probability = dict(curve).get(recommended, 0.0)
+    if capped_note:
+        # price_to_win is by definition the bid that clears the target; the
+        # curve it came from is the prior this position has disproved.
+        probability = max(probability, target_probability)
 
     # Only counsel walking away when the gap is large. A player who will go for
     # a bit more than he is worth to you is still worth a losing bid: it costs
@@ -658,6 +721,8 @@ def recommend(
     ]
 
     notes: list[str] = []
+    if capped_note:
+        notes.append(capped_note)
     priced_out = [
         r.name for r in rivals
         if r.budget_left is not None and r.budget_left <= NUISANCE_BUDGET
