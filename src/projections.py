@@ -11,6 +11,8 @@ ceiling. Two rules matter:
 """
 from __future__ import annotations
 
+from typing import Any
+
 import json
 import logging
 import math
@@ -98,7 +100,9 @@ class Blend:
     ceiling: float
     stdev: float
     n_sources: int
-    detail: dict[str, float] = field(default_factory=dict)
+    #: Each source's points as blended (bias-corrected), plus, when a bias was
+    #: removed, a "bias" entry mapping source -> the correction subtracted.
+    detail: dict[str, Any] = field(default_factory=dict)
 
 
 #: Weight applied to a source that is present but absent from the config.
@@ -194,11 +198,19 @@ def blend_player(
     position: str | None = None,
     band_sd: float = 1.0,
     week: int = 0,
+    biases: dict[str, float] | None = None,
 ) -> Blend:
-    """Combine one player's per-source points into a blended projection."""
+    """Combine one player's per-source points into a blended projection.
+
+    `biases` is each source's measured lean at this position (projected minus
+    actual); it is subtracted first, so a source that runs 0.7 low on tight
+    ends contributes 0.7 more. The detail records the correction.
+    """
     values = {s: v for s, v in per_source.items() if v is not None}
     if not values:
         return Blend(player_key, 0.0, 0.0, 0.0, 0.0, 0, {})
+    corrections = {s: biases[s] for s in values if biases and biases.get(s)}
+    values = {s: v - corrections.get(s, 0.0) for s, v in values.items()}
 
     normalized = normalize_weights(values.keys(), weights)
     points = sum(values[s] * normalized.get(s, 0.0) for s in values)
@@ -224,7 +236,10 @@ def blend_player(
         ceiling=round(points + band_sd * stdev, 2),
         stdev=round(stdev, 2),
         n_sources=len(values),
-        detail={s: round(v, 2) for s, v in values.items()},
+        detail={
+            **{s: round(v, 2) for s, v in values.items()},
+            **({"bias": {s: round(b, 2) for s, b in corrections.items()}} if corrections else {}),
+        },
     )
 
 
@@ -234,9 +249,20 @@ def blend_all(
     week: int = 0,
     weights: dict[str, float] | None = None,
     band_sd: float = 1.0,
+    weights_by_position: dict[str, dict[str, float]] | None = None,
+    bias_by_source: dict[tuple[str, str], float] | None = None,
 ) -> int:
-    """Blend every player with at least one stored projection for the period."""
+    """Blend every player with at least one stored projection for the period.
+
+    `weights_by_position` are the EARNED weights (src/analytics/accuracy) for
+    the positions with enough evidence; `weights` is the configured fallback
+    for the rest. `bias_by_source` maps (source, position) to a measured lean
+    to subtract. Until 7 Oct 2026 the earned weights were computed, printed,
+    and never used here.
+    """
     weights = weights or DEFAULT_WEIGHTS
+    weights_by_position = weights_by_position or {}
+    bias_by_source = bias_by_source or {}
     rows = conn.execute(
         """
         SELECT j.player_key, j.source, j.points, p.position
@@ -257,9 +283,13 @@ def blend_all(
     written = 0
     blended_rows: list[tuple] = []
     for player_key, per_source in grouped.items():
+        position = positions.get(player_key)
         blend = blend_player(
-            player_key, per_source, weights, positions.get(player_key), band_sd,
-            week=week,
+            player_key, per_source,
+            weights_by_position.get(position or "", weights),
+            position, band_sd, week=week,
+            biases={s: bias_by_source[(s, position)] for s in per_source
+                    if position and (s, position) in bias_by_source} or None,
         )
         blended_rows.append((
             player_key, season, week, blend.points, blend.floor, blend.ceiling,

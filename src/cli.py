@@ -912,10 +912,41 @@ def cmd_sync(ctx: Context, args) -> int:
             band_sd=float(ctx.cfg.get("projections.uncertainty_band_sd", 1.0)),
         )
     print(f"  blended     : {blended:,} season projections")
+    earned_by_pos: dict = {}
+    earned_bias: dict = {}
     if week:
+        # ESPN keeps its pre-game projection for every past week in the same
+        # payload, so the completed weeks are stored too and the source is
+        # scored from week 1 rather than from the week we first asked.
+        if ctx.cfg.get("sources.espn.enabled", True):
+            try:
+                backfilled = 0
+                for past in range(1, week):
+                    backfilled += espn.sync(ctx.idmap, rules, season, week=past, force=False)["stored"]
+                if backfilled:
+                    print(f"  espn proj   : {backfilled:,} past-week rows back-filled")
+            except Exception as exc:
+                log.warning("ESPN back-fill skipped: %s", exc)
+        # Weights earned from the completed weeks, per position, where two or
+        # more sources have been scored; config weights for the rest.
+        from src.analytics import accuracy as accuracy_mod
+
+        try:
+            earned_by_pos, earned_bias = accuracy_mod.earned_weights(ctx.conn, season, week)
+        except Exception as exc:
+            log.warning("earned weights unavailable (%s); using configured weights", exc)
+        if earned_by_pos:
+            summary = ", ".join(
+                f"{pos}: " + "/".join(f"{s} {w:.2f}" for s, w in sorted(ws.items()))
+                for pos, ws in sorted(earned_by_pos.items())
+            )
+            print(f"  weights     : earned for {summary}")
+        else:
+            print("  weights     : configured (no position has two scored sources yet)")
         with timer.phase("blending"):
             proj.blend_all(
-                ctx.conn, season, week, weights=ctx.cfg.get("projections.weights")
+                ctx.conn, season, week, weights=ctx.cfg.get("projections.weights"),
+                weights_by_position=earned_by_pos, bias_by_source=earned_bias,
             )
         # The expert consensus is calibrated against the Sleeper/ESPN blend
         # just written (full-PPR points onto this league's scale), so it
@@ -933,7 +964,8 @@ def cmd_sync(ctx: Context, args) -> int:
                       f"{consensus['unmatched']} unmatched)")
                 with timer.phase("blending"):
                     proj.blend_all(
-                        ctx.conn, season, week, weights=ctx.cfg.get("projections.weights")
+                        ctx.conn, season, week, weights=ctx.cfg.get("projections.weights"),
+                        weights_by_position=earned_by_pos, bias_by_source=earned_bias,
                     )
             except Exception as exc:
                 log.warning("Weekly consensus sync skipped: %s", exc)

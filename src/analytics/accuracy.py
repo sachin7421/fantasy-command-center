@@ -221,3 +221,44 @@ def report(results: list[Accuracy]) -> list[str]:
                 )
         lines.append("")
     return lines
+
+
+#: Player-weeks a source needs at a position before its bias is subtracted.
+#: A bias measured on eight games is noise; on a hundred it is a lean.
+BIAS_MIN_N = 60
+
+
+def earned_weights_from(results: Iterable[Accuracy]) -> dict[str, dict[str, float]]:
+    """Blend weights per position, for positions where two or more sources
+    have been scored. A position with one scored source earns nothing: there
+    is no competitor to weigh it against, and the config weights stand."""
+    rows = list(results)
+    out: dict[str, dict[str, float]] = {}
+    for position in sorted({r.position for r in rows}):
+        weights = derive_weights(rows, position=position)
+        if len(weights) >= 2:
+            out[position] = weights
+    return out
+
+
+def biases_from(results: Iterable[Accuracy], min_n: int = BIAS_MIN_N) -> dict[tuple[str, str], float]:
+    """(source, position) -> measured bias (projected minus actual), where the
+    sample is big enough to trust. Subtracting it is a free reduction in
+    mean squared error of exactly bias squared."""
+    return {
+        (r.source, r.position): float(r.bias)
+        for r in results if r.n >= min_n and r.bias is not None
+    }
+
+
+def earned_weights(conn: Database, season: int, through_week: int) -> tuple[
+    dict[str, dict[str, float]], dict[tuple[str, str], float]
+]:
+    """What the completed weeks say: per-position weights and per-source biases.
+
+    Scored on weeks strictly before `through_week`, because the week being
+    blended has no actuals yet - and if it had, scoring a source on the week
+    it is about to predict would be grading it on the answer key.
+    """
+    results = score_sources(conn, season, through_week=through_week - 1) if through_week > 1 else []
+    return earned_weights_from(results), biases_from(results)
