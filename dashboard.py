@@ -1195,11 +1195,14 @@ def _waivers_live(cfg, conn, league_key, season, week, slots, team_key, snapshot
         st.caption("Stash candidate: " + stash.describe(uses_faab=True).splitlines()[0])
 
 
-@st.cache_resource
+@st.cache_resource(ttl=600)
 def _cli_context():
     """A CLI Context for the season pages: the simulators and the stakes live
     there and need the Yahoo client plus its standings/scoreboard reads.
-    Shares the hosted database through DATABASE_URL like everything else."""
+    Shares the hosted database through DATABASE_URL like everything else.
+    Ten-minute TTL, like the roster: the Yahoo client memoises standings and
+    scoreboards for its lifetime, and without a TTL Sunday's standings were
+    the standings all week (code review, 7 Oct 2026)."""
     from src import cli
 
     return cli.Context("config.yaml", None)

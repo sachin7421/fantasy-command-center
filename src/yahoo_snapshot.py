@@ -171,10 +171,11 @@ class LeagueSnapshot:
         return None
 
     def remaining_matchups(self, from_week: int, through_week: int):
-        """Every game still to play in the regular season."""
+        """Every game still to play in the regular season, `from_week` included:
+        the week in progress has not been played when the jobs run."""
         return [
             (w, a, b) for (w, a, b) in self.matchups
-            if int(from_week) < w <= int(through_week)
+            if int(from_week) <= w <= int(through_week)
         ]
 
     def budget_of(self, team_key: str) -> int | None:

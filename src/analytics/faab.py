@@ -704,9 +704,11 @@ def recommend(
 
     recommended = max(1, min(price_to_win, worth))
     probability = dict(curve).get(recommended, 0.0)
-    if capped_note:
+    if capped_note and recommended >= price_to_win:
         # price_to_win is by definition the bid that clears the target; the
-        # curve it came from is the prior this position has disproved.
+        # curve it came from is the prior this position has disproved. Only
+        # when the recommendation actually reaches it - a bid clamped below
+        # it by `worth` keeps the curve's honest, lower probability.
         probability = max(probability, target_probability)
 
     # Only counsel walking away when the gap is large. A player who will go for

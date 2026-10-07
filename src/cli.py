@@ -152,7 +152,16 @@ class Context:
         try:
             snapshot = self.yahoo.collect_league(season, week, my_team_key=mine)
         except Exception as exc:
+            from src.yahoo_client import classify_access_error
+
             log.warning("Yahoo league fetch failed: %s", exc)
+            # Only an ACCESS refusal (the 2-7 Oct state: a token, no data
+            # access yet) earns the typed-in roster. A rate limit or a lost
+            # own-roster fetch mid-run is re-raised: advising from a roster
+            # file weeks old is the outcome the refusal guard exists to stop.
+            if classify_access_error(exc) not in ("not-provisioned", "stale-scope",
+                                                  "no-consent", "token-expired"):
+                raise
             manual = self.manual_snapshot(season, week)
             if manual is None:
                 raise
@@ -185,7 +194,11 @@ class Context:
         except Exception as exc:
             log.warning("Standings fetch failed: %s", exc)
             return None
-        for target in range(int(week) + 1, int(final_week) + 1):
+        # From THIS week: its games are still to be played when the jobs run
+        # (Wednesday to Sunday), and it is the one whose stakes are priced. It
+        # started at week+1, so 'this week vs X' named next week's opponent
+        # (code review, 7 Oct 2026).
+        for target in range(int(week), int(final_week) + 1):
             try:
                 self.yahoo.collect_matchups(
                     snapshot, self.yahoo.fetch_scoreboard(target), target
@@ -920,8 +933,17 @@ def cmd_sync(ctx: Context, args) -> int:
         # scored from week 1 rather than from the week we first asked.
         if ctx.cfg.get("sources.espn.enabled", True):
             try:
+                have = {
+                    int(r["week"]) for r in ctx.conn.fetchall(
+                        "SELECT DISTINCT week FROM projections WHERE source='espn' "
+                        "AND season=? AND week BETWEEN 1 AND ?", (season, week - 1))
+                }
                 backfilled = 0
                 for past in range(1, week):
+                    # Once per week, not every day: a re-sync re-inserts a
+                    # history row per player per week (code review, 7 Oct).
+                    if past in have:
+                        continue
                     backfilled += espn.sync(ctx.idmap, rules, season, week=past, force=False)["stored"]
                 if backfilled:
                     print(f"  espn proj   : {backfilled:,} past-week rows back-filled")
@@ -2033,10 +2055,19 @@ def cmd_startsit(ctx: Context, args) -> int:
             opponent_name = snapshot.team_name(other) or other
     if opponent_mean is None:
         opponent_mean, opponent_sd = 110.0, 20.0
-    outcome = optimise_for_dollars(
-        roster, slots, opponent_mean, opponent_sd or 20.0,
-        win_value=win_value, high_score_value=high_value, field=field,
-    )
+    if win_value <= 0 and high_value <= 0:
+        # Nothing priced (playoffs, no standings, Yahoo refused): every lineup
+        # is worth $0 and the dollar sweep degenerates to a tie-break. Fall
+        # back to the win-probability optimiser the command began as.
+        from src.analytics.distributions import optimise
+
+        outcome = optimise(roster, slots, opponent_mean, opponent_sd or 20.0)
+        print("(no dollar stakes available this week; optimising win probability)")
+    else:
+        outcome = optimise_for_dollars(
+            roster, slots, opponent_mean, opponent_sd or 20.0,
+            win_value=win_value, high_score_value=high_value, field=field,
+        )
 
     print(f"Week {week} vs {opponent_name} ({opponent_mean:.0f} +/- {opponent_sd or 20.0:.0f})")
     print("")

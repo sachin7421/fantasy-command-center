@@ -25,16 +25,23 @@ UNSTARTABLE = {"Out", "IR", "PUP", "Suspended", "NA", "DNR"}
 #: above. Variants like "IR-R" and "PUP-R" share their prefix's meaning.
 _YAHOO_STATUS = {
     "Q": "Questionable", "D": "Doubtful", "O": "Out", "IR": "IR", "PUP": "PUP",
-    "SUSP": "Suspended", "NA": "NA", "DNR": "DNR", "COVID": "Out",
+    "NFI": "NA", "SUSP": "Suspended", "NA": "NA", "DNR": "DNR", "COVID": "Out",
+    "P": "Probable",
 }
 
 
 def yahoo_status(code: str | None) -> str | None:
-    """Yahoo's injury code as the lineup's status word; None for no tag."""
+    """Yahoo's injury code as the lineup's status word; None for no tag.
+
+    A code this table does not know is treated as NOT startable ("NA"): the
+    tag overrides the injury feed, so an unknown reserve designation that
+    came back as a harmless string made a reserved player startable (code
+    review, 7 Oct 2026). Yahoo rejects such a move; so should we.
+    """
     if not code:
         return None
     key = str(code).upper().split("-")[0]
-    return _YAHOO_STATUS.get(key, str(code))
+    return _YAHOO_STATUS.get(key, "NA")
 
 
 @dataclass

@@ -119,18 +119,10 @@ jobs:
         # Piggybacks on the Monday recap run rather than burning its own slot.
         if: steps.pick.outputs.job == 'recap'
         run: python fcc.py trades
-      # Weekly backup, with Monday's recap: every table as gzipped CSV, kept
-      # 30 days as an artifact (METHOD audit, item 1: there was no backup).
-      - name: Back up the database
-        if: steps.pick.outputs.job == 'recap'
-        run: python tools/backup.py --out backup/latest
-      - name: Keep the backup
-        if: steps.pick.outputs.job == 'recap'
-        uses: actions/upload-artifact@v4
-        with:
-          name: db-backup-${{ github.run_id }}
-          path: backup/latest
-          retention-days: 30
+      # No backup step here: this repository is public and run artifacts are
+      # downloadable by any signed-in GitHub user, so a database dump cannot be
+      # kept as one (code review, 7 Oct 2026). `python tools/backup.py` runs
+      # at the PC; an encrypted artifact is an open decision.
 
       - name: Reminders
         # Deadlines matter most on the days a lineup or claim is due, so they

@@ -372,6 +372,14 @@ def _lineup_total(roster: list[Candidate], starting_slots: dict[str, int]) -> fl
     ).total
 
 
+def active_roster_limit() -> int:
+    """Roster spots a drop competes for: everything but IR, from the league's
+    own settings (QB, 2 WR, 2 RB, TE, 2 W/R/T, DEF, 5 BN = 14)."""
+    from src.league_bootstrap import ROSTER_POSITIONS
+
+    return sum(count for slot, count in ROSTER_POSITIONS if slot != "IR")
+
+
 def _protected_keys(
     roster: list[Candidate], starting_slots: dict[str, int] | None
 ) -> set[str]:
@@ -410,6 +418,7 @@ def run(
     top_n: int = 8,
     starting_slots: dict[str, int] | None = None,
     snapshot=None,
+    roster_limit: int | None = None,
 ) -> WaiverReport:
     """Who to claim, who to drop, and what to bid.
 
@@ -491,6 +500,7 @@ def run(
             log.info("FAAB profiles unavailable: %s", exc)
 
     healthy = [c for c in free_agents if not c.is_stash]
+    limit = roster_limit if roster_limit is not None else active_roster_limit()
 
     # What a claim is actually worth is what it does to the STARTING LINEUP.
     # Measuring it against the worst player on the roster instead recommended
@@ -519,13 +529,11 @@ def run(
         Jennings" for that reason, and the old pick-the-lowest-value rule
         could also cut a flex starter whose value-above-replacement read 0.
         """
-        # A roster with fewer players than starting slots cannot be full, so
-        # an add there needs no drop at all (the fixtures in the test suite
-        # are built that way; a real in-season roster never is).
-        open_spots = (
-            starting_slots is not None
-            and len(droppables) < sum(starting_slots.values())
-        )
+        # An add needs a drop only when the roster is at its limit (the
+        # league's non-IR spots, from the bootstrap unless the caller says).
+        # Compared against the lineup size before - a fixture accommodation
+        # that told a real 15-of-16 roster to cut someone (code review, 7 Oct).
+        open_spots = len(droppables) < limit
         if not droppables or open_spots:
             return None, gain_for(candidate, None)
         shielded = _protected_keys([*droppables, candidate], starting_slots)
@@ -545,7 +553,11 @@ def run(
         return drop, gain
 
     used_drops: set[str] = set()
-    for candidate in healthy:
+    for candidate, ceiling in zip(healthy, gains, strict=True):
+        # The no-drop gain is an upper bound on any drop's gain: a candidate
+        # that cannot clear the margin even for free skips the per-drop solve.
+        if ceiling < value_margin:
+            continue
         drop, gain = best_drop(candidate, used_drops)
         if gain < value_margin:
             continue

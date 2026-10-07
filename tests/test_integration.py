@@ -1487,9 +1487,27 @@ def test_a_defence_upgrade_drops_the_defence_it_replaces(defence_upgrade_league)
         conn, LEAGUE, MY_TEAM, SEASON, WEEK,
         uses_faab=True, budget_left=100, value_margin=1.0, starting_slots=SLOTS,
         snapshot=_snap(defence_upgrade_league),
+        roster_limit=10,   # this fixture's ten-man roster IS full
     )
     [claim] = report.claims
     assert claim.add.name == "Better Defence"
     assert claim.drop is not None and claim.drop.name == "The Only Defence", claim.drop
     # 160 in for 130 out; the bench WR stays and nothing else moves.
     assert claim.value_gain == pytest.approx(30.0, abs=0.5)
+
+
+def test_a_roster_with_an_open_spot_needs_no_drop(defence_upgrade_league):
+    """Fifteen of sixteen after an IR move: the claim is an add, not a cut
+    (code review, 7 Oct 2026 - the rule compared against the LINEUP size)."""
+    from src.season import waivers
+
+    conn = db.init_db(defence_upgrade_league)
+    report = waivers.run(
+        conn, LEAGUE, MY_TEAM, SEASON, WEEK,
+        uses_faab=True, budget_left=100, value_margin=1.0, starting_slots=SLOTS,
+        snapshot=_snap(defence_upgrade_league),
+        roster_limit=11,   # one spot open on a ten-man roster
+    )
+    [claim] = report.claims
+    assert claim.drop is None
+    assert waivers.active_roster_limit() == 14
